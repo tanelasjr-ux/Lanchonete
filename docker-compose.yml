@@ -1,0 +1,65 @@
+# ============================================================================
+# Restaurant OS :: docker-compose (pronto para EasyPanel / Hostinger VPS)
+# Sobe: app (Next.js), postgres, evolution-api, n8n.
+# ============================================================================
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    networks: [ros]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-restaurant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-restaurant}
+      POSTGRES_DB: ${POSTGRES_DB:-restaurant_os}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./supabase:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks: [ros]
+
+  evolution-api:
+    image: atendai/evolution-api:latest
+    restart: unless-stopped
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-change-me}
+    volumes:
+      - evolution_instances:/evolution/instances
+    ports:
+      - "8080:8080"
+    networks: [ros]
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    environment:
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+    networks: [ros]
+
+volumes:
+  pgdata:
+  evolution_instances:
+  n8n_data:
+
+networks:
+  ros:
+    driver: bridge

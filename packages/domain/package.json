@@ -1,0 +1,9 @@
+{
+  "name": "@restaurant-os/domain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Camada de dominio compartilhada (entidades + contratos de repositorio) do Restaurant OS",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "UNLICENSED"
+}
