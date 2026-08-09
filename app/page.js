@@ -522,11 +522,11 @@ function Pedidos() {
     </div>
   )
 }
-function PedidoDialog({ onClose, onSaved }) {
+function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
   const [prods, setProds] = useState([])
   const [mesasLivres, setMesasLivres] = useState([])
   const [itens, setItens] = useState([])
-  const [cliente_id, setCliente] = useState(null)
+  const [cliente_id, setCliente] = useState(clienteInicial)
   const [tipo, setTipo] = useState('balcao')
   const [pagamento, setPag] = useState('pix')
   const [mesa_id, setMesaId] = useState('')
@@ -618,45 +618,178 @@ function Financeiro() {
   if (!resumo) return <Empty>Carregando…</Empty>
   return (
     <div className="space-y-6">
-      <PageHeader title="Financeiro" description="Fluxo de caixa, receitas e despesas do restaurante." action={<Button onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Lançamento</Button>} />
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Stat icon={TrendingUp} label="Receitas" value={brl(resumo.receitas)} tone="emerald" />
-        <Stat icon={TrendingDown} label="Despesas" value={brl(resumo.despesas)} tone="amber" />
-        <Stat icon={Wallet} label="Saldo" value={brl(resumo.saldo)} tone={resumo.saldo >= 0 ? 'primary' : 'amber'} />
-      </div>
-      <Card>
-        <CardHeader><CardTitle className="text-base">Receitas x Despesas — 7 dias</CardTitle></CardHeader>
-        <CardContent className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={resumo.serie} margin={{ left: -18, right: 8, top: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis dataKey="dia" tickLine={false} axisLine={false} fontSize={12} stroke="hsl(var(--muted-foreground))" />
-              <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="hsl(var(--muted-foreground))" />
-              <RTooltip contentStyle={{ background: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} formatter={(v) => brl(v)} />
-              <Bar dataKey="receita" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="despesa" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-      <Card><CardContent className="p-0">
-        <Table>
-          <TableHeader><TableRow><TableHead>Descrição</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Valor</TableHead><TableHead className="text-right">Data</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {tx.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell className="font-medium">{t.descricao || '—'}</TableCell>
-                <TableCell className="text-muted-foreground">{t.categoria}</TableCell>
-                <TableCell><Badge variant="outline" className={t.tipo === 'receita' ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10'}>{t.tipo}</Badge></TableCell>
-                <TableCell className={`text-right font-medium ${t.tipo === 'receita' ? 'text-emerald-500' : 'text-amber-500'}`}>{t.tipo === 'receita' ? '+' : '-'}{brl(t.valor)}</TableCell>
-                <TableCell className="text-right text-muted-foreground text-sm">{fmtDate(t.data)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {tx.length === 0 && <Empty>Nenhum lançamento.</Empty>}
-      </CardContent></Card>
+      <PageHeader title="Financeiro" description="Visão geral, lançamentos e relatórios do restaurante." />
+      <Tabs defaultValue="visao">
+        <TabsList><TabsTrigger value="visao">Visão Geral</TabsTrigger><TabsTrigger value="lancamentos">Lançamentos</TabsTrigger><TabsTrigger value="relatorios">Relatórios</TabsTrigger></TabsList>
+
+        <TabsContent value="visao" className="mt-4 space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Stat icon={TrendingUp} label="Receitas" value={brl(resumo.receitas)} tone="emerald" />
+            <Stat icon={TrendingDown} label="Despesas" value={brl(resumo.despesas)} tone="amber" />
+            <Stat icon={Wallet} label="Saldo" value={brl(resumo.saldo)} tone={resumo.saldo >= 0 ? 'primary' : 'amber'} />
+          </div>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Receitas x Despesas — 7 dias</CardTitle></CardHeader>
+            <CardContent className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={resumo.serie} margin={{ left: -18, right: 8, top: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="dia" tickLine={false} axisLine={false} fontSize={12} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="hsl(var(--muted-foreground))" />
+                  <RTooltip contentStyle={{ background: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} formatter={(v) => brl(v)} />
+                  <Bar dataKey="receita" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="despesa" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="lancamentos" className="mt-4 space-y-4">
+          <div className="flex justify-end"><Button onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Lançamento</Button></div>
+          <Card><CardContent className="p-0">
+            <Table>
+              <TableHeader><TableRow><TableHead>Descrição</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Valor</TableHead><TableHead className="text-right">Data</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {tx.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="font-medium">{t.descricao || '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.categoria}</TableCell>
+                    <TableCell><Badge variant="outline" className={t.tipo === 'receita' ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10'}>{t.tipo}</Badge></TableCell>
+                    <TableCell className={`text-right font-medium ${t.tipo === 'receita' ? 'text-emerald-500' : 'text-amber-500'}`}>{t.tipo === 'receita' ? '+' : '-'}{brl(t.valor)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground text-sm">{fmtDate(t.data)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {tx.length === 0 && <Empty>Nenhum lançamento.</Empty>}
+          </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="relatorios" className="mt-4"><Relatorios /></TabsContent>
+      </Tabs>
       {dlg && <TxDialog onClose={() => setDlg(false)} onSave={save} />}
+    </div>
+  )
+}
+
+const REL_PRESETS = [
+  ['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', 'Últimos 7 dias'], ['30d', 'Últimos 30 dias'],
+  ['mes', 'Este mês'], ['mes_ant', 'Mês anterior'], ['custom', 'Personalizado'],
+]
+function presetRange(p) {
+  const now = new Date(); const end = new Date(now); const start = new Date(now)
+  const d0 = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+  if (p === 'hoje') return [d0(now), now]
+  if (p === 'ontem') { const y = new Date(now.getTime() - 86400000); return [d0(y), new Date(d0(y).getTime() + 86399999)] }
+  if (p === '7d') return [d0(new Date(now.getTime() - 6 * 86400000)), now]
+  if (p === '30d') return [d0(new Date(now.getTime() - 29 * 86400000)), now]
+  if (p === 'mes') return [d0(new Date(now.getFullYear(), now.getMonth(), 1)), now]
+  if (p === 'mes_ant') return [d0(new Date(now.getFullYear(), now.getMonth() - 1, 1)), new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)]
+  return [start, end]
+}
+function Relatorios() {
+  const [preset, setPreset] = useState('30d')
+  const [custom, setCustom] = useState({ inicio: '', fim: '' })
+  const [filtros, setFiltros] = useState({ pagamento: 'todos', status: 'todos', tipo: 'todos' })
+  const [rep, setRep] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      let inicio, fim
+      if (preset === 'custom') { inicio = custom.inicio ? new Date(custom.inicio) : null; fim = custom.fim ? new Date(custom.fim) : null }
+      else { const [a, b] = presetRange(preset); inicio = a; fim = b }
+      const qs = new URLSearchParams()
+      if (inicio) qs.set('inicio', inicio.toISOString())
+      if (fim) qs.set('fim', fim.toISOString())
+      for (const k of ['pagamento', 'status', 'tipo']) if (filtros[k] && filtros[k] !== 'todos') qs.set(k, filtros[k])
+      setRep(await api(`/financeiro/relatorio?${qs.toString()}`))
+    } catch (e) { toast.error(e.message) } finally { setLoading(false) }
+  }, [preset, custom, filtros])
+  useEffect(() => { load() }, [load])
+  const exportCsv = () => {
+    if (!rep) return
+    const rows = [['Data', 'Pedido', 'Cliente', 'Pagamento', 'Valor', 'Status', 'Origem'], ...rep.tabela.map((r) => [new Date(r.data).toLocaleString('pt-BR'), r.numero, r.cliente, r.pagamento, String(r.valor).replace('.', ','), r.status, r.origem])]
+    const csv = rows.map((r) => r.map((c) => `"${String(c ?? '')}"`).join(';')).join('\n')
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `relatorio-${Date.now()}.csv`; a.click()
+  }
+  const k = rep?.kpis
+  const maxForma = Math.max(1, ...(rep?.porFormaPagamento || []).map((f) => f.valor))
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end gap-3 print:hidden">
+        <div className="space-y-1"><Label className="text-xs">Período</Label>
+          <Select value={preset} onValueChange={setPreset}><SelectTrigger className="w-44"><SelectValue /></SelectTrigger><SelectContent>{REL_PRESETS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent></Select>
+        </div>
+        {preset === 'custom' && (
+          <>
+            <div className="space-y-1"><Label className="text-xs">Início</Label><Input type="date" className="w-40" value={custom.inicio} onChange={(e) => setCustom({ ...custom, inicio: e.target.value })} /></div>
+            <div className="space-y-1"><Label className="text-xs">Fim</Label><Input type="date" className="w-40" value={custom.fim} onChange={(e) => setCustom({ ...custom, fim: e.target.value })} /></div>
+          </>
+        )}
+        <div className="space-y-1"><Label className="text-xs">Pagamento</Label><Select value={filtros.pagamento} onValueChange={(v) => setFiltros({ ...filtros, pagamento: v })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao">Cartão</SelectItem><SelectItem value="dinheiro">Dinheiro</SelectItem></SelectContent></Select></div>
+        <div className="space-y-1"><Label className="text-xs">Status pedido</Label><Select value={filtros.status} onValueChange={(v) => setFiltros({ ...filtros, status: v })}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="novo">Novo</SelectItem><SelectItem value="em_preparacao">Em preparação</SelectItem><SelectItem value="pronto">Pronto</SelectItem><SelectItem value="saiu">Saiu p/ entrega</SelectItem><SelectItem value="entregue">Entregue</SelectItem><SelectItem value="cancelado">Cancelado</SelectItem></SelectContent></Select></div>
+        <div className="space-y-1"><Label className="text-xs">Tipo</Label><Select value={filtros.tipo} onValueChange={(v) => setFiltros({ ...filtros, tipo: v })}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="balcao">Balcão</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem><SelectItem value="mesa">Mesa</SelectItem></SelectContent></Select></div>
+        <div className="flex gap-2 ml-auto">
+          <Button variant="outline" onClick={exportCsv}>CSV</Button>
+          <Button variant="outline" onClick={() => window.print()}>PDF</Button>
+        </div>
+      </div>
+      {loading || !rep ? <Empty>Gerando relatório…</Empty> : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat icon={DollarSign} label="Faturamento bruto" value={brl(k.faturamento_bruto)} tone="emerald" />
+            <Stat icon={Wallet} label="Faturamento líquido" value={brl(k.faturamento_liquido)} tone="primary" />
+            <Stat icon={ShoppingBag} label="Total de pedidos" value={k.total_pedidos} tone="violet" />
+            <Stat icon={TrendingUp} label="Ticket médio" value={brl(k.ticket_medio)} tone="amber" />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat icon={TrendingUp} label="Receitas" value={brl(k.receitas)} tone="emerald" />
+            <Stat icon={TrendingDown} label="Despesas" value={brl(k.despesas)} tone="amber" />
+            <Stat icon={CheckCircle2} label="Recebidos" value={brl(k.recebidos)} tone="emerald" />
+            <Stat icon={Clock} label="Pendentes / Cancelados" value={`${brl(k.pendentes)} / ${brl(k.cancelados_reembolsados)}`} tone="amber" />
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Faturamento por dia</CardTitle></CardHeader><CardContent className="h-64">
+              <ResponsiveContainer width="100%" height="100%"><AreaChart data={rep.serie} margin={{ left: -18, right: 8, top: 8 }}>
+                <defs><linearGradient id="gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.35} /><stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0} /></linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="dia" tickLine={false} axisLine={false} fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                <YAxis tickLine={false} axisLine={false} fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                <RTooltip contentStyle={{ background: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 12 }} formatter={(v) => brl(v)} />
+                <Area type="monotone" dataKey="faturamento" stroke="hsl(var(--chart-1))" strokeWidth={2} fill="url(#gr)" />
+              </AreaChart></ResponsiveContainer>
+            </CardContent></Card>
+            <Card><CardHeader><CardTitle className="text-base">Por forma de pagamento</CardTitle></CardHeader><CardContent className="space-y-3">
+              {(rep.porFormaPagamento || []).length === 0 && <Empty>Sem dados</Empty>}
+              {(rep.porFormaPagamento || []).map((f) => (
+                <div key={f.forma} className="space-y-1"><div className="flex justify-between text-sm"><span className="capitalize">{f.forma}</span><span className="font-medium">{brl(f.valor)}</span></div><div className="h-2 rounded-full bg-muted overflow-hidden"><div className="h-full bg-primary" style={{ width: `${(f.valor / maxForma) * 100}%` }} /></div></div>
+              ))}
+            </CardContent></Card>
+          </div>
+          <Card><CardHeader><CardTitle className="text-base">Detalhamento ({rep.tabela.length})</CardTitle></CardHeader><CardContent className="p-0">
+            <Table>
+              <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Pedido</TableHead><TableHead>Cliente</TableHead><TableHead>Pagamento</TableHead><TableHead>Origem</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Valor</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {rep.tabela.map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-sm text-muted-foreground">{fmtDate(r.data)}</TableCell>
+                    <TableCell className="font-medium">#{r.numero}</TableCell>
+                    <TableCell>{r.cliente}</TableCell>
+                    <TableCell className="capitalize">{r.pagamento}</TableCell>
+                    <TableCell className="capitalize text-muted-foreground">{r.origem}</TableCell>
+                    <TableCell><Badge variant="outline" className={STATUS[r.status]?.cls || ''}>{STATUS[r.status]?.label || r.status}</Badge></TableCell>
+                    <TableCell className="text-right font-medium">{brl(r.valor)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {rep.tabela.length === 0 && <Empty>Sem registros no período.</Empty>}
+          </CardContent></Card>
+        </>
+      )}
     </div>
   )
 }
@@ -1088,11 +1221,175 @@ function ComandaDialog({ comandaId, onClose }) {
   )
 }
 
+/* ============================ ATENDIMENTO / DELIVERY ============================ */
+const CONV_STATUS = {
+  ABERTA: { label: 'Aberta', cls: 'bg-blue-500/15 text-blue-500 border-blue-500/20', dot: 'bg-blue-500' },
+  AGUARDANDO_EQUIPE: { label: 'Aguardando equipe', cls: 'bg-amber-500/15 text-amber-500 border-amber-500/20', dot: 'bg-amber-500' },
+  AGUARDANDO_CLIENTE: { label: 'Aguardando cliente', cls: 'bg-violet-500/15 text-violet-500 border-violet-500/20', dot: 'bg-violet-500' },
+  RESOLVIDA: { label: 'Resolvida', cls: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/20', dot: 'bg-emerald-500' },
+}
+const PEDIDO_STEPS = [['novo', 'Recebido'], ['novo', 'Confirmado'], ['em_preparacao', 'Preparando'], ['pronto', 'Pronto'], ['saiu', 'Saiu p/ entrega'], ['entregue', 'Entregue']]
+const STEP_ORDER = ['novo', 'em_preparacao', 'pronto', 'saiu', 'entregue']
+
+function Atendimento() {
+  const [convs, setConvs] = useState([])
+  const [metrics, setMetrics] = useState(null)
+  const [sel, setSel] = useState(null)
+  const [ctx, setCtx] = useState(null)
+  const [msgs, setMsgs] = useState([])
+  const [texto, setTexto] = useState('')
+  const [fStatus, setFStatus] = useState('todas')
+  const [fPedido, setFPedido] = useState('todos')
+  const [q, setQ] = useState('')
+  const [novoPedido, setNovoPedido] = useState(false)
+  const [sending, setSending] = useState(false)
+
+  const loadList = useCallback(async () => {
+    try {
+      const qs = new URLSearchParams()
+      if (fStatus !== 'todas') qs.set('status', fStatus)
+      if (fPedido !== 'todos') qs.set('pedido_status', fPedido)
+      if (q) qs.set('q', q)
+      const [c, m] = await Promise.all([api(`/conversas?${qs}`), api('/conversas/metrics')])
+      setConvs(c); setMetrics(m)
+    } catch (e) { /* silent on poll */ }
+  }, [fStatus, fPedido, q])
+  const loadConversa = useCallback(async (id) => {
+    try {
+      const [detail, mm] = await Promise.all([api(`/conversas/${id}`), api(`/conversas/${id}/mensagens`)])
+      setCtx(detail); setMsgs(mm)
+      api(`/conversas/${id}/ler`, { method: 'POST' }).catch(() => {})
+    } catch (e) { toast.error(e.message) }
+  }, [])
+  useEffect(() => { loadList() }, [loadList])
+  useEffect(() => { const t = setInterval(() => { loadList(); if (sel) api(`/conversas/${sel}/mensagens`).then(setMsgs).catch(() => {}) }, 5000); return () => clearInterval(t) }, [loadList, sel])
+  useEffect(() => { if (sel) loadConversa(sel) }, [sel, loadConversa])
+
+  const enviar = async () => {
+    if (!texto.trim() || !sel) return
+    setSending(true)
+    try { await api(`/conversas/${sel}/mensagens`, { method: 'POST', body: { texto } }); setTexto(''); loadConversa(sel); loadList() } catch (e) { toast.error(e.message) } finally { setSending(false) }
+  }
+  const setStatus = async (status) => { try { await api(`/conversas/${sel}`, { method: 'PUT', body: { status } }); loadConversa(sel); loadList() } catch (e) { toast.error(e.message) } }
+
+  const cliente = ctx?.cliente
+  const pedido = ctx?.pedido_ativo
+  const stepIdx = pedido ? STEP_ORDER.indexOf(pedido.status_norm) : -1
+
+  return (
+    <div className="space-y-4 h-full flex flex-col">
+      <PageHeader title="Central de Atendimento" description="Delivery via WhatsApp (Evolution API). Converse, acompanhe e crie pedidos sem sair da tela." />
+      {metrics && (
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
+          {[['Abertas', metrics.abertas], ['Não lidas', metrics.nao_lidas], ['Aguard. cliente', metrics.aguardando_cliente], ['Aguard. equipe', metrics.aguardando_equipe], ['Em andamento', metrics.pedidos_andamento], ['Prontos', metrics.pedidos_prontos], ['Em entrega', metrics.pedidos_entrega], ['Entregues hoje', metrics.pedidos_entregues_hoje]].map(([l, v]) => (
+            <Card key={l}><CardContent className="p-3"><div className="text-xs text-muted-foreground truncate">{l}</div><div className="text-xl font-bold">{v}</div></CardContent></Card>
+          ))}
+        </div>
+      )}
+      <div className="grid lg:grid-cols-[320px_1fr_300px] gap-4 flex-1 min-h-0">
+        {/* Col 1 - conversas */}
+        <Card className="flex flex-col min-h-0">
+          <div className="p-3 space-y-2 border-b">
+            <div className="relative"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-8 h-9" placeholder="Nome, telefone ou #pedido" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+            <div className="flex gap-1 flex-wrap">
+              {[['todas', 'Todas'], ['nao_lidas', 'Não lidas'], ['AGUARDANDO_EQUIPE', 'Equipe'], ['AGUARDANDO_CLIENTE', 'Cliente'], ['RESOLVIDA', 'Resolvidas']].map(([v, l]) => (
+                <button key={v} onClick={() => setFStatus(v)} className={`text-xs px-2 py-1 rounded-md ${fStatus === v ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{l}</button>
+              ))}
+            </div>
+            <Select value={fPedido} onValueChange={setFPedido}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos os pedidos</SelectItem><SelectItem value="sem_pedido">Sem pedido</SelectItem><SelectItem value="novo">Pedido novo</SelectItem><SelectItem value="em_preparacao">Em preparação</SelectItem><SelectItem value="pronto">Pronto</SelectItem><SelectItem value="saiu">Saiu p/ entrega</SelectItem><SelectItem value="entregue">Entregue</SelectItem><SelectItem value="cancelado">Cancelado</SelectItem></SelectContent></Select>
+          </div>
+          <div className="flex-1 overflow-auto ros-scroll divide-y">
+            {convs.map((c) => (
+              <button key={c.id} onClick={() => setSel(c.id)} className={`w-full text-left p-3 hover:bg-accent ${sel === c.id ? 'bg-accent' : ''}`}>
+                <div className="flex items-center gap-2">
+                  <Avatar className="h-9 w-9"><AvatarFallback className="text-xs bg-primary/10 text-primary">{(c.contato_nome || '?').slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1"><span className="font-medium text-sm truncate">{c.contato_nome}</span><span className="text-[10px] text-muted-foreground shrink-0">{c.ultima_mensagem_em ? new Date(c.ultima_mensagem_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}</span></div>
+                    <div className="flex items-center justify-between gap-1"><span className="text-xs text-muted-foreground truncate">{c.ultima_mensagem}</span>{c.nao_lidas > 0 && <span className="shrink-0 h-4 min-w-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] grid place-items-center">{c.nao_lidas}</span>}</div>
+                    <div className="flex items-center gap-1 mt-1"><span className={`h-1.5 w-1.5 rounded-full ${CONV_STATUS[c.status]?.dot}`} /><span className="text-[10px] text-muted-foreground">{CONV_STATUS[c.status]?.label}</span>{c.pedido && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">#{c.pedido.numero}</Badge>}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+            {convs.length === 0 && <Empty>Nenhuma conversa.</Empty>}
+          </div>
+        </Card>
+
+        {/* Col 2 - chat */}
+        <Card className="flex flex-col min-h-0">
+          {!ctx ? <div className="flex-1 grid place-items-center text-muted-foreground text-sm"><div className="text-center"><MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />Selecione uma conversa</div></div> : (
+            <>
+              <div className="p-3 border-b flex items-center justify-between">
+                <div className="flex items-center gap-2"><Avatar className="h-9 w-9"><AvatarFallback className="text-xs bg-primary/10 text-primary">{(ctx.conversa.contato_nome || '?').slice(0, 2).toUpperCase()}</AvatarFallback></Avatar><div><div className="font-medium text-sm">{ctx.conversa.contato_nome}</div><div className="text-xs text-muted-foreground">{ctx.conversa.contato_numero}</div></div></div>
+                <Select value={ctx.conversa.status} onValueChange={setStatus}><SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(CONV_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}</SelectContent></Select>
+              </div>
+              <div className="flex-1 overflow-auto ros-scroll p-4 space-y-2 bg-muted/30">
+                {msgs.map((m) => (
+                  <div key={m.id} className={`flex ${m.from_me ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${m.from_me ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-card border rounded-bl-sm'}`}>
+                      {['image', 'audio', 'document'].includes(m.tipo) && <div className="text-xs opacity-70 mb-0.5">[{m.tipo}]</div>}
+                      <div className="whitespace-pre-wrap break-words">{m.texto}</div>
+                      <div className={`text-[10px] mt-0.5 ${m.from_me ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>{new Date(m.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}{m.from_me && ` · ${m.status}`}</div>
+                    </div>
+                  </div>
+                ))}
+                {msgs.length === 0 && <Empty>Sem mensagens.</Empty>}
+              </div>
+              <div className="p-3 border-t flex gap-2">
+                <Input placeholder="Digite uma mensagem…" value={texto} onChange={(e) => setTexto(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && enviar()} />
+                <Button onClick={enviar} disabled={sending}>{sending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enviar'}</Button>
+              </div>
+            </>
+          )}
+        </Card>
+
+        {/* Col 3 - contexto */}
+        <Card className="flex flex-col min-h-0 overflow-auto ros-scroll">
+          {!ctx ? <div className="flex-1 grid place-items-center text-muted-foreground text-xs p-4 text-center">Contexto do cliente</div> : (
+            <div className="p-4 space-y-4">
+              <div><div className="text-xs text-muted-foreground">CLIENTE</div><div className="font-semibold">{cliente?.nome || ctx.conversa.contato_nome}</div><div className="text-sm text-muted-foreground">{ctx.conversa.contato_numero}</div></div>
+              <Separator />
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">PEDIDO ATUAL</div>
+                {pedido ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between"><span className="font-semibold">#{pedido.numero}</span><Badge variant="outline" className={STATUS[pedido.status]?.cls || ''}>{STATUS[pedido.status]?.label || pedido.status}</Badge></div>
+                    <div className="font-bold">{brl(pedido.total)}</div>
+                    <div className="space-y-1">
+                      {PEDIDO_STEPS.map(([sn, label], i) => {
+                        const done = STEP_ORDER.indexOf(sn) < stepIdx || (STEP_ORDER.indexOf(sn) === stepIdx)
+                        const current = STEP_ORDER.indexOf(sn) === stepIdx
+                        return <div key={i} className="flex items-center gap-2 text-xs"><span className={`h-3 w-3 rounded-full grid place-items-center ${current ? 'bg-primary' : done ? 'bg-emerald-500' : 'bg-muted'}`}>{done && !current && <CheckCircle2 className="h-2.5 w-2.5 text-white" />}</span><span className={current ? 'font-medium' : 'text-muted-foreground'}>{label}</span></div>
+                      })}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{(pedido.itens || []).map((i) => `${i.quantidade}x ${i.nome}`).join(', ')}</div>
+                  </div>
+                ) : <div className="text-sm text-muted-foreground">Nenhum pedido ativo.</div>}
+              </div>
+              <Separator />
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div><div className="text-xs text-muted-foreground">Pedidos</div><div className="font-semibold">{ctx.historico?.total_pedidos || 0}</div></div>
+                <div><div className="text-xs text-muted-foreground">Ticket</div><div className="font-semibold">{brl(ctx.historico?.ticket_medio || 0)}</div></div>
+                <div><div className="text-xs text-muted-foreground">Último</div><div className="font-semibold text-xs">{ctx.historico?.ultimo_pedido ? new Date(ctx.historico.ultimo_pedido).toLocaleDateString('pt-BR') : '—'}</div></div>
+              </div>
+              {cliente?.endereco && <><Separator /><div><div className="text-xs text-muted-foreground">ENDEREÇO</div><div className="text-sm">{cliente.endereco}</div></div></>}
+              <Separator />
+              <Button className="w-full" onClick={() => setNovoPedido(true)}><Plus className="h-4 w-4 mr-1" />Novo pedido</Button>
+            </div>
+          )}
+        </Card>
+      </div>
+      {novoPedido && <PedidoDialog clienteInicial={cliente?.id || ctx?.conversa?.cliente_id || null} onClose={() => setNovoPedido(false)} onSaved={() => { setNovoPedido(false); loadConversa(sel); loadList(); toast.success('Pedido criado') }} />}
+    </div>
+  )
+}
+
 /* ============================ SHELL ============================ */
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard' },
   { key: 'pedidos', label: 'Pedidos', icon: ShoppingBag, perm: 'pedidos' },
   { key: 'mesas', label: 'Mesas', icon: Armchair, perm: 'mesas' },
+  { key: 'atendimento', label: 'Atendimento', icon: MessageSquare, perm: 'atendimento' },
   { key: 'cardapio', label: 'Cardápio', icon: UtensilsCrossed, perm: 'cardapio' },
   { key: 'clientes', label: 'Clientes', icon: Users, perm: 'clientes' },
   { key: 'financeiro', label: 'Financeiro', icon: Wallet, perm: 'financeiro' },
@@ -1189,6 +1486,7 @@ function App() {
           {view === 'dashboard' && <Dashboard />}
           {view === 'pedidos' && <Pedidos />}
           {view === 'mesas' && <Mesas />}
+          {view === 'atendimento' && <Atendimento />}
           {view === 'cardapio' && <Cardapio />}
           {view === 'clientes' && <Clientes />}
           {view === 'financeiro' && <Financeiro />}
