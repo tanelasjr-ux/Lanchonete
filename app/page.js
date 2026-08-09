@@ -8,6 +8,7 @@ import {
   ChefHat, TrendingUp, TrendingDown, DollarSign, Package, ArrowUpRight,
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
+  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -54,6 +55,83 @@ const STATUS = {
   cancelado: { label: 'Cancelado', cls: 'bg-red-500/15 text-red-500 border-red-500/20' },
 }
 const FLOW = ['recebido', 'em_preparo', 'pronto', 'concluido']
+
+const MESA_STATUS = {
+  livre: { label: 'Livre', dot: 'bg-emerald-500', cls: 'border-emerald-500/30 bg-emerald-500/5', text: 'text-emerald-500' },
+  ocupada: { label: 'Ocupada', dot: 'bg-red-500', cls: 'border-red-500/40 bg-red-500/5', text: 'text-red-500' },
+  aguardando_pagamento: { label: 'Aguardando pagamento', dot: 'bg-amber-500', cls: 'border-amber-500/40 bg-amber-500/5', text: 'text-amber-500' },
+  reservada: { label: 'Reservada', dot: 'bg-blue-500', cls: 'border-blue-500/30 bg-blue-500/5', text: 'text-blue-500' },
+}
+
+// Converte HEX -> "H S% L%" para injetar nos tokens CSS (--primary etc.)
+function hexToHsl(hex) {
+  try {
+    let h = hex.replace('#', '')
+    if (h.length === 3) h = h.split('').map((c) => c + c).join('')
+    const r = parseInt(h.slice(0, 2), 16) / 255, g = parseInt(h.slice(2, 4), 16) / 255, b = parseInt(h.slice(4, 6), 16) / 255
+    const max = Math.max(r, g, b), min = Math.min(r, g, b)
+    let hh = 0, s = 0; const l = (max + min) / 2
+    if (max !== min) {
+      const d = max - min
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+      if (max === r) hh = (g - b) / d + (g < b ? 6 : 0)
+      else if (max === g) hh = (b - r) / d + 2
+      else hh = (r - g) / d + 4
+      hh /= 6
+    }
+    return `${Math.round(hh * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`
+  } catch { return null }
+}
+
+// Picker de cliente reutilizavel: busca por nome/telefone + criacao inline.
+function ClientePicker({ value, onChange }) {
+  const [clientes, setClientes] = useState([])
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [novo, setNovo] = useState({ nome: '', telefone: '', endereco: '' })
+  const load = useCallback(() => api('/clientes').then(setClientes).catch(() => {}), [])
+  useEffect(() => { load() }, [load])
+  const selected = clientes.find((c) => c.id === value)
+  const filtered = clientes.filter((c) => c.nome.toLowerCase().includes(q.toLowerCase()) || (c.telefone || '').includes(q)).slice(0, 6)
+  const criar = async () => {
+    if (!novo.nome) return toast.error('Informe o nome')
+    try { const c = await api('/clientes', { method: 'POST', body: novo }); toast.success('Cliente criado'); setClientes((s) => [c, ...s]); onChange(c.id); setCreating(false); setOpen(false); setNovo({ nome: '', telefone: '', endereco: '' }) } catch (e) { toast.error(e.message) }
+  }
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">Cliente</Label>
+      {selected && !open ? (
+        <div className="flex items-center justify-between rounded-lg border p-2.5">
+          <div className="text-sm"><span className="font-medium">{selected.nome}</span>{selected.telefone && <span className="text-muted-foreground"> · {selected.telefone}</span>}</div>
+          <Button size="sm" variant="ghost" className="h-7" onClick={() => setOpen(true)}>Trocar</Button>
+        </div>
+      ) : (
+        <div className="rounded-lg border p-2 space-y-2">
+          {!creating ? (
+            <>
+              <div className="relative"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-8 h-9" placeholder="Buscar por nome ou telefone" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+              <div className="max-h-40 overflow-auto ros-scroll">
+                <button type="button" onClick={() => { onChange(null); setOpen(false) }} className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-sm text-muted-foreground">Sem cliente (Consumidor)</button>
+                {filtered.map((c) => (
+                  <button type="button" key={c.id} onClick={() => { onChange(c.id); setOpen(false) }} className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-sm">{c.nome}<span className="text-muted-foreground text-xs"> {c.telefone}</span></button>
+                ))}
+              </div>
+              <Button type="button" size="sm" variant="outline" className="w-full" onClick={() => setCreating(true)}><UserPlus className="h-4 w-4 mr-1" />Novo cliente</Button>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <Input className="h-9" placeholder="Nome*" value={novo.nome} onChange={(e) => setNovo({ ...novo, nome: e.target.value })} />
+              <Input className="h-9" placeholder="Telefone / WhatsApp" value={novo.telefone} onChange={(e) => setNovo({ ...novo, telefone: e.target.value })} />
+              <Input className="h-9" placeholder="Endereco" value={novo.endereco} onChange={(e) => setNovo({ ...novo, endereco: e.target.value })} />
+              <div className="flex gap-2"><Button type="button" size="sm" onClick={criar}>Salvar</Button><Button type="button" size="sm" variant="ghost" onClick={() => setCreating(false)}>Cancelar</Button></div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /* ============================ AUTH SCREEN ============================ */
 function AuthScreen({ onAuth }) {
@@ -446,20 +524,41 @@ function Pedidos() {
 }
 function PedidoDialog({ onClose, onSaved }) {
   const [prods, setProds] = useState([])
-  const [clientes, setClientes] = useState([])
+  const [mesasLivres, setMesasLivres] = useState([])
   const [itens, setItens] = useState([])
-  const [cliente_id, setCliente] = useState('')
+  const [cliente_id, setCliente] = useState(null)
   const [tipo, setTipo] = useState('balcao')
   const [pagamento, setPag] = useState('pix')
-  useEffect(() => { api('/produtos').then(setProds); api('/clientes').then(setClientes) }, [])
+  const [mesa_id, setMesaId] = useState('')
+  const [pessoas, setPessoas] = useState(2)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    api('/produtos').then(setProds).catch(() => {})
+    api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {})
+  }, [])
   const add = (p) => setItens((s) => { const ex = s.find((i) => i.produto_id === p.id); if (ex) return s.map((i) => i.produto_id === p.id ? { ...i, quantidade: i.quantidade + 1 } : i); return [...s, { produto_id: p.id, nome: p.nome, preco: p.preco, quantidade: 1 }] })
   const dec = (id) => setItens((s) => s.map((i) => i.produto_id === id ? { ...i, quantidade: Math.max(0, i.quantidade - 1) } : i).filter((i) => i.quantidade > 0))
   const total = itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
-  const save = async () => { if (!itens.length) return toast.error('Adicione ao menos 1 item'); try { await api('/pedidos', { method: 'POST', body: { itens, cliente_id: cliente_id || null, tipo, pagamento } }); toast.success('Pedido criado'); onSaved() } catch (e) { toast.error(e.message) } }
+  const save = async () => {
+    if (!itens.length) return toast.error('Adicione ao menos 1 item')
+    setSaving(true)
+    try {
+      if (tipo === 'mesa') {
+        if (!mesa_id) { setSaving(false); return toast.error('Selecione a mesa') }
+        const comanda = await api(`/mesas/${mesa_id}/abrir`, { method: 'POST', body: { cliente_id, pessoas } })
+        for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade } })
+        toast.success('Comanda aberta na mesa')
+      } else {
+        await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento } })
+        toast.success('Pedido criado')
+      }
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
-        <DialogHeader><DialogTitle>Novo pedido</DialogTitle><DialogDescription>Selecione os itens e finalize o pedido.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Novo pedido</DialogTitle><DialogDescription>Selecione os itens, o cliente e o tipo de atendimento.</DialogDescription></DialogHeader>
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Produtos</Label>
@@ -472,24 +571,29 @@ function PedidoDialog({ onClose, onSaved }) {
             </div>
           </div>
           <div className="space-y-3">
+            <ClientePicker value={cliente_id} onChange={setCliente} />
             <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1"><Label className="text-xs">Cliente</Label>
-                <Select value={cliente_id} onValueChange={setCliente}><SelectTrigger><SelectValue placeholder="Consumidor" /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select>
-              </div>
               <div className="space-y-1"><Label className="text-xs">Tipo</Label>
-                <Select value={tipo} onValueChange={setTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="balcao">Balcão</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem></SelectContent></Select>
+                <Select value={tipo} onValueChange={setTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="balcao">Balcao</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem><SelectItem value="mesa">Mesa</SelectItem></SelectContent></Select>
               </div>
+              {tipo === 'mesa' ? (
+                <div className="space-y-1"><Label className="text-xs">Mesa</Label>
+                  <Select value={mesa_id} onValueChange={setMesaId}><SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger><SelectContent>{mesasLivres.map((m) => <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>)}</SelectContent></Select>
+                </div>
+              ) : (
+                <div className="space-y-1"><Label className="text-xs">Pagamento</Label>
+                  <Select value={pagamento} onValueChange={setPag}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao">Cartao</SelectItem><SelectItem value="dinheiro">Dinheiro</SelectItem></SelectContent></Select>
+                </div>
+              )}
             </div>
-            <div className="space-y-1"><Label className="text-xs">Pagamento</Label>
-              <Select value={pagamento} onValueChange={setPag}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao">Cartão</SelectItem><SelectItem value="dinheiro">Dinheiro</SelectItem></SelectContent></Select>
-            </div>
+            {tipo === 'mesa' && <div className="space-y-1"><Label className="text-xs">Pessoas</Label><Input type="number" min={1} value={pessoas} onChange={(e) => setPessoas(e.target.value)} /></div>}
             <Separator />
             <div className="space-y-2 max-h-40 overflow-auto ros-scroll">
               {itens.length === 0 && <p className="text-sm text-muted-foreground">Nenhum item adicionado.</p>}
               {itens.map((i) => (
                 <div key={i.produto_id} className="flex items-center justify-between text-sm">
                   <span className="flex-1">{i.nome}</span>
-                  <div className="flex items-center gap-2"><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => dec(i.produto_id)}>-</Button><span className="w-5 text-center">{i.quantidade}</span><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => add({ id: i.produto_id, nome: i.nome, preco: i.preco })}>+</Button></div>
+                  <div className="flex items-center gap-2"><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => dec(i.produto_id)}><Minus className="h-3 w-3" /></Button><span className="w-5 text-center">{i.quantidade}</span><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => add({ id: i.produto_id, nome: i.nome, preco: i.preco })}><Plus className="h-3 w-3" /></Button></div>
                   <span className="w-20 text-right font-medium">{brl(i.preco * i.quantidade)}</span>
                 </div>
               ))}
@@ -497,7 +601,7 @@ function PedidoDialog({ onClose, onSaved }) {
             <div className="flex items-center justify-between font-bold text-lg pt-2 border-t"><span>Total</span><span>{brl(total)}</span></div>
           </div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save}>Criar pedido</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{tipo === 'mesa' ? 'Abrir comanda' : 'Criar pedido'}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -636,39 +740,75 @@ function Empresa({ reload }) {
   const [f, setF] = useState(null)
   useEffect(() => { api('/empresa').then(setF).catch((e) => toast.error(e.message)) }, [])
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
-  const save = async () => { try { await api('/empresa', { method: 'PUT', body: { nome: f.nome, telefone: f.telefone, endereco: f.endereco, moeda: f.moeda } }); toast.success('Dados atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
+  const setAp = (k, v) => setF((s) => ({ ...s, config: { ...s.config, appearance: { ...(s.config?.appearance || {}), [k]: v } } }))
+  const setMet = (k, v) => setF((s) => ({ ...s, config: { ...s.config, pagamentos: { ...(s.config?.pagamentos || {}), metodos: { ...(s.config?.pagamentos?.metodos || {}), [k]: v } } } }))
+  const saveDados = async () => { try { await api('/empresa', { method: 'PUT', body: { nome: f.nome, nome_comercial: f.nome_comercial, cnpj: f.cnpj, telefone: f.telefone, whatsapp: f.whatsapp, email: f.email, endereco: f.endereco, horario_funcionamento: f.horario_funcionamento, moeda: f.moeda } }); toast.success('Dados atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
+  const saveApp = async () => { try { await api('/empresa', { method: 'PUT', body: { logo: f.logo, config: { appearance: f.config?.appearance } } }); toast.success('Aparencia atualizada'); reload?.() } catch (e) { toast.error(e.message) } }
+  const savePag = async () => { try { await api('/empresa', { method: 'PUT', body: { config: { pagamentos: f.config?.pagamentos } } }); toast.success('Pagamentos atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
   if (!f) return <Empty>Carregando…</Empty>
+  const ap = f.config?.appearance || {}
+  const met = f.config?.pagamentos?.metodos || {}
   const flags = f.config?.feature_flags || {}
   return (
     <div className="space-y-6 max-w-3xl">
-      <PageHeader title="Empresa" description="Dados cadastrais e módulos da plataforma." />
-      <Card>
-        <CardHeader><CardTitle className="text-base">Dados da empresa</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2"><Label>Nome</Label><Input value={f.nome} onChange={set('nome')} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2"><Label>Telefone</Label><Input value={f.telefone || ''} onChange={set('telefone')} /></div>
-            <div className="space-y-2"><Label>Moeda</Label><Input value={f.moeda || 'BRL'} onChange={set('moeda')} /></div>
-          </div>
-          <div className="space-y-2"><Label>Endereço</Label><Input value={f.endereco || ''} onChange={set('endereco')} /></div>
-          <div className="text-xs text-muted-foreground">Slug: <code className="bg-muted px-1.5 py-0.5 rounded">{f.slug}</code> · Plano: <Badge variant="secondary">{f.plano}</Badge></div>
-          <Button onClick={save}>Salvar alterações</Button>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle className="text-base">Módulos futuros (Feature Flags)</CardTitle><CardDescription>Arquitetura já preparada para ativação sem refatoração.</CardDescription></CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-3">
-          {['Controle de Mesas', 'Estoque', 'CRM', 'Campanhas', 'Fidelidade', 'Billing SaaS'].map((n, i) => {
-            const key = ['mesas', 'estoque', 'crm', 'campanhas', 'fidelidade', 'billing'][i]
-            return (
-              <div key={n} className="flex items-center justify-between rounded-lg border p-3">
-                <span className="text-sm">{n}</span>
-                <Badge variant="outline" className="text-muted-foreground">{flags[key] ? 'Ativo' : 'Em breve'}</Badge>
-              </div>
-            )
-          })}
-        </CardContent>
-      </Card>
+      <PageHeader title="Configuracoes" description="Personalize os dados, a identidade visual e as formas de pagamento." />
+      <Tabs defaultValue="dados">
+        <TabsList><TabsTrigger value="dados">Empresa</TabsTrigger><TabsTrigger value="aparencia">Aparencia</TabsTrigger><TabsTrigger value="pagamentos">Pagamentos</TabsTrigger><TabsTrigger value="modulos">Modulos</TabsTrigger></TabsList>
+
+        <TabsContent value="dados" className="mt-4">
+          <Card><CardHeader><CardTitle className="text-base">Dados da empresa</CardTitle></CardHeader><CardContent className="space-y-4">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-2"><Label>Razao social</Label><Input value={f.nome || ''} onChange={set('nome')} /></div>
+              <div className="space-y-2"><Label>Nome comercial</Label><Input value={f.nome_comercial || ''} onChange={set('nome_comercial')} /></div>
+              <div className="space-y-2"><Label>CNPJ</Label><Input value={f.cnpj || ''} onChange={set('cnpj')} /></div>
+              <div className="space-y-2"><Label>Telefone</Label><Input value={f.telefone || ''} onChange={set('telefone')} /></div>
+              <div className="space-y-2"><Label>WhatsApp</Label><Input value={f.whatsapp || ''} onChange={set('whatsapp')} /></div>
+              <div className="space-y-2"><Label>E-mail</Label><Input value={f.email || ''} onChange={set('email')} /></div>
+            </div>
+            <div className="space-y-2"><Label>Endereco</Label><Input value={f.endereco || ''} onChange={set('endereco')} /></div>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-2"><Label>Horario de funcionamento</Label><Input value={f.horario_funcionamento || ''} onChange={set('horario_funcionamento')} placeholder="Seg-Dom 11h-23h" /></div>
+              <div className="space-y-2"><Label>Moeda</Label><Input value={f.moeda || 'BRL'} onChange={set('moeda')} /></div>
+            </div>
+            <div className="text-xs text-muted-foreground">Slug: <code className="bg-muted px-1.5 py-0.5 rounded">{f.slug}</code> · Plano: <Badge variant="secondary">{f.plano}</Badge></div>
+            <Button onClick={saveDados}>Salvar dados</Button>
+          </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="aparencia" className="mt-4">
+          <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><Palette className="h-4 w-4" />Identidade visual</CardTitle><CardDescription>A plataforma passa a usar o nome e as cores da sua empresa.</CardDescription></CardHeader><CardContent className="space-y-4">
+            <div className="space-y-2"><Label>Nome exibido</Label><Input value={ap.nome_exibido || ''} onChange={(e) => setAp('nome_exibido', e.target.value)} placeholder="Nome que aparece no painel" /></div>
+            <div className="space-y-2"><Label>Logo (URL)</Label><Input value={f.logo || ''} onChange={set('logo')} placeholder="https://.../logo.png" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2"><Label>Cor principal</Label><div className="flex gap-2"><input type="color" className="h-9 w-12 rounded border bg-transparent" value={ap.cor_principal || '#4f46e5'} onChange={(e) => setAp('cor_principal', e.target.value)} /><Input value={ap.cor_principal || '#4f46e5'} onChange={(e) => setAp('cor_principal', e.target.value)} /></div></div>
+              <div className="space-y-2"><Label>Cor secundaria</Label><div className="flex gap-2"><input type="color" className="h-9 w-12 rounded border bg-transparent" value={ap.cor_secundaria || '#7c3aed'} onChange={(e) => setAp('cor_secundaria', e.target.value)} /><Input value={ap.cor_secundaria || '#7c3aed'} onChange={(e) => setAp('cor_secundaria', e.target.value)} /></div></div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3"><div><Label>Tema padrao</Label><p className="text-xs text-muted-foreground">Claro ou escuro ao entrar.</p></div>
+              <Select value={ap.tema || 'dark'} onValueChange={(v) => setAp('tema', v)}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dark">Escuro</SelectItem><SelectItem value="light">Claro</SelectItem></SelectContent></Select>
+            </div>
+            <Button onClick={saveApp}>Salvar aparencia</Button>
+          </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="pagamentos" className="mt-4">
+          <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><CreditCard className="h-4 w-4" />Formas de pagamento</CardTitle><CardDescription>Habilite os metodos aceitos pelo estabelecimento.</CardDescription></CardHeader><CardContent className="space-y-3">
+            {[['dinheiro', 'Dinheiro'], ['pix', 'Pix'], ['cartao_debito', 'Cartao de debito'], ['cartao_credito', 'Cartao de credito']].map(([k, label]) => (
+              <div key={k} className="flex items-center justify-between rounded-lg border p-3"><span className="text-sm">{label}</span><Switch checked={met[k] !== false} onCheckedChange={(v) => setMet(k, v)} /></div>
+            ))}
+            <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">Gateways online (Pix automatico) sao configurados em <span className="font-medium text-foreground">Integracoes</span>. Arquitetura preparada para Mercado Pago, Asaas e Stripe.</div>
+            <Button onClick={savePag}>Salvar pagamentos</Button>
+          </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="modulos" className="mt-4">
+          <Card><CardHeader><CardTitle className="text-base">Modulos</CardTitle><CardDescription>Arquitetura preparada para ativacao sem refatoracao.</CardDescription></CardHeader>
+          <CardContent className="grid sm:grid-cols-2 gap-3">
+            {[['Mesas & Comandas', 'mesas'], ['Estoque', 'estoque'], ['CRM', 'crm'], ['Campanhas', 'campanhas'], ['Fidelidade', 'fidelidade'], ['Cashback', 'cashback'], ['Caixa', 'caixa'], ['Multiunidades', 'multiunidade'], ['Billing SaaS', 'billing']].map(([n, key]) => (
+              <div key={n} className="flex items-center justify-between rounded-lg border p-3"><span className="text-sm">{n}</span><Badge variant="outline" className={flags[key] ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{flags[key] ? 'Ativo' : 'Em breve'}</Badge></div>
+            ))}
+          </CardContent></Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
@@ -686,6 +826,9 @@ function Integracoes() {
   const saveN8 = async () => { try { await api('/integracoes/n8n', { method: 'PUT', body: n8 }); toast.success('n8n salvo'); load() } catch (e) { toast.error(e.message) } }
   const testEv = async () => { setTesting('ev'); try { const r = await api('/integracoes/evolution/testar', { method: 'POST' }); r.connected ? toast.success('WhatsApp conectado!') : toast.warning(r.message || `Estado: ${r.state}`) } catch (e) { toast.error(e.message) } finally { setTesting('') } }
   const testN8 = async () => { setTesting('n8'); try { const r = await api('/integracoes/n8n/testar', { method: 'POST' }); r.connected ? toast.success('Webhook n8n respondeu!') : toast.warning(r.message || 'Sem resposta') } catch (e) { toast.error(e.message) } finally { setTesting('') } }
+  const [mp, setMp] = useState({ mode: 'sandbox', accessToken: '', webhookSecret: '' })
+  useEffect(() => { if (data?.mercadopago?.config) setMp((s) => ({ ...s, mode: data.mercadopago.config.mode || 'sandbox' })) }, [data])
+  const saveMp = async () => { try { await api('/integracoes/mercadopago', { method: 'PUT', body: mp }); toast.success('Mercado Pago salvo'); setMp((s) => ({ ...s, accessToken: '', webhookSecret: '' })); load() } catch (e) { toast.error(e.message) } }
   if (!data) return <Empty>Carregando…</Empty>
   const StatusBadge = ({ ok }) => <Badge variant="outline" className={ok ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{ok ? 'Configurado' : 'Não configurado'}</Badge>
   return (
@@ -714,6 +857,21 @@ function Integracoes() {
           <div className="space-y-2"><Label>Webhook URL</Label><Input value={n8.webhookUrl} onChange={(e) => setN8({ ...n8, webhookUrl: e.target.value })} placeholder="https://n8n.seudominio.com/webhook/xxxx" /></div>
           <div className="space-y-2"><Label>API Key (opcional)</Label><Input value={n8.apiKey} onChange={(e) => setN8({ ...n8, apiKey: e.target.value })} placeholder="••••••••" /></div>
           <div className="flex gap-2"><Button onClick={saveN8}>Salvar</Button><Button variant="outline" onClick={testN8} disabled={testing === 'n8'}>{testing === 'n8' && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Testar webhook</Button></div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-lg bg-sky-500/10 text-sky-500 grid place-items-center"><CircleDollarSign className="h-5 w-5" /></div><div><CardTitle className="text-base">Mercado Pago — Pagamentos Pix</CardTitle><CardDescription>Access Token fica somente no backend. Webhook validado por assinatura.</CardDescription></div></div>
+          <StatusBadge ok={data.mercadopago?.config?.hasAccessToken} />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2"><Label>Ambiente</Label><Select value={mp.mode} onValueChange={(v) => setMp({ ...mp, mode: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="sandbox">Sandbox (teste)</SelectItem><SelectItem value="production">Producao</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label>Webhook Secret</Label><Input value={mp.webhookSecret} onChange={(e) => setMp({ ...mp, webhookSecret: e.target.value })} placeholder={data.mercadopago?.config?.hasWebhookSecret ? '•••• (mantido)' : 'assinatura'} /></div>
+          </div>
+          <div className="space-y-2"><Label>Access Token</Label><Input type="password" value={mp.accessToken} onChange={(e) => setMp({ ...mp, accessToken: e.target.value })} placeholder={data.mercadopago?.config?.hasAccessToken ? '•••• (mantido — preencha para trocar)' : 'APP_USR-... ou TEST-...'} /></div>
+          <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">URL do webhook: <code className="bg-background px-1.5 py-0.5 rounded">/api/pagamentos/webhook/mercadopago?tenant=SUA_EMPRESA</code>. Suporta Pix (QR Code + Copia e Cola), status por webhook e idempotência.</div>
+          <Button onClick={saveMp}>Salvar credenciais</Button>
         </CardContent>
       </Card>
     </div>
@@ -747,10 +905,194 @@ function Auditoria() {
   )
 }
 
+/* ============================ MESAS / COMANDAS ============================ */
+function Mesas() {
+  const [mesas, setMesas] = useState([])
+  const [cfg, setCfg] = useState(false)
+  const [abrir, setAbrir] = useState(null) // mesa livre
+  const [comandaId, setComandaId] = useState(null)
+  const load = useCallback(() => api('/mesas').then(setMesas).catch((e) => toast.error(e.message)), [])
+  useEffect(() => { load() }, [load])
+  const onClickMesa = (m) => { if (m.status === 'livre') setAbrir(m); else if (m.comanda_id) setComandaId(m.comanda_id) }
+  const resumo = ['livre', 'ocupada', 'aguardando_pagamento', 'reservada'].map((s) => ({ s, n: mesas.filter((m) => m.status === s).length }))
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Mesas" description="Controle de salao em tempo real. Clique numa mesa para abrir ou gerenciar a comanda." action={<Button variant="outline" onClick={() => setCfg(true)}><Settings className="h-4 w-4 mr-1" />Configurar mesas</Button>} />
+      <div className="flex flex-wrap gap-4">
+        {resumo.map(({ s, n }) => (
+          <div key={s} className="flex items-center gap-2 text-sm"><span className={`h-2.5 w-2.5 rounded-full ${MESA_STATUS[s].dot}`} /><span className="text-muted-foreground">{MESA_STATUS[s].label}</span><span className="font-semibold">{n}</span></div>
+        ))}
+      </div>
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+        {mesas.map((m) => {
+          const st = MESA_STATUS[m.status] || MESA_STATUS.livre
+          return (
+            <button key={m.id} onClick={() => onClickMesa(m)} className={`text-left rounded-xl border-2 p-4 transition-all hover:shadow-md ${st.cls}`}>
+              <div className="flex items-center justify-between">
+                <span className="font-bold">{m.nome}</span>
+                <span className={`h-2.5 w-2.5 rounded-full ${st.dot}`} />
+              </div>
+              <div className={`text-xs mt-1 ${st.text}`}>{st.label}</div>
+              <div className="mt-3 h-10">
+                {m.comanda ? (
+                  <div>
+                    <div className="text-lg font-bold">{brl(m.comanda.total)}</div>
+                    <div className="text-xs text-muted-foreground truncate">{m.comanda.cliente_nome} · {m.comanda.itens_count} itens</div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground flex items-center gap-1"><Armchair className="h-3.5 w-3.5" />{m.capacidade} lugares</div>
+                )}
+              </div>
+            </button>
+          )
+        })}
+        {mesas.length === 0 && <div className="col-span-full"><Empty>Nenhuma mesa configurada. Clique em "Configurar mesas".</Empty></div>}
+      </div>
+      {cfg && <ConfigurarMesasDialog atual={mesas.length} onClose={() => setCfg(false)} onSaved={() => { setCfg(false); load() }} />}
+      {abrir && <AbrirComandaDialog mesa={abrir} onClose={() => setAbrir(null)} onOpened={(cid) => { setAbrir(null); load(); setComandaId(cid) }} />}
+      {comandaId && <ComandaDialog comandaId={comandaId} onClose={() => { setComandaId(null); load() }} />}
+    </div>
+  )
+}
+function ConfigurarMesasDialog({ atual, onClose, onSaved }) {
+  const [quantidade, setQ] = useState(atual || 10)
+  const [capacidade, setCap] = useState(4)
+  const save = async () => { try { await api('/mesas/configurar', { method: 'POST', body: { quantidade: Number(quantidade), capacidade: Number(capacidade) } }); toast.success('Salao configurado'); onSaved() } catch (e) { toast.error(e.message) } }
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Configurar mesas</DialogTitle><DialogDescription>Defina quantas mesas o estabelecimento possui. Mesas ocupadas nunca sao removidas.</DialogDescription></DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2"><Label>Quantidade de mesas</Label><Input type="number" min={0} value={quantidade} onChange={(e) => setQ(e.target.value)} /></div>
+          <div className="space-y-2"><Label>Capacidade padrao</Label><Input type="number" min={1} value={capacidade} onChange={(e) => setCap(e.target.value)} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+function AbrirComandaDialog({ mesa, onClose, onOpened }) {
+  const [cliente_id, setCliente] = useState(null)
+  const [pessoas, setPessoas] = useState(2)
+  const open = async () => { try { const c = await api(`/mesas/${mesa.id}/abrir`, { method: 'POST', body: { cliente_id, pessoas: Number(pessoas) } }); toast.success('Comanda aberta'); onOpened(c.id) } catch (e) { toast.error(e.message) } }
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Abrir {mesa.nome}</DialogTitle><DialogDescription>Inicie o atendimento associando um cliente (opcional).</DialogDescription></DialogHeader>
+        <div className="space-y-3">
+          <ClientePicker value={cliente_id} onChange={setCliente} />
+          <div className="space-y-1"><Label className="text-xs">Numero de pessoas</Label><Input type="number" min={1} value={pessoas} onChange={(e) => setPessoas(e.target.value)} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={open}>Abrir comanda</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+function ComandaDialog({ comandaId, onClose }) {
+  const [c, setC] = useState(null)
+  const [prods, setProds] = useState([])
+  const [mesasLivres, setMesasLivres] = useState([])
+  const [addOpen, setAddOpen] = useState(false)
+  const [pay, setPay] = useState({ metodo: 'dinheiro', valor: '' })
+  const [pix, setPix] = useState(null)
+  const [transferOpen, setTransferOpen] = useState(false)
+  const load = useCallback(async () => { const d = await api(`/comandas/${comandaId}`); setC(d) }, [comandaId])
+  useEffect(() => { load().catch((e) => toast.error(e.message)); api('/produtos').then(setProds).catch(() => {}); api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {}) }, [load])
+  if (!c) return <Dialog open onOpenChange={onClose}><DialogContent><Empty>Carregando comanda…</Empty></DialogContent></Dialog>
+  const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1 } }); setC(d) } catch (e) { toast.error(e.message) } }
+  const setQty = async (item, q) => { if (q <= 0) { const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'DELETE' }); setC(d); return } const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'PUT', body: { quantidade: q } }); setC(d) }
+  const updateComanda = async (patch) => { try { const d = await api(`/comandas/${comandaId}`, { method: 'PUT', body: patch }); setC(d) } catch (e) { toast.error(e.message) } }
+  const addPay = async () => { if (!pay.valor) return toast.error('Informe o valor'); try { const d = await api(`/comandas/${comandaId}/pagamentos`, { method: 'POST', body: { metodo: pay.metodo, valor: Number(pay.valor) } }); setC(d); setPay({ metodo: 'dinheiro', valor: '' }); toast.success('Pagamento registrado') } catch (e) { toast.error(e.message) } }
+  const gerarPix = async () => { try { const r = await api(`/comandas/${comandaId}/pix`, { method: 'POST', body: {} }); setPix(r); toast.success('Pix gerado') } catch (e) { toast.error(e.message) } }
+  const transferir = async (mesa_id) => { try { await api(`/comandas/${comandaId}/transferir`, { method: 'POST', body: { mesa_id } }); toast.success('Comanda transferida'); setTransferOpen(false); load() } catch (e) { toast.error(e.message) } }
+  const fechar = async () => { try { const r = await api(`/comandas/${comandaId}/fechar`, { method: 'POST', body: {} }); toast.success(`Comanda fechada · Pedido #${r.pedido_numero}`); onClose() } catch (e) { toast.error(e.message) } }
+  const porPessoa = c.pessoas > 0 ? c.restante / c.pessoas : c.restante
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[92vh] overflow-auto ros-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">{c.mesa_nome}<Badge variant="secondary">{c.pessoas} pessoas</Badge></DialogTitle>
+          <DialogDescription>Cliente: {c.cliente_nome} · Operador: {c.operador_nome}</DialogDescription>
+        </DialogHeader>
+        <div className="grid md:grid-cols-5 gap-4">
+          {/* Itens */}
+          <div className="md:col-span-3 space-y-3">
+            <div className="flex items-center justify-between"><Label>Itens da comanda</Label><Button size="sm" variant="outline" onClick={() => setAddOpen(!addOpen)}><Plus className="h-4 w-4 mr-1" />Adicionar item</Button></div>
+            {addOpen && (
+              <div className="border rounded-lg divide-y max-h-40 overflow-auto ros-scroll">
+                {prods.map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
+              </div>
+            )}
+            <div className="border rounded-lg divide-y">
+              {(c.itens || []).length === 0 && <div className="p-4 text-sm text-muted-foreground text-center">Nenhum item lancado.</div>}
+              {(c.itens || []).map((i) => (
+                <div key={i.id} className="flex items-center gap-3 p-3">
+                  <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{i.nome}</div>{i.observacao && <div className="text-xs text-muted-foreground">{i.observacao}</div>}</div>
+                  <div className="flex items-center gap-1.5"><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade - 1)}><Minus className="h-3 w-3" /></Button><span className="w-6 text-center text-sm">{i.quantidade}</span><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade + 1)}><Plus className="h-3 w-3" /></Button></div>
+                  <div className="w-20 text-right text-sm font-medium">{brl(i.preco * i.quantidade)}</div>
+                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => setQty(i, 0)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                </div>
+              ))}
+            </div>
+            {pix && (
+              <Card><CardContent className="p-4 flex gap-4 items-center">
+                {pix.qr_code_base64 ? <img alt="QR Pix" className="h-28 w-28 rounded-md bg-white p-1" src={`data:image/png;base64,${pix.qr_code_base64}`} /> : <div className="h-28 w-28 rounded-md bg-muted grid place-items-center"><QrCode className="h-8 w-8 text-muted-foreground" /></div>}
+                <div className="flex-1 space-y-2">
+                  <div className="text-sm font-medium">Pix · {brl(pix.valor)} · <span className="text-amber-500">{pix.status}</span></div>
+                  {pix.qr_code && <div className="flex gap-2"><Input readOnly value={pix.qr_code} className="text-xs" /><Button size="icon" variant="outline" onClick={() => { navigator.clipboard.writeText(pix.qr_code); toast.success('Copiado') }}><Copy className="h-4 w-4" /></Button></div>}
+                </div>
+              </CardContent></Card>
+            )}
+          </div>
+          {/* Resumo & acoes */}
+          <div className="md:col-span-2 space-y-3">
+            <Card><CardContent className="p-4 space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{brl(c.subtotal)}</span></div>
+              <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground flex items-center gap-1"><Percent className="h-3.5 w-3.5" />Desconto</span>
+                <div className="flex items-center gap-1"><Input type="number" className="h-7 w-20 text-right" defaultValue={c.desconto} onBlur={(e) => updateComanda({ desconto: Number(e.target.value), desconto_tipo: c.desconto_tipo })} /><Select value={c.desconto_tipo} onValueChange={(v) => updateComanda({ desconto_tipo: v })}><SelectTrigger className="h-7 w-16"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="valor">R$</SelectItem><SelectItem value="percent">%</SelectItem></SelectContent></Select></div>
+              </div>
+              <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Taxa servico (%)</span><Input type="number" className="h-7 w-20 text-right" defaultValue={c.taxa_servico_percent} onBlur={(e) => updateComanda({ taxa_servico_percent: Number(e.target.value) })} /></div>
+              <Separator />
+              <div className="flex justify-between font-bold text-base"><span>Total</span><span>{brl(c.total)}</span></div>
+              <div className="flex justify-between text-emerald-500"><span>Pago</span><span>{brl(c.pago)}</span></div>
+              <div className="flex justify-between text-amber-500 font-medium"><span>Restante</span><span>{brl(c.restante)}</span></div>
+              <div className="flex justify-between text-xs text-muted-foreground"><span className="flex items-center gap-1"><Split className="h-3 w-3" />Por pessoa ({c.pessoas})</span><span>{brl(porPessoa)}</span></div>
+            </CardContent></Card>
+
+            <Card><CardContent className="p-4 space-y-2">
+              <Label className="text-xs">Registrar pagamento</Label>
+              <div className="flex gap-2">
+                <Select value={pay.metodo} onValueChange={(v) => setPay({ ...pay, metodo: v })}><SelectTrigger className="h-9"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dinheiro">Dinheiro</SelectItem><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao_debito">Debito</SelectItem><SelectItem value="cartao_credito">Credito</SelectItem></SelectContent></Select>
+                <Input type="number" className="h-9" placeholder="Valor" value={pay.valor} onChange={(e) => setPay({ ...pay, valor: e.target.value })} />
+                <Button className="h-9" onClick={addPay}>OK</Button>
+              </div>
+              <Button variant="outline" className="w-full h-9" onClick={() => setPay({ ...pay, valor: String(c.restante) })}>Preencher restante</Button>
+              <Button variant="outline" className="w-full h-9" onClick={gerarPix}><QrCode className="h-4 w-4 mr-1" />Gerar Pix (Mercado Pago)</Button>
+              {(c.pagamentos || []).length > 0 && <div className="space-y-1 pt-1">{c.pagamentos.map((p) => <div key={p.id} className="flex justify-between text-xs"><span className="text-muted-foreground capitalize">{p.metodo.replace('_', ' ')}</span><span className="text-emerald-500">{brl(p.valor)}</span></div>)}</div>}
+            </CardContent></Card>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => setTransferOpen(!transferOpen)}><ArrowRightLeft className="h-4 w-4 mr-1" />Transferir</Button>
+              <Button onClick={fechar}><CheckCircle2 className="h-4 w-4 mr-1" />Fechar conta</Button>
+            </div>
+            {transferOpen && (
+              <div className="border rounded-lg p-2 max-h-32 overflow-auto ros-scroll">
+                {mesasLivres.length === 0 && <div className="text-xs text-muted-foreground p-2">Nenhuma mesa livre.</div>}
+                {mesasLivres.map((m) => <button key={m.id} onClick={() => transferir(m.id)} className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-sm">{m.nome}</button>)}
+              </div>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /* ============================ SHELL ============================ */
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard' },
   { key: 'pedidos', label: 'Pedidos', icon: ShoppingBag, perm: 'pedidos' },
+  { key: 'mesas', label: 'Mesas', icon: Armchair, perm: 'mesas' },
   { key: 'cardapio', label: 'Cardápio', icon: UtensilsCrossed, perm: 'cardapio' },
   { key: 'clientes', label: 'Clientes', icon: Users, perm: 'clientes' },
   { key: 'financeiro', label: 'Financeiro', icon: Wallet, perm: 'financeiro' },
@@ -766,27 +1108,37 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const { theme, setTheme } = useTheme()
 
-  const loadMe = useCallback(async () => {
+  const applyBranding = useCallback((empresa, changeTheme) => {
+    const ap = empresa?.config?.appearance || {}
+    const root = document.documentElement
+    const hsl = ap.cor_principal ? hexToHsl(ap.cor_principal) : null
+    if (hsl) { root.style.setProperty('--primary', hsl); root.style.setProperty('--ring', hsl); root.style.setProperty('--sidebar-primary', hsl); root.style.setProperty('--sidebar-ring', hsl) }
+    if (changeTheme && ap.tema) setTheme(ap.tema)
+  }, [setTheme])
+
+  const loadMe = useCallback(async (firstLoad) => {
     if (!getToken()) { setMe(null); return }
-    try { setMe(await api('/auth/me')) } catch { localStorage.removeItem(TOKEN_KEY); setMe(null) }
-  }, [])
-  useEffect(() => { loadMe() }, [loadMe])
+    try { const data = await api('/auth/me'); setMe(data); applyBranding(data.empresa, firstLoad) } catch { localStorage.removeItem(TOKEN_KEY); setMe(null) }
+  }, [applyBranding])
+  useEffect(() => { loadMe(true) }, [loadMe])
 
   const logout = () => { localStorage.removeItem(TOKEN_KEY); setMe(null); setView('dashboard') }
 
   if (me === undefined) return <div className="min-h-screen grid place-items-center bg-background"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
-  if (me === null) return <><AuthScreen onAuth={loadMe} /><Toaster richColors position="top-right" /></>
+  if (me === null) return <><AuthScreen onAuth={() => loadMe(true)} /><Toaster richColors position="top-right" /></>
 
   const perms = me.permissions || []
   const has = (p) => perms.includes('*') || perms.includes(p)
   const nav = NAV.filter((n) => has(n.perm))
   const initials = (me.usuario?.nome || '?').split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()
+  const brandName = me.empresa?.config?.appearance?.nome_exibido || me.empresa?.nome_comercial || me.empresa?.nome || 'Restaurant OS'
+  const logo = me.empresa?.logo
 
   const Sidebar = ({ mobile }) => (
     <aside className={`${mobile ? 'flex' : 'hidden lg:flex'} w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar h-full`}>
       <div className="h-16 flex items-center gap-2 px-5 border-b border-sidebar-border font-semibold">
-        <div className="h-8 w-8 rounded-lg bg-primary grid place-items-center text-primary-foreground"><ChefHat className="h-4.5 w-4.5" /></div>
-        <span>Restaurant OS</span>
+        {logo ? <img src={logo} alt="logo" className="h-8 w-8 rounded-lg object-cover" /> : <div className="h-8 w-8 rounded-lg bg-primary grid place-items-center text-primary-foreground"><ChefHat className="h-4.5 w-4.5" /></div>}
+        <span className="truncate">{brandName}</span>
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-auto ros-scroll">
         {nav.map((n) => {
@@ -836,6 +1188,7 @@ function App() {
         <main className="flex-1 overflow-auto ros-scroll p-4 lg:p-6">
           {view === 'dashboard' && <Dashboard />}
           {view === 'pedidos' && <Pedidos />}
+          {view === 'mesas' && <Mesas />}
           {view === 'cardapio' && <Cardapio />}
           {view === 'clientes' && <Clientes />}
           {view === 'financeiro' && <Financeiro />}
