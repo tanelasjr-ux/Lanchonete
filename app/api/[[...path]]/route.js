@@ -19,7 +19,7 @@ import { MongoClient } from 'mongodb'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { fetchInstanceStatus } from '@/lib/integrations/evolution'
+import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evolution'
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus } from '@/lib/integrations/supabase'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
@@ -44,7 +44,7 @@ async function ensureIndexes(database) {
   try {
     await database.collection('usuarios').createIndex({ email: 1 }, { unique: true })
     await database.collection('usuarios').createIndex({ empresa_id: 1 })
-    for (const c of ['categorias', 'produtos', 'clientes', 'pedidos', 'transacoes', 'auditoria', 'integracoes', 'mesas', 'comandas', 'pagamentos', 'webhook_events']) {
+    for (const c of ['categorias', 'produtos', 'clientes', 'pedidos', 'transacoes', 'auditoria', 'integracoes', 'mesas', 'comandas', 'pagamentos', 'webhook_events', 'conversas', 'mensagens']) {
       await database.collection(c).createIndex({ empresa_id: 1 })
     }
     await database.collection('empresas').createIndex({ slug: 1 }, { unique: true })
@@ -103,9 +103,9 @@ const ROLES = {
 }
 const PERMISSIONS = {
   OWNER: ['*'],
-  ADMIN: ['dashboard', 'cardapio', 'clientes', 'pedidos', 'mesas', 'financeiro', 'usuarios', 'empresa', 'auditoria', 'integracoes', 'pagamentos'],
-  GERENTE: ['dashboard', 'cardapio', 'clientes', 'pedidos', 'mesas', 'financeiro', 'pagamentos'],
-  ATENDENTE: ['dashboard', 'clientes', 'pedidos', 'mesas', 'pagamentos'],
+  ADMIN: ['dashboard', 'cardapio', 'clientes', 'pedidos', 'mesas', 'financeiro', 'relatorios', 'atendimento', 'usuarios', 'empresa', 'auditoria', 'integracoes', 'pagamentos'],
+  GERENTE: ['dashboard', 'cardapio', 'clientes', 'pedidos', 'mesas', 'financeiro', 'relatorios', 'atendimento', 'pagamentos'],
+  ATENDENTE: ['dashboard', 'clientes', 'pedidos', 'mesas', 'atendimento', 'pagamentos'],
   COZINHA: ['dashboard', 'pedidos'],
 }
 function can(papel, modulo) {
@@ -356,6 +356,18 @@ async function seedEmpresa(database, empresa_id, ctx) {
   await database.collection('mesas').insertMany(mesas)
   await database.collection('comandas').insertOne(comandaBase)
 
+  // Central de Atendimento: 2 conversas demo
+  const conv1 = { id: uuidv4(), empresa_id, cliente_id: clientes[0].id, contato_nome: clientes[0].nome, contato_numero: clientes[0].telefone, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: 'Ola! Meu pedido ja saiu?', ultima_mensagem_em: new Date(now - 5 * 60000), nao_lidas: 2, operador_id: null, pedido_ativo_id: null, created_at: new Date(now - 3600000), updated_at: new Date() }
+  const conv2 = { id: uuidv4(), empresa_id, cliente_id: clientes[1].id, contato_nome: clientes[1].nome, contato_numero: clientes[1].telefone, status: 'AGUARDANDO_CLIENTE', ultima_mensagem: 'Perfeito, obrigado!', ultima_mensagem_em: new Date(now - 30 * 60000), nao_lidas: 0, operador_id: ctx.usuario_id, pedido_ativo_id: null, created_at: new Date(now - 7200000), updated_at: new Date() }
+  await database.collection('conversas').insertMany([conv1, conv2])
+  await database.collection('mensagens').insertMany([
+    { id: uuidv4(), empresa_id, conversa_id: conv1.id, direcao: 'in', tipo: 'text', texto: 'Boa noite!', from_me: false, status: 'delivered', created_at: new Date(now - 20 * 60000) },
+    { id: uuidv4(), empresa_id, conversa_id: conv1.id, direcao: 'in', tipo: 'text', texto: 'Ola! Meu pedido ja saiu?', from_me: false, status: 'delivered', created_at: new Date(now - 5 * 60000) },
+    { id: uuidv4(), empresa_id, conversa_id: conv2.id, direcao: 'in', tipo: 'text', texto: 'Quero fazer um pedido de delivery', from_me: false, status: 'delivered', created_at: new Date(now - 40 * 60000) },
+    { id: uuidv4(), empresa_id, conversa_id: conv2.id, direcao: 'out', tipo: 'text', texto: 'Claro! Pode me dizer o que deseja?', from_me: true, status: 'read', operador_id: ctx.usuario_id, created_at: new Date(now - 35 * 60000) },
+    { id: uuidv4(), empresa_id, conversa_id: conv2.id, direcao: 'in', tipo: 'text', texto: 'Perfeito, obrigado!', from_me: false, status: 'delivered', created_at: new Date(now - 30 * 60000) },
+  ])
+
   await audit(database, ctx, 'seed', 'empresa', empresa_id, { produtos: prods.length, pedidos: pedidos.length, mesas: mesas.length })
 }
 
@@ -480,6 +492,41 @@ async function handler(request, { params }) {
         { $set: { status: statusInfo.status, updated_at: new Date() } }
       )
       return json({ ok: true, status: statusInfo.status })
+    }
+
+    /* ==================== WEBHOOK WHATSAPP (Evolution, pre-auth) ==================== */
+    if (route === '/whatsapp/webhook' && method === 'POST') {
+      const url = new URL(request.url)
+      const empresaId = url.searchParams.get('tenant')
+      const body = (await request.json().catch(() => ({}))) || {}
+      if (!empresaId) return json({ ok: true, ignored: 'no-tenant' })
+      const data = body.data || body
+      const key = data.key || {}
+      if (key.fromMe) return json({ ok: true, ignored: 'from_me' }) // apenas inbound
+      const remoteJid = key.remoteJid || data.remoteJid || ''
+      const numero = String(remoteJid).split('@')[0].replace(/\D/g, '')
+      if (!numero) return json({ ok: true, ignored: 'no-number' })
+      const nome = data.pushName || `Cliente ${numero.slice(-4)}`
+      const msg = data.message || {}
+      const tipo = data.messageType || (msg.imageMessage ? 'image' : msg.audioMessage ? 'audio' : msg.documentMessage ? 'document' : 'text')
+      const texto = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || (tipo !== 'text' ? `[${tipo}]` : '')
+      // localiza/cria cliente por telefone (multitenant)
+      let cliente = await database.collection('clientes').findOne({ empresa_id: empresaId, telefone: numero })
+      if (!cliente) {
+        cliente = { id: uuidv4(), empresa_id: empresaId, nome, telefone: numero, email: '', endereco: '', observacoes: '', total_pedidos: 0, total_gasto: 0, created_at: new Date() }
+        await database.collection('clientes').insertOne(cliente)
+      }
+      // localiza/cria conversa
+      let conversa = await database.collection('conversas').findOne({ empresa_id: empresaId, contato_numero: numero })
+      if (!conversa) {
+        conversa = { id: uuidv4(), empresa_id: empresaId, cliente_id: cliente.id, contato_nome: cliente.nome || nome, contato_numero: numero, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: texto, ultima_mensagem_em: new Date(), nao_lidas: 1, operador_id: null, pedido_ativo_id: null, created_at: new Date(), updated_at: new Date() }
+        await database.collection('conversas').insertOne(conversa)
+        await audit(database, { empresa_id: empresaId, usuario_id: null, nome: 'WhatsApp' }, 'criar', 'conversa', conversa.id, { numero })
+      } else {
+        await database.collection('conversas').updateOne({ id: conversa.id, empresa_id: empresaId }, { $set: { ultima_mensagem: texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_EQUIPE', updated_at: new Date() }, $inc: { nao_lidas: 1 } })
+      }
+      await database.collection('mensagens').insertOne({ id: uuidv4(), empresa_id: empresaId, conversa_id: conversa.id, direcao: 'in', tipo, texto, media_url: null, from_me: false, status: 'delivered', provider_message_id: key.id || null, created_at: new Date() })
+      return json({ ok: true })
     }
 
     /* ---- a partir daqui, tudo autenticado ---- */
@@ -728,8 +775,9 @@ async function handler(request, { params }) {
       for (const k of ['status', 'tipo', 'pagamento', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
       await database.collection('pedidos').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
 
-      // Regra de negocio: ao concluir, gera receita e atualiza metricas do cliente
-      if (b.status === 'concluido' && pedido.status !== 'concluido') {
+      // Regra de negocio: ao concluir/entregar, gera receita e atualiza metricas do cliente
+      const finais = ['concluido', 'ENTREGUE']
+      if (finais.includes(b.status) && !finais.includes(pedido.status)) {
         await database.collection('transacoes').insertOne({
           id: uuidv4(),
           empresa_id: ctx.empresa_id,
@@ -1173,6 +1221,192 @@ async function handler(request, { params }) {
       }
       const { _id, ...rest } = p
       return json(rest)
+    }
+
+    /* ==================== ATENDIMENTO / CONVERSAS ==================== */
+    const normPedidoStatus = (s) => {
+      if (['recebido', 'NOVO', 'CONFIRMADO'].includes(s)) return 'novo'
+      if (['em_preparo', 'EM_PREPARACAO'].includes(s)) return 'em_preparacao'
+      if (['pronto', 'PRONTO'].includes(s)) return 'pronto'
+      if (['SAIU_PARA_ENTREGA'].includes(s)) return 'saiu'
+      if (['concluido', 'ENTREGUE'].includes(s)) return 'entregue'
+      if (['cancelado', 'CANCELADO'].includes(s)) return 'cancelado'
+      return 'novo'
+    }
+    const pedidoAtivoDoCliente = (pedidos, cliente_id) => {
+      const doCliente = pedidos.filter((p) => p.cliente_id === cliente_id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      if (!doCliente.length) return { has: false, pedido: null }
+      const ativo = doCliente.find((p) => !['concluido', 'ENTREGUE', 'cancelado', 'CANCELADO'].includes(p.status))
+      return { has: true, pedido: ativo || doCliente[0] }
+    }
+    if (route === '/conversas/metrics' && method === 'GET') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      const [convs, pedidos] = await Promise.all([
+        database.collection('conversas').find(tenant).toArray(),
+        database.collection('pedidos').find(tenant).toArray(),
+      ])
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      const byStatus = (s) => convs.filter((c) => c.status === s).length
+      const resolvidas = convs.filter((c) => c.status === 'RESOLVIDA' && c.created_at && c.updated_at)
+      const tempoMedioMin = resolvidas.length ? Math.round(resolvidas.reduce((s, c) => s + (new Date(c.updated_at) - new Date(c.created_at)), 0) / resolvidas.length / 60000) : 0
+      return json({
+        abertas: byStatus('ABERTA'), aguardando_equipe: byStatus('AGUARDANDO_EQUIPE'), aguardando_cliente: byStatus('AGUARDANDO_CLIENTE'), resolvidas: byStatus('RESOLVIDA'),
+        nao_lidas: convs.reduce((s, c) => s + (c.nao_lidas || 0), 0),
+        pedidos_andamento: pedidos.filter((p) => !['concluido', 'ENTREGUE', 'cancelado', 'CANCELADO'].includes(p.status)).length,
+        pedidos_prontos: pedidos.filter((p) => normPedidoStatus(p.status) === 'pronto').length,
+        pedidos_entrega: pedidos.filter((p) => normPedidoStatus(p.status) === 'saiu').length,
+        pedidos_entregues_hoje: pedidos.filter((p) => normPedidoStatus(p.status) === 'entregue' && new Date(p.updated_at) >= today).length,
+        tempo_medio_min: tempoMedioMin,
+      })
+    }
+    if (route === '/conversas' && method === 'GET') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      const url = new URL(request.url)
+      const fStatus = url.searchParams.get('status')
+      const fPedido = url.searchParams.get('pedido_status')
+      const q = (url.searchParams.get('q') || '').toLowerCase()
+      const [convsAll, pedidos] = await Promise.all([
+        database.collection('conversas').find(tenant).sort({ ultima_mensagem_em: -1 }).toArray(),
+        database.collection('pedidos').find(tenant).toArray(),
+      ])
+      let convs = convsAll.map((c) => {
+        const at = pedidoAtivoDoCliente(pedidos, c.cliente_id)
+        return { ...clean(c), pedido: at.pedido ? { id: at.pedido.id, numero: at.pedido.numero, status: at.pedido.status, status_norm: normPedidoStatus(at.pedido.status), total: at.pedido.total } : null, tem_pedido: at.has }
+      })
+      if (fStatus && fStatus !== 'todas') {
+        if (fStatus === 'nao_lidas') convs = convs.filter((c) => (c.nao_lidas || 0) > 0)
+        else convs = convs.filter((c) => c.status === fStatus)
+      }
+      if (fPedido && fPedido !== 'todos') {
+        if (fPedido === 'sem_pedido') convs = convs.filter((c) => !c.tem_pedido)
+        else convs = convs.filter((c) => c.pedido && c.pedido.status_norm === fPedido)
+      }
+      if (q) convs = convs.filter((c) => (c.contato_nome || '').toLowerCase().includes(q) || (c.contato_numero || '').includes(q) || (c.pedido && String(c.pedido.numero).includes(q)))
+      return json(convs)
+    }
+    if (seg[0] === 'conversas' && seg[1] && seg.length === 2 && method === 'GET') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      const conversa = await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      if (!conversa) return err('Conversa nao encontrada', 404)
+      const cliente = conversa.cliente_id ? await database.collection('clientes').findOne({ id: conversa.cliente_id, empresa_id: ctx.empresa_id }) : null
+      const pedidos = await database.collection('pedidos').find({ empresa_id: ctx.empresa_id, cliente_id: conversa.cliente_id }).sort({ created_at: -1 }).toArray()
+      const at = pedidoAtivoDoCliente(pedidos, conversa.cliente_id)
+      const ultimoPedido = pedidos[0] || null
+      return json({
+        conversa: clean(conversa),
+        cliente: clean(cliente),
+        pedido_ativo: at.pedido ? { ...clean(at.pedido), status_norm: normPedidoStatus(at.pedido.status) } : null,
+        historico: { total_pedidos: pedidos.length, ticket_medio: cliente?.total_pedidos ? round2((cliente.total_gasto || 0) / cliente.total_pedidos) : 0, ultimo_pedido: ultimoPedido?.created_at || null },
+      })
+    }
+    if (seg[0] === 'conversas' && seg[1] && seg[2] === 'mensagens' && method === 'GET') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      const list = await database.collection('mensagens').find({ empresa_id: ctx.empresa_id, conversa_id: seg[1] }).sort({ created_at: 1 }).limit(500).toArray()
+      return json(list.map(clean))
+    }
+    if (seg[0] === 'conversas' && seg[1] && seg[2] === 'mensagens' && method === 'POST') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      if (!b.texto) return err('texto obrigatorio')
+      const conversa = await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      if (!conversa) return err('Conversa nao encontrada', 404)
+      const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'evolution' })
+      if (!integ || !(integ.config?.serverUrl && integ.config?.apiKey)) return err('Evolution API nao configurada', 400)
+      try {
+        await sendWhatsappMessage(integ.config, { to: conversa.contato_numero, message: b.texto })
+      } catch (e) { return err(`Falha ao enviar: ${e.message}`, 502) }
+      const mensagem = { id: uuidv4(), empresa_id: ctx.empresa_id, conversa_id: conversa.id, direcao: 'out', tipo: 'text', texto: b.texto, media_url: null, from_me: true, status: 'sent', provider_message_id: null, operador_id: ctx.usuario_id, created_at: new Date() }
+      await database.collection('mensagens').insertOne(mensagem)
+      await database.collection('conversas').updateOne({ id: conversa.id, empresa_id: ctx.empresa_id }, { $set: { ultima_mensagem: b.texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_CLIENTE', nao_lidas: 0, operador_id: ctx.usuario_id, updated_at: new Date() } })
+      await audit(database, ctx, 'mensagem', 'conversa', conversa.id, {})
+      return json(clean(mensagem), 201)
+    }
+    if (seg[0] === 'conversas' && seg[1] && seg[2] === 'ler' && method === 'POST') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      await database.collection('conversas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: { nao_lidas: 0 } })
+      return json({ ok: true })
+    }
+    if (seg[0] === 'conversas' && seg[1] && seg.length === 2 && method === 'PUT') {
+      if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      const set = { updated_at: new Date() }
+      const STATUS_CONV = ['ABERTA', 'AGUARDANDO_EQUIPE', 'AGUARDANDO_CLIENTE', 'RESOLVIDA']
+      if (b.status && STATUS_CONV.includes(b.status)) set.status = b.status
+      if (b.operador_id !== undefined) set.operador_id = b.operador_id
+      if (b.pedido_ativo_id !== undefined) set.pedido_ativo_id = b.pedido_ativo_id
+      await database.collection('conversas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: set })
+      await audit(database, ctx, 'update', 'conversa', seg[1], set)
+      return json(clean(await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+    }
+
+    /* ==================== RELATORIO FINANCEIRO (dados reais) ==================== */
+    if (route === '/financeiro/relatorio' && method === 'GET') {
+      if (!can(ctx.papel, 'relatorios') && !can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const url = new URL(request.url)
+      const now = new Date()
+      const inicio = url.searchParams.get('inicio') ? new Date(url.searchParams.get('inicio')) : new Date(now.getTime() - 30 * 86400000)
+      const fim = url.searchParams.get('fim') ? new Date(url.searchParams.get('fim')) : now
+      inicio.setHours(0, 0, 0, 0); fim.setHours(23, 59, 59, 999)
+      const fPag = url.searchParams.get('pagamento')
+      const fStatus = url.searchParams.get('status')
+      const fTipo = url.searchParams.get('tipo')
+      const inRange = (d) => { const x = new Date(d); return x >= inicio && x <= fim }
+
+      const [pedidosAll, transAll, pagsAll] = await Promise.all([
+        database.collection('pedidos').find(tenant).toArray(),
+        database.collection('transacoes').find(tenant).toArray(),
+        database.collection('pagamentos').find(tenant).toArray(),
+      ])
+      let pedidos = pedidosAll.filter((p) => inRange(p.created_at))
+      if (fPag && fPag !== 'todos') pedidos = pedidos.filter((p) => p.pagamento === fPag)
+      if (fStatus && fStatus !== 'todos') pedidos = pedidos.filter((p) => normPedidoStatus(p.status) === fStatus)
+      if (fTipo && fTipo !== 'todos') pedidos = pedidos.filter((p) => p.tipo === fTipo)
+      const trans = transAll.filter((t) => inRange(t.data))
+      const pags = pagsAll.filter((p) => inRange(p.created_at))
+
+      const faturados = pedidos.filter((p) => ['concluido', 'ENTREGUE'].includes(p.status))
+      const cancelados = pedidos.filter((p) => ['cancelado', 'CANCELADO'].includes(p.status))
+      const receitas = round2(trans.filter((t) => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0))
+      const despesas = round2(trans.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0))
+      const faturamentoBruto = round2(faturados.reduce((s, p) => s + p.total, 0))
+      const recebidos = round2(pags.filter((p) => p.status === 'approved').reduce((s, p) => s + p.valor, 0))
+      const pendentes = round2(pags.filter((p) => p.status === 'pending').reduce((s, p) => s + p.valor, 0))
+      const reembolsados = round2(pags.filter((p) => ['refunded', 'cancelled'].includes(p.status)).reduce((s, p) => s + p.valor, 0))
+
+      // series por dia (limitado a 92 dias)
+      const dias = Math.min(92, Math.max(1, Math.ceil((fim - inicio) / 86400000)))
+      const serie = []
+      for (let i = 0; i < dias; i++) {
+        const d0 = new Date(inicio.getTime() + i * 86400000); d0.setHours(0, 0, 0, 0)
+        const d1 = new Date(d0.getTime() + 86400000)
+        serie.push({
+          dia: d0.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+          faturamento: round2(trans.filter((t) => t.tipo === 'receita' && new Date(t.data) >= d0 && new Date(t.data) < d1).reduce((s, t) => s + t.valor, 0)),
+          receita: round2(trans.filter((t) => t.tipo === 'receita' && new Date(t.data) >= d0 && new Date(t.data) < d1).reduce((s, t) => s + t.valor, 0)),
+          despesa: round2(trans.filter((t) => t.tipo === 'despesa' && new Date(t.data) >= d0 && new Date(t.data) < d1).reduce((s, t) => s + t.valor, 0)),
+          pedidos: pedidos.filter((p) => new Date(p.created_at) >= d0 && new Date(p.created_at) < d1).length,
+        })
+      }
+      const porPagamento = {}
+      for (const p of faturados) porPagamento[p.pagamento || 'outros'] = round2((porPagamento[p.pagamento || 'outros'] || 0) + p.total)
+      const porFormaPagamento = Object.entries(porPagamento).map(([forma, valor]) => ({ forma, valor }))
+
+      const tabela = pedidos.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 500).map((p) => ({
+        data: p.created_at, numero: p.numero, cliente: p.cliente_nome, pagamento: p.pagamento, valor: p.total, status: p.status, origem: p.tipo,
+      }))
+
+      return json({
+        periodo: { inicio, fim },
+        kpis: {
+          faturamento_bruto: faturamentoBruto,
+          faturamento_liquido: round2(faturamentoBruto - despesas),
+          total_pedidos: pedidos.length,
+          ticket_medio: faturados.length ? round2(faturamentoBruto / faturados.length) : 0,
+          receitas, despesas, saldo: round2(receitas - despesas),
+          recebidos, pendentes, cancelados_reembolsados: round2(cancelados.reduce((s, p) => s + p.total, 0) + reembolsados),
+        },
+        serie, porFormaPagamento, tabela,
+      })
     }
 
     return err(`Rota ${route} nao encontrada`, 404)
