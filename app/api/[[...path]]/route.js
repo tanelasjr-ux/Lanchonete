@@ -36,6 +36,7 @@ import { createMensagemRepository } from '@/lib/repositories/mongo/mensagemRepos
 import { createPedidoRepository } from '@/lib/repositories/mongo/pedidoRepository'
 import { createComandaRepository } from '@/lib/repositories/mongo/comandaRepository'
 import { createPagamentoRepository } from '@/lib/repositories/mongo/pagamentoRepository'
+import { createEmpresaRepository } from '@/lib/repositories/mongo/empresaRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -411,6 +412,7 @@ async function handler(request, { params }) {
     const pedidoRepo = createPedidoRepository(database)
     const comandaRepo = createComandaRepository(database)
     const pagamentoRepo = createPagamentoRepository(database)
+    const empresaRepo = createEmpresaRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -428,7 +430,7 @@ async function handler(request, { params }) {
 
       const empresa_id = uuidv4()
       let slug = slugify(empresa_nome)
-      if (await database.collection('empresas').findOne({ slug })) slug = `${slug}-${empresa_id.slice(0, 6)}`
+      if (await empresaRepo.findBySlug(slug)) slug = `${slug}-${empresa_id.slice(0, 6)}`
       const empresa = {
         id: empresa_id,
         nome: empresa_nome,
@@ -451,7 +453,7 @@ async function handler(request, { params }) {
         ativo: true,
         created_at: new Date(),
       }
-      await database.collection('empresas').insertOne(empresa)
+      await empresaRepo.create(empresa)
 
       const usuario_id = uuidv4()
       const usuario = {
@@ -480,7 +482,7 @@ async function handler(request, { params }) {
       const usuario = await usuarioRepo.findByEmail(String(email).toLowerCase().trim())
       if (!usuario || !verifyPassword(senha, usuario.senha_hash)) return err('Credenciais invalidas', 401)
       if (!usuario.ativo) return err('Usuario inativo', 403)
-      const empresa = await database.collection('empresas').findOne({ id: usuario.empresa_id })
+      const empresa = await empresaRepo.findById(usuario.empresa_id)
       const token = signToken({ usuario_id: usuario.id, empresa_id: usuario.empresa_id, papel: usuario.papel })
       await audit(database, { empresa_id: usuario.empresa_id, usuario_id: usuario.id, nome: usuario.nome }, 'login', 'usuario', usuario.id)
       return json({ token, usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS[usuario.papel] || [] })
@@ -559,18 +561,18 @@ async function handler(request, { params }) {
     const tenant = { empresa_id: ctx.empresa_id } // escopo multitenant obrigatorio
 
     if (route === '/auth/me' && method === 'GET') {
-      const empresa = await database.collection('empresas').findOne({ id: ctx.empresa_id })
+      const empresa = await empresaRepo.findById(ctx.empresa_id)
       return json({ usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS[usuario.papel] || [], roles: ROLES })
     }
 
     /* ==================== EMPRESA ==================== */
     if (route === '/empresa' && method === 'GET') {
-      return json(clean(await database.collection('empresas').findOne({ id: ctx.empresa_id })))
+      return json(clean(await empresaRepo.findById(ctx.empresa_id)))
     }
     if (route === '/empresa' && method === 'PUT') {
       if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const current = await database.collection('empresas').findOne({ id: ctx.empresa_id })
+      const current = await empresaRepo.findById(ctx.empresa_id)
       const upd = {}
       for (const k of ['nome', 'telefone', 'endereco', 'moeda', 'nome_comercial', 'cnpj', 'whatsapp', 'email', 'logo', 'horario_funcionamento']) {
         if (b[k] !== undefined) upd[k] = b[k]
@@ -584,9 +586,9 @@ async function handler(request, { params }) {
       }
       upd.config = config
       upd.updated_at = new Date()
-      await database.collection('empresas').updateOne({ id: ctx.empresa_id }, { $set: upd })
+      const atualizada = await empresaRepo.update(ctx.empresa_id, upd)
       await audit(database, ctx, 'update', 'empresa', ctx.empresa_id, { campos: Object.keys(upd) })
-      return json(clean(await database.collection('empresas').findOne({ id: ctx.empresa_id })))
+      return json(clean(atualizada))
     }
 
     /* ==================== USUARIOS ==================== */
@@ -1018,7 +1020,7 @@ async function handler(request, { params }) {
         const c = await clienteRepo.findById(ctx.empresa_id, b.cliente_id)
         if (c) cliente_nome = c.nome
       }
-      const emp = await database.collection('empresas').findOne({ id: ctx.empresa_id })
+      const emp = await empresaRepo.findById(ctx.empresa_id)
       const comanda = {
         id: uuidv4(), empresa_id: ctx.empresa_id, mesa_id: mesa.id, mesa_nome: mesa.nome,
         cliente_id: b.cliente_id || null, cliente_nome, pessoas: Number(b.pessoas || 1), status: 'aberta',
