@@ -31,6 +31,8 @@ import { createTransacaoRepository } from '@/lib/repositories/mongo/transacaoRep
 import { createAuditoriaRepository } from '@/lib/repositories/mongo/auditoriaRepository'
 import { createIntegracaoRepository } from '@/lib/repositories/mongo/integracaoRepository'
 import { createMesaRepository } from '@/lib/repositories/mongo/mesaRepository'
+import { createConversaRepository } from '@/lib/repositories/mongo/conversaRepository'
+import { createMensagemRepository } from '@/lib/repositories/mongo/mensagemRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -401,6 +403,8 @@ async function handler(request, { params }) {
     const auditoriaRepo = createAuditoriaRepository(database)
     const integracaoRepo = createIntegracaoRepository(database)
     const mesaRepo = createMesaRepository(database)
+    const conversaRepo = createConversaRepository(database)
+    const mensagemRepo = createMensagemRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -531,15 +535,15 @@ async function handler(request, { params }) {
         await clienteRepo.create(cliente)
       }
       // localiza/cria conversa
-      let conversa = await database.collection('conversas').findOne({ empresa_id: empresaId, contato_numero: numero })
+      let conversa = await conversaRepo.findByContatoNumero(empresaId, numero)
       if (!conversa) {
         conversa = { id: uuidv4(), empresa_id: empresaId, cliente_id: cliente.id, contato_nome: cliente.nome || nome, contato_numero: numero, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: texto, ultima_mensagem_em: new Date(), nao_lidas: 1, operador_id: null, pedido_ativo_id: null, created_at: new Date(), updated_at: new Date() }
-        await database.collection('conversas').insertOne(conversa)
+        await conversaRepo.create(conversa)
         await audit(database, { empresa_id: empresaId, usuario_id: null, nome: 'WhatsApp' }, 'criar', 'conversa', conversa.id, { numero })
       } else {
-        await database.collection('conversas').updateOne({ id: conversa.id, empresa_id: empresaId }, { $set: { ultima_mensagem: texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_EQUIPE', updated_at: new Date() }, $inc: { nao_lidas: 1 } })
+        await conversaRepo.incrementarNaoLidas(empresaId, conversa.id, { ultima_mensagem: texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_EQUIPE', updated_at: new Date() })
       }
-      await database.collection('mensagens').insertOne({ id: uuidv4(), empresa_id: empresaId, conversa_id: conversa.id, direcao: 'in', tipo, texto, media_url: null, from_me: false, status: 'delivered', provider_message_id: key.id || null, created_at: new Date() })
+      await mensagemRepo.create({ empresa_id: empresaId, conversa_id: conversa.id, direcao: 'in', tipo, texto, media_url: null, from_me: false, status: 'delivered', provider_message_id: key.id || null })
       return json({ ok: true })
     }
 
@@ -1241,7 +1245,7 @@ async function handler(request, { params }) {
     if (route === '/conversas/metrics' && method === 'GET') {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
       const [convs, pedidos] = await Promise.all([
-        database.collection('conversas').find(tenant).toArray(),
+        conversaRepo.list(ctx.empresa_id),
         database.collection('pedidos').find(tenant).toArray(),
       ])
       const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -1265,7 +1269,7 @@ async function handler(request, { params }) {
       const fPedido = url.searchParams.get('pedido_status')
       const q = (url.searchParams.get('q') || '').toLowerCase()
       const [convsAll, pedidos] = await Promise.all([
-        database.collection('conversas').find(tenant).sort({ ultima_mensagem_em: -1 }).toArray(),
+        conversaRepo.list(ctx.empresa_id),
         database.collection('pedidos').find(tenant).toArray(),
       ])
       let convs = convsAll.map((c) => {
@@ -1285,7 +1289,7 @@ async function handler(request, { params }) {
     }
     if (seg[0] === 'conversas' && seg[1] && seg.length === 2 && method === 'GET') {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
-      const conversa = await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const conversa = await conversaRepo.findById(ctx.empresa_id, seg[1])
       if (!conversa) return err('Conversa nao encontrada', 404)
       const cliente = conversa.cliente_id ? await clienteRepo.findById(ctx.empresa_id, conversa.cliente_id) : null
       const pedidos = await database.collection('pedidos').find({ empresa_id: ctx.empresa_id, cliente_id: conversa.cliente_id }).sort({ created_at: -1 }).toArray()
@@ -1300,29 +1304,28 @@ async function handler(request, { params }) {
     }
     if (seg[0] === 'conversas' && seg[1] && seg[2] === 'mensagens' && method === 'GET') {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
-      const list = await database.collection('mensagens').find({ empresa_id: ctx.empresa_id, conversa_id: seg[1] }).sort({ created_at: 1 }).limit(500).toArray()
+      const list = await mensagemRepo.list(ctx.empresa_id, seg[1])
       return json(list.map(clean))
     }
     if (seg[0] === 'conversas' && seg[1] && seg[2] === 'mensagens' && method === 'POST') {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
       if (!b.texto) return err('texto obrigatorio')
-      const conversa = await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const conversa = await conversaRepo.findById(ctx.empresa_id, seg[1])
       if (!conversa) return err('Conversa nao encontrada', 404)
       const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'evolution')
       if (!integ || !(integ.config?.serverUrl && integ.config?.apiKey)) return err('Evolution API nao configurada', 400)
       try {
         await sendWhatsappMessage(integ.config, { to: conversa.contato_numero, message: b.texto })
       } catch (e) { return err(`Falha ao enviar: ${e.message}`, 502) }
-      const mensagem = { id: uuidv4(), empresa_id: ctx.empresa_id, conversa_id: conversa.id, direcao: 'out', tipo: 'text', texto: b.texto, media_url: null, from_me: true, status: 'sent', provider_message_id: null, operador_id: ctx.usuario_id, created_at: new Date() }
-      await database.collection('mensagens').insertOne(mensagem)
-      await database.collection('conversas').updateOne({ id: conversa.id, empresa_id: ctx.empresa_id }, { $set: { ultima_mensagem: b.texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_CLIENTE', nao_lidas: 0, operador_id: ctx.usuario_id, updated_at: new Date() } })
+      const mensagem = await mensagemRepo.create({ empresa_id: ctx.empresa_id, conversa_id: conversa.id, direcao: 'out', tipo: 'text', texto: b.texto, media_url: null, from_me: true, status: 'sent', provider_message_id: null, operador_id: ctx.usuario_id })
+      await conversaRepo.update(ctx.empresa_id, conversa.id, { ultima_mensagem: b.texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_CLIENTE', nao_lidas: 0, operador_id: ctx.usuario_id, updated_at: new Date() })
       await audit(database, ctx, 'mensagem', 'conversa', conversa.id, {})
       return json(clean(mensagem), 201)
     }
     if (seg[0] === 'conversas' && seg[1] && seg[2] === 'ler' && method === 'POST') {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
-      await database.collection('conversas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: { nao_lidas: 0 } })
+      await conversaRepo.update(ctx.empresa_id, seg[1], { nao_lidas: 0 })
       return json({ ok: true })
     }
     if (seg[0] === 'conversas' && seg[1] && seg.length === 2 && method === 'PUT') {
@@ -1333,9 +1336,9 @@ async function handler(request, { params }) {
       if (b.status && STATUS_CONV.includes(b.status)) set.status = b.status
       if (b.operador_id !== undefined) set.operador_id = b.operador_id
       if (b.pedido_ativo_id !== undefined) set.pedido_ativo_id = b.pedido_ativo_id
-      await database.collection('conversas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: set })
+      const atualizada = await conversaRepo.update(ctx.empresa_id, seg[1], set)
       await audit(database, ctx, 'update', 'conversa', seg[1], set)
-      return json(clean(await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(atualizada))
     }
 
     /* ==================== RELATORIO FINANCEIRO (dados reais) ==================== */

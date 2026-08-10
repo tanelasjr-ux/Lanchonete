@@ -283,6 +283,8 @@ export interface PagamentoRepository extends Repository<PagamentoRegistro> {
 
 export interface ConversaRepository extends Repository<Conversa> {
   findByContatoNumero(empresaId: UUID, contatoNumero: string): Promise<Conversa | null>;
+  /** Webhook do WhatsApp: nova mensagem numa conversa ja existente (nao e recalculo, e incremento). */
+  incrementarNaoLidas(empresaId: UUID, id: UUID, patch: Partial<Conversa>): Promise<void>;
 }
 
 /** Log imutavel: so create + list, sem update/delete. */
