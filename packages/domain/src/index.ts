@@ -280,18 +280,30 @@ export interface MesaRepository extends Repository<Mesa> {
   syncStatusOcupada(empresaId: UUID, mesaId: UUID, status: MesaStatus): Promise<void>;
 }
 
-/** Operacoes de item/pagamento vao alem do CRUD generico de Repository<T>. */
+/**
+ * Repositorio fino, igual aos demais - SEM logica de negocio (sem recalculo,
+ * sem orquestrar pedido/transacao/mesa). Quem decide "o que" e "quando"
+ * escrever continua sendo o Service (route.js); estes metodos so descrevem
+ * as operacoes de baixo nivel no array `itens`/`pagamentos` que vao alem do
+ * CRUD generico de Repository<T> (nao existe equivalente a $push/$pull/
+ * atualizacao posicional no contrato base).
+ */
 export interface ComandaRepository extends Repository<Comanda> {
-  addItem(empresaId: UUID, comandaId: UUID, item: Omit<ComandaItem, 'id' | 'comanda_id' | 'created_at'>): Promise<ComandaComDerivados>;
-  updateItem(empresaId: UUID, comandaId: UUID, itemId: UUID, patch: Partial<Pick<ComandaItem, 'quantidade' | 'observacao'>>): Promise<ComandaComDerivados>;
-  removeItem(empresaId: UUID, comandaId: UUID, itemId: UUID): Promise<ComandaComDerivados>;
-  addPagamento(empresaId: UUID, comandaId: UUID, pagamento: Pick<PagamentoRegistro, 'metodo' | 'valor'>): Promise<ComandaComDerivados>;
-  transferir(empresaId: UUID, comandaId: UUID, novaMesaId: UUID): Promise<Comanda>;
-  fechar(empresaId: UUID, comandaId: UUID): Promise<{ comanda: Comanda; pedido: Pedido }>;
+  pushItem(empresaId: UUID, comandaId: UUID, item: ComandaItem): Promise<void>;
+  updateItemCampos(empresaId: UUID, comandaId: UUID, itemId: UUID, patch: Partial<Pick<ComandaItem, 'quantidade' | 'observacao'>>): Promise<void>;
+  removeItem(empresaId: UUID, comandaId: UUID, itemId: UUID): Promise<void>;
+  /** $push no array `pagamentos` (copia denormalizada - ver auditoria: duplica dado do PagamentoRepository). */
+  pushPagamentoResumo(empresaId: UUID, comandaId: UUID, resumo: { id: UUID; metodo: string; valor: number; status: string; provider: PagamentoProvider; created_at: string }): Promise<void>;
+  /** Persiste os campos ja computados por computeComanda() no Service - nunca recalcula aqui. */
+  setDerivados(empresaId: UUID, comandaId: UUID, derivados: ComandaComputed): Promise<void>;
+  /** GET /mesas: batch-fetch das comandas abertas para montar o resumo por mesa. */
+  findManyByIds(empresaId: UUID, ids: UUID[]): Promise<Comanda[]>;
 }
 
 export interface PagamentoRepository extends Repository<PagamentoRegistro> {
   findByProviderPaymentId(empresaId: UUID, provider: PagamentoProvider, providerPaymentId: string): Promise<PagamentoRegistro | null>;
+  /** Webhook assinado do Mercado Pago: unico ponto que atualiza status por provider_payment_id em vez de id. */
+  atualizarStatusPorProviderPaymentId(empresaId: UUID, provider: PagamentoProvider, providerPaymentId: string, status: string): Promise<void>;
 }
 
 export interface ConversaRepository extends Repository<Conversa> {

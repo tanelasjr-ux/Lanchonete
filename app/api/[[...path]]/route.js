@@ -34,6 +34,8 @@ import { createMesaRepository } from '@/lib/repositories/mongo/mesaRepository'
 import { createConversaRepository } from '@/lib/repositories/mongo/conversaRepository'
 import { createMensagemRepository } from '@/lib/repositories/mongo/mensagemRepository'
 import { createPedidoRepository } from '@/lib/repositories/mongo/pedidoRepository'
+import { createComandaRepository } from '@/lib/repositories/mongo/comandaRepository'
+import { createPagamentoRepository } from '@/lib/repositories/mongo/pagamentoRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -363,7 +365,7 @@ async function seedEmpresa(database, empresa_id, ctx) {
   mesaDemo.status = 'ocupada'
   mesaDemo.comanda_id = comandaId
   await database.collection('mesas').insertMany(mesas)
-  await database.collection('comandas').insertOne(comandaBase)
+  await createComandaRepository(database).create(comandaBase)
 
   // Central de Atendimento: 2 conversas demo
   const conv1 = { id: uuidv4(), empresa_id, cliente_id: clientes[0].id, contato_nome: clientes[0].nome, contato_numero: clientes[0].telefone, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: 'Ola! Meu pedido ja saiu?', ultima_mensagem_em: new Date(now - 5 * 60000), nao_lidas: 2, operador_id: null, pedido_ativo_id: null, created_at: new Date(now - 3600000), updated_at: new Date() }
@@ -407,6 +409,8 @@ async function handler(request, { params }) {
     const conversaRepo = createConversaRepository(database)
     const mensagemRepo = createMensagemRepository(database)
     const pedidoRepo = createPedidoRepository(database)
+    const comandaRepo = createComandaRepository(database)
+    const pagamentoRepo = createPagamentoRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -507,10 +511,7 @@ async function handler(request, { params }) {
       // busca status autoritativo no gateway
       let statusInfo
       try { statusInfo = await provider.getStatus(dataId) } catch { return json({ ok: true }) }
-      await database.collection('pagamentos').updateOne(
-        { empresa_id: empresaId, provider: 'mercadopago', provider_payment_id: String(dataId) },
-        { $set: { status: statusInfo.status, updated_at: new Date() } }
-      )
+      await pagamentoRepo.atualizarStatusPorProviderPaymentId(empresaId, 'mercadopago', String(dataId), statusInfo.status)
       return json({ ok: true, status: statusInfo.status })
     }
 
@@ -976,7 +977,7 @@ async function handler(request, { params }) {
       const mesas = await mesaRepo.list(ctx.empresa_id, { ativo: true })
       // anexa resumo da comanda aberta
       const comandaIds = mesas.map((m) => m.comanda_id).filter(Boolean)
-      const comandas = comandaIds.length ? await database.collection('comandas').find({ empresa_id: ctx.empresa_id, id: { $in: comandaIds } }).toArray() : []
+      const comandas = comandaIds.length ? await comandaRepo.findManyByIds(ctx.empresa_id, comandaIds) : []
       const byId = Object.fromEntries(comandas.map((c) => [c.id, c]))
       const out = mesas.map((m) => {
         const c = m.comanda_id ? byId[m.comanda_id] : null
@@ -1026,7 +1027,7 @@ async function handler(request, { params }) {
         aberta_em: new Date(), fechada_em: null, created_at: new Date(), updated_at: new Date(),
       }
       Object.assign(comanda, computeComanda(comanda))
-      await database.collection('comandas').insertOne(comanda)
+      await comandaRepo.create(comanda)
       await mesaRepo.update(ctx.empresa_id, mesa.id, { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() })
       await audit(database, ctx, 'abrir', 'comanda', comanda.id, { mesa: mesa.nome })
       return json(clean(comanda), 201)
@@ -1044,10 +1045,11 @@ async function handler(request, { params }) {
 
     /* ==================== COMANDAS ==================== */
     const reloadComanda = async (id) => {
-      const c = await database.collection('comandas').findOne({ id, empresa_id: ctx.empresa_id })
+      const c = await comandaRepo.findById(ctx.empresa_id, id)
       if (!c) return null
-      Object.assign(c, computeComanda(c))
-      await database.collection('comandas').updateOne({ id, empresa_id: ctx.empresa_id }, { $set: { subtotal: c.subtotal, desconto_valor: c.desconto_valor, taxa_valor: c.taxa_valor, total: c.total, pago: c.pago, restante: c.restante, updated_at: new Date() } })
+      const derivados = computeComanda(c)
+      Object.assign(c, derivados)
+      await comandaRepo.setDerivados(ctx.empresa_id, id, derivados)
       if (c.mesa_id) {
         const mesaStatus = c.restante <= 0 && c.total > 0 ? 'aguardando_pagamento' : 'ocupada'
         await mesaRepo.syncStatusOcupada(ctx.empresa_id, c.mesa_id, mesaStatus)
@@ -1058,20 +1060,19 @@ async function handler(request, { params }) {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
       const url = new URL(request.url)
       const status = url.searchParams.get('status')
-      const q = { ...tenant, ...(status ? { status } : {}) }
-      const list = await database.collection('comandas').find(q).sort({ created_at: -1 }).limit(500).toArray()
+      const list = await comandaRepo.list(ctx.empresa_id, status ? { status } : {})
       return json(list.map(clean))
     }
     if (seg[0] === 'comandas' && seg[1] && seg.length === 2 && method === 'GET') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
-      const c = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const c = await comandaRepo.findById(ctx.empresa_id, seg[1])
       if (!c) return err('Comanda nao encontrada', 404)
       return json(clean(c))
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'itens' && !seg[3] && method === 'POST') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const comanda = await comandaRepo.findById(ctx.empresa_id, seg[1])
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       let nome = b.nome, preco = b.preco
       if (b.produto_id) {
@@ -1080,7 +1081,7 @@ async function handler(request, { params }) {
       }
       if (!nome || preco === undefined) return err('produto invalido')
       const item = { id: uuidv4(), produto_id: b.produto_id || null, nome, preco: Number(preco), quantidade: Number(b.quantidade || 1), observacao: b.observacao || '', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() }
-      await database.collection('comandas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $push: { itens: item } })
+      await comandaRepo.pushItem(ctx.empresa_id, seg[1], item)
       const c = await reloadComanda(seg[1])
       await audit(database, ctx, 'add_item', 'comanda', seg[1], { item: nome, quantidade: item.quantidade })
       return json(clean(c), 201)
@@ -1088,16 +1089,16 @@ async function handler(request, { params }) {
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'itens' && seg[3] && method === 'PUT') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const set = {}
-      if (b.quantidade !== undefined) set['itens.$.quantidade'] = Number(b.quantidade)
-      if (b.observacao !== undefined) set['itens.$.observacao'] = b.observacao
-      await database.collection('comandas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id, 'itens.id': seg[3] }, { $set: set })
+      const patch = {}
+      if (b.quantidade !== undefined) patch.quantidade = Number(b.quantidade)
+      if (b.observacao !== undefined) patch.observacao = b.observacao
+      await comandaRepo.updateItemCampos(ctx.empresa_id, seg[1], seg[3], patch)
       const c = await reloadComanda(seg[1])
       return json(clean(c))
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'itens' && seg[3] && method === 'DELETE') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
-      await database.collection('comandas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $pull: { itens: { id: seg[3] } } })
+      await comandaRepo.removeItem(ctx.empresa_id, seg[1], seg[3])
       const c = await reloadComanda(seg[1])
       await audit(database, ctx, 'remove_item', 'comanda', seg[1], { item_id: seg[3] })
       return json(clean(c))
@@ -1107,7 +1108,7 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const set = { updated_at: new Date() }
       for (const k of ['pessoas', 'desconto', 'desconto_tipo', 'taxa_servico_percent', 'cliente_id', 'cliente_nome']) if (b[k] !== undefined) set[k] = b[k]
-      await database.collection('comandas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: set })
+      await comandaRepo.update(ctx.empresa_id, seg[1], set)
       const c = await reloadComanda(seg[1])
       await audit(database, ctx, 'update', 'comanda', seg[1], set)
       return json(clean(c))
@@ -1115,7 +1116,7 @@ async function handler(request, { params }) {
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'transferir' && method === 'POST') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const comanda = await comandaRepo.findById(ctx.empresa_id, seg[1])
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       const destino = await mesaRepo.findById(ctx.empresa_id, b.mesa_id)
       if (!destino) return err('Mesa destino nao encontrada', 404)
@@ -1123,14 +1124,14 @@ async function handler(request, { params }) {
       // libera mesa origem
       if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
       await mesaRepo.update(ctx.empresa_id, destino.id, { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() })
-      await database.collection('comandas').updateOne({ id: comanda.id, empresa_id: ctx.empresa_id }, { $set: { mesa_id: destino.id, mesa_nome: destino.nome, updated_at: new Date() } })
+      const atualizada = await comandaRepo.update(ctx.empresa_id, comanda.id, { mesa_id: destino.id, mesa_nome: destino.nome, updated_at: new Date() })
       await audit(database, ctx, 'transferir', 'comanda', comanda.id, { de: comanda.mesa_nome, para: destino.nome })
-      return json(clean(await database.collection('comandas').findOne({ id: comanda.id, empresa_id: ctx.empresa_id })))
+      return json(clean(atualizada))
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'pagamentos' && method === 'POST') {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const comanda = await comandaRepo.findById(ctx.empresa_id, seg[1])
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       if (!b.metodo || b.valor === undefined) return err('metodo e valor obrigatorios')
       // pagamento manual (dinheiro/cartao/pix presencial) -> aprovado
@@ -1140,15 +1141,15 @@ async function handler(request, { params }) {
         provider_payment_id: null, external_reference: comanda.id, idempotency_key: uuidv4(),
         created_at: new Date(), updated_at: new Date(),
       }
-      await database.collection('pagamentos').insertOne(pagamento) // fonte de verdade (sem delete fisico)
-      await database.collection('comandas').updateOne({ id: comanda.id, empresa_id: ctx.empresa_id }, { $push: { pagamentos: { id: pagamento.id, metodo: pagamento.metodo, valor: pagamento.valor, status: 'approved', provider: 'manual', created_at: pagamento.created_at } } })
+      await pagamentoRepo.create(pagamento) // fonte de verdade (sem delete fisico)
+      await comandaRepo.pushPagamentoResumo(ctx.empresa_id, comanda.id, { id: pagamento.id, metodo: pagamento.metodo, valor: pagamento.valor, status: 'approved', provider: 'manual', created_at: pagamento.created_at })
       const c = await reloadComanda(comanda.id)
       await audit(database, ctx, 'pagamento', 'comanda', comanda.id, { metodo: b.metodo, valor: pagamento.valor })
       return json(clean(c), 201)
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'pix' && method === 'POST') {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
-      const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const comanda = await comandaRepo.findById(ctx.empresa_id, seg[1])
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
       if (!integ || !isGatewayConfigured('mercadopago', integ.config)) return err('Mercado Pago nao configurado', 400)
@@ -1174,13 +1175,13 @@ async function handler(request, { params }) {
         ticket_url: result.ticketUrl || null, external_reference: `${ctx.empresa_id}:${comanda.id}`, idempotency_key,
         created_at: new Date(), updated_at: new Date(),
       }
-      await database.collection('pagamentos').insertOne(pagamento)
+      await pagamentoRepo.create(pagamento)
       await audit(database, ctx, 'pix_criado', 'comanda', comanda.id, { valor, provider_payment_id: result.providerPaymentId })
       return json({ id: pagamento.id, status: pagamento.status, valor, qr_code: result.qrCode, qr_code_base64: result.qrCodeBase64, ticket_url: result.ticketUrl }, 201)
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'fechar' && method === 'POST') {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
-      const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const comanda = await comandaRepo.findById(ctx.empresa_id, seg[1])
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       const totals = computeComanda(comanda)
       const b = (await request.json().catch(() => ({}))) || {}
@@ -1201,7 +1202,7 @@ async function handler(request, { params }) {
         data: new Date(), created_at: new Date(),
       })
       if (comanda.cliente_id) await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, comanda.cliente_id, totals.total)
-      await database.collection('comandas').updateOne({ id: comanda.id, empresa_id: ctx.empresa_id }, { $set: { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() } })
+      await comandaRepo.update(ctx.empresa_id, comanda.id, { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() })
       if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
       await audit(database, ctx, 'fechar', 'comanda', comanda.id, { total: totals.total, pedido: numero })
       await emitEvent(database, ctx, 'comanda.closed', { comanda_id: comanda.id, total: totals.total })
@@ -1211,7 +1212,7 @@ async function handler(request, { params }) {
     /* ==================== PAGAMENTOS (status) ==================== */
     if (seg[0] === 'pagamentos' && seg[1] && seg.length === 2 && method === 'GET') {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
-      const p = await database.collection('pagamentos').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const p = await pagamentoRepo.findById(ctx.empresa_id, seg[1])
       if (!p) return err('Pagamento nao encontrado', 404)
       // se pix mercadopago pendente, consulta status autoritativo
       if (p.provider === 'mercadopago' && p.status === 'pending' && p.provider_payment_id) {
@@ -1219,7 +1220,7 @@ async function handler(request, { params }) {
         if (integ && isGatewayConfigured('mercadopago', integ.config)) {
           try {
             const st = await getPaymentProvider('mercadopago', integ.config).getStatus(p.provider_payment_id)
-            if (st.status !== p.status) { await database.collection('pagamentos').updateOne({ id: p.id, empresa_id: ctx.empresa_id }, { $set: { status: st.status, updated_at: new Date() } }); p.status = st.status }
+            if (st.status !== p.status) { await pagamentoRepo.update(ctx.empresa_id, p.id, { status: st.status, updated_at: new Date() }); p.status = st.status }
           } catch { /* ignora */ }
         }
       }
@@ -1358,7 +1359,7 @@ async function handler(request, { params }) {
       const [pedidosAll, transAll, pagsAll] = await Promise.all([
         pedidoRepo.list(ctx.empresa_id),
         transacaoRepo.list(ctx.empresa_id),
-        database.collection('pagamentos').find(tenant).toArray(),
+        pagamentoRepo.list(ctx.empresa_id),
       ])
       let pedidos = pedidosAll.filter((p) => inRange(p.created_at))
       if (fPag && fPag !== 'todos') pedidos = pedidos.filter((p) => p.pagamento === fPag)
