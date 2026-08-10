@@ -8,7 +8,15 @@
 
 export type UUID = string;
 export type Papel = 'OWNER' | 'ADMIN' | 'GERENTE' | 'ATENDENTE' | 'COZINHA';
-export type PedidoStatus = 'recebido' | 'em_preparo' | 'pronto' | 'concluido' | 'cancelado';
+/**
+ * Dois vocabularios convivem hoje (nao normalizados pelo app - ver
+ * normPedidoStatus() em route.js): o minusculo original ('recebido'..'cancelado')
+ * e um maiusculo introduzido no v3 para o fluxo de atendimento/delivery
+ * ('NOVO'..'CANCELADO'). PUT /pedidos aceita ambos sem conversao.
+ */
+export type PedidoStatus =
+  | 'recebido' | 'em_preparo' | 'pronto' | 'concluido' | 'cancelado'
+  | 'NOVO' | 'CONFIRMADO' | 'EM_PREPARACAO' | 'PRONTO' | 'SAIU_PARA_ENTREGA' | 'ENTREGUE' | 'CANCELADO';
 export type PedidoTipo = 'balcao' | 'delivery' | 'retirada';
 export type Pagamento = 'pix' | 'cartao' | 'dinheiro';
 export type TransacaoTipo = 'receita' | 'despesa';
@@ -223,7 +231,12 @@ export interface ClienteRepository extends Repository<Cliente> {
   count(empresaId: UUID): Promise<number>;
 }
 export interface PedidoRepository extends Repository<Pedido> {
+  /** numero sequencial por empresa; nao atomico hoje (count+1), ver auditoria. */
   nextNumero(empresaId: UUID): Promise<number>;
+  /** GET /pedidos: mais recentes primeiro, com limite. */
+  listRecentes(empresaId: UUID, filter: Partial<Pedido>, limit: number): Promise<Pedido[]>;
+  /** Usado na Central de Atendimento para achar o pedido ativo do cliente. */
+  findByCliente(empresaId: UUID, clienteId: UUID): Promise<Pedido[]>;
 }
 export interface TransacaoRepository extends Repository<Transacao> {
   /** GET /financeiro/transacoes: mais recentes primeiro, com limite. */

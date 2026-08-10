@@ -33,6 +33,7 @@ import { createIntegracaoRepository } from '@/lib/repositories/mongo/integracaoR
 import { createMesaRepository } from '@/lib/repositories/mongo/mesaRepository'
 import { createConversaRepository } from '@/lib/repositories/mongo/conversaRepository'
 import { createMensagemRepository } from '@/lib/repositories/mongo/mensagemRepository'
+import { createPedidoRepository } from '@/lib/repositories/mongo/pedidoRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -405,6 +406,7 @@ async function handler(request, { params }) {
     const mesaRepo = createMesaRepository(database)
     const conversaRepo = createConversaRepository(database)
     const mensagemRepo = createMensagemRepository(database)
+    const pedidoRepo = createPedidoRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -748,8 +750,7 @@ async function handler(request, { params }) {
     if (route === '/pedidos' && method === 'GET') {
       const url = new URL(request.url)
       const status = url.searchParams.get('status')
-      const q = { ...tenant, ...(status ? { status } : {}) }
-      const list = await database.collection('pedidos').find(q).sort({ created_at: -1 }).limit(500).toArray()
+      const list = await pedidoRepo.listRecentes(ctx.empresa_id, status ? { status } : {}, 500)
       return json(list.map(clean))
     }
     if (route === '/pedidos' && method === 'POST') {
@@ -758,7 +759,7 @@ async function handler(request, { params }) {
       const itens = Array.isArray(b.itens) ? b.itens : []
       if (!itens.length) return err('Pedido precisa de ao menos 1 item')
       const total = Math.round(itens.reduce((s, it) => s + Number(it.preco) * Number(it.quantidade || 1), 0) * 100) / 100
-      const numero = (await database.collection('pedidos').countDocuments(tenant)) + 1
+      const numero = await pedidoRepo.nextNumero(ctx.empresa_id)
       let cliente_nome = b.cliente_nome || 'Consumidor'
       if (b.cliente_id) {
         const c = await clienteRepo.findById(ctx.empresa_id, b.cliente_id)
@@ -779,7 +780,7 @@ async function handler(request, { params }) {
         created_at: new Date(),
         updated_at: new Date(),
       }
-      await database.collection('pedidos').insertOne(doc)
+      await pedidoRepo.create(doc)
       await audit(database, ctx, 'create', 'pedido', doc.id, { numero, total })
       await emitEvent(database, ctx, 'order.created', { pedido: clean(doc) })
       return json(clean(doc), 201)
@@ -787,11 +788,11 @@ async function handler(request, { params }) {
     if (seg[0] === 'pedidos' && seg[1] && method === 'PUT') {
       if (!can(ctx.papel, 'pedidos')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const pedido = await database.collection('pedidos').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const pedido = await pedidoRepo.findById(ctx.empresa_id, seg[1])
       if (!pedido) return err('Pedido nao encontrado', 404)
       const upd = { updated_at: new Date() }
       for (const k of ['status', 'tipo', 'pagamento', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
-      await database.collection('pedidos').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
+      await pedidoRepo.update(ctx.empresa_id, seg[1], upd)
 
       // Regra de negocio: ao concluir/entregar, gera receita e atualiza metricas do cliente
       const finais = ['concluido', 'ENTREGUE']
@@ -813,7 +814,7 @@ async function handler(request, { params }) {
       }
       await audit(database, ctx, 'update', 'pedido', seg[1], upd)
       if (b.status) await emitEvent(database, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: b.status })
-      return json(clean(await database.collection('pedidos').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(await pedidoRepo.findById(ctx.empresa_id, seg[1])))
     }
 
     /* ==================== FINANCEIRO ==================== */
@@ -863,7 +864,7 @@ async function handler(request, { params }) {
     /* ==================== DASHBOARD ==================== */
     if (route === '/dashboard/metrics' && method === 'GET') {
       const [pedidos, transacoes, produtos, clientes] = await Promise.all([
-        database.collection('pedidos').find(tenant).toArray(),
+        pedidoRepo.list(ctx.empresa_id),
         transacaoRepo.list(ctx.empresa_id),
         produtoRepo.list(ctx.empresa_id),
         clienteRepo.count(ctx.empresa_id),
@@ -1185,7 +1186,7 @@ async function handler(request, { params }) {
       const b = (await request.json().catch(() => ({}))) || {}
       if (!b.forcar && totals.restante > 0.009) return err(`Restam ${totals.restante} a pagar`, 400)
       // cria pedido (tipo mesa, concluido) para integrar dashboard/financeiro
-      const numero = (await database.collection('pedidos').countDocuments(tenant)) + 1
+      const numero = await pedidoRepo.nextNumero(ctx.empresa_id)
       const pedido = {
         id: uuidv4(), empresa_id: ctx.empresa_id, numero, cliente_id: comanda.cliente_id, cliente_nome: comanda.cliente_nome,
         itens: (comanda.itens || []).map((i) => ({ produto_id: i.produto_id, nome: i.nome, preco: i.preco, quantidade: i.quantidade })),
@@ -1193,7 +1194,7 @@ async function handler(request, { params }) {
         observacoes: `Comanda ${comanda.mesa_nome}`, comanda_id: comanda.id, total: totals.total,
         created_at: new Date(), updated_at: new Date(),
       }
-      await database.collection('pedidos').insertOne(pedido)
+      await pedidoRepo.create(pedido)
       await transacaoRepo.create({
         id: uuidv4(), empresa_id: ctx.empresa_id, tipo: 'receita', categoria: 'Vendas',
         descricao: `Comanda ${comanda.mesa_nome} (Pedido #${numero})`, valor: totals.total, pedido_id: pedido.id, comanda_id: comanda.id,
@@ -1246,7 +1247,7 @@ async function handler(request, { params }) {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
       const [convs, pedidos] = await Promise.all([
         conversaRepo.list(ctx.empresa_id),
-        database.collection('pedidos').find(tenant).toArray(),
+        pedidoRepo.list(ctx.empresa_id),
       ])
       const today = new Date(); today.setHours(0, 0, 0, 0)
       const byStatus = (s) => convs.filter((c) => c.status === s).length
@@ -1270,7 +1271,7 @@ async function handler(request, { params }) {
       const q = (url.searchParams.get('q') || '').toLowerCase()
       const [convsAll, pedidos] = await Promise.all([
         conversaRepo.list(ctx.empresa_id),
-        database.collection('pedidos').find(tenant).toArray(),
+        pedidoRepo.list(ctx.empresa_id),
       ])
       let convs = convsAll.map((c) => {
         const at = pedidoAtivoDoCliente(pedidos, c.cliente_id)
@@ -1292,7 +1293,7 @@ async function handler(request, { params }) {
       const conversa = await conversaRepo.findById(ctx.empresa_id, seg[1])
       if (!conversa) return err('Conversa nao encontrada', 404)
       const cliente = conversa.cliente_id ? await clienteRepo.findById(ctx.empresa_id, conversa.cliente_id) : null
-      const pedidos = await database.collection('pedidos').find({ empresa_id: ctx.empresa_id, cliente_id: conversa.cliente_id }).sort({ created_at: -1 }).toArray()
+      const pedidos = await pedidoRepo.findByCliente(ctx.empresa_id, conversa.cliente_id)
       const at = pedidoAtivoDoCliente(pedidos, conversa.cliente_id)
       const ultimoPedido = pedidos[0] || null
       return json({
@@ -1355,7 +1356,7 @@ async function handler(request, { params }) {
       const inRange = (d) => { const x = new Date(d); return x >= inicio && x <= fim }
 
       const [pedidosAll, transAll, pagsAll] = await Promise.all([
-        database.collection('pedidos').find(tenant).toArray(),
+        pedidoRepo.list(ctx.empresa_id),
         transacaoRepo.list(ctx.empresa_id),
         database.collection('pagamentos').find(tenant).toArray(),
       ])
