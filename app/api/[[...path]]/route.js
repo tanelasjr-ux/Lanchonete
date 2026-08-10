@@ -28,6 +28,8 @@ import { createProdutoRepository } from '@/lib/repositories/mongo/produtoReposit
 import { createClienteRepository } from '@/lib/repositories/mongo/clienteRepository'
 import { createUsuarioRepository } from '@/lib/repositories/mongo/usuarioRepository'
 import { createTransacaoRepository } from '@/lib/repositories/mongo/transacaoRepository'
+import { createAuditoriaRepository } from '@/lib/repositories/mongo/auditoriaRepository'
+import { createIntegracaoRepository } from '@/lib/repositories/mongo/integracaoRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -142,8 +144,7 @@ async function auth(request) {
 /* ============================ AUDITORIA ============================= */
 async function audit(database, ctx, acao, entidade, entidade_id, dados = {}) {
   try {
-    await database.collection('auditoria').insertOne({
-      id: uuidv4(),
+    await createAuditoriaRepository(database).registrar({
       empresa_id: ctx.empresa_id,
       usuario_id: ctx.usuario_id,
       usuario_nome: ctx.nome || null,
@@ -151,7 +152,6 @@ async function audit(database, ctx, acao, entidade, entidade_id, dados = {}) {
       entidade,
       entidade_id: entidade_id || null,
       dados,
-      created_at: new Date(),
     })
   } catch {
     /* auditoria nunca deve quebrar o fluxo principal */
@@ -161,7 +161,7 @@ async function audit(database, ctx, acao, entidade, entidade_id, dados = {}) {
 /* ============================ EVENTOS (n8n) ============================= */
 async function emitEvent(database, ctx, event, payload) {
   try {
-    const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'n8n' })
+    const integ = await createIntegracaoRepository(database).findByTipo(ctx.empresa_id, 'n8n')
     await triggerN8nEvent(integ?.config || {}, event, { empresa_id: ctx.empresa_id, ...payload })
   } catch {
     /* fire-and-forget */
@@ -397,6 +397,8 @@ async function handler(request, { params }) {
     const clienteRepo = createClienteRepository(database)
     const usuarioRepo = createUsuarioRepository(database)
     const transacaoRepo = createTransacaoRepository(database)
+    const auditoriaRepo = createAuditoriaRepository(database)
+    const integracaoRepo = createIntegracaoRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -478,7 +480,7 @@ async function handler(request, { params }) {
       const empresaId = url.searchParams.get('tenant')
       const dataId = url.searchParams.get('data.id') || url.searchParams.get('id')
       if (!empresaId || !dataId) return json({ error: 'params ausentes' }, 400)
-      const integ = await database.collection('integracoes').findOne({ empresa_id: empresaId, tipo: 'mercadopago' })
+      const integ = await integracaoRepo.findByTipo(empresaId, 'mercadopago')
       if (!integ || !isGatewayConfigured('mercadopago', integ.config)) return json({ error: 'nao configurado' }, 404)
       let provider
       try { provider = getPaymentProvider('mercadopago', integ.config) } catch { return json({ error: 'provider' }, 404) }
@@ -896,14 +898,14 @@ async function handler(request, { params }) {
     /* ==================== AUDITORIA ==================== */
     if (route === '/auditoria' && method === 'GET') {
       if (!can(ctx.papel, 'auditoria')) return err('Sem permissao', 403)
-      const list = await database.collection('auditoria').find(tenant).sort({ created_at: -1 }).limit(200).toArray()
+      const list = await auditoriaRepo.list(ctx.empresa_id, 200)
       return json(list.map(clean))
     }
 
     /* ==================== INTEGRACOES ==================== */
     if (route === '/integracoes' && method === 'GET') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
-      const list = await database.collection('integracoes').find(tenant).toArray()
+      const list = await integracaoRepo.list(ctx.empresa_id)
       const map = {}
       for (const i of list) {
         const c = clean(i)
@@ -918,7 +920,7 @@ async function handler(request, { params }) {
     if (route === '/integracoes/mercadopago' && method === 'PUT') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const current = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'mercadopago' })
+      const current = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
       const config = {
         mode: b.mode || current?.config?.mode || 'sandbox',
         // mantem token existente se vier vazio (permite editar outros campos sem reenviar)
@@ -926,11 +928,7 @@ async function handler(request, { params }) {
         webhookSecret: b.webhookSecret !== undefined && b.webhookSecret !== '' ? b.webhookSecret : current?.config?.webhookSecret || '',
       }
       const status = config.accessToken ? 'configurado' : 'nao_configurado'
-      await database.collection('integracoes').updateOne(
-        { empresa_id: ctx.empresa_id, tipo: 'mercadopago' },
-        { $set: { config, status, updated_at: new Date() }, $setOnInsert: { id: uuidv4(), empresa_id: ctx.empresa_id, tipo: 'mercadopago', created_at: new Date() } },
-        { upsert: true }
-      )
+      await integracaoRepo.upsert(ctx.empresa_id, 'mercadopago', { config, status })
       await audit(database, ctx, 'update', 'integracao', 'mercadopago', { status, mode: config.mode })
       return json({ ok: true, status, mode: config.mode, hasAccessToken: Boolean(config.accessToken) })
     }
@@ -939,36 +937,28 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const config = { serverUrl: b.serverUrl || '', apiKey: b.apiKey || '', instance: b.instance || 'restaurant-os' }
       const status = config.serverUrl && config.apiKey ? 'configurado' : 'nao_configurado'
-      await database.collection('integracoes').updateOne(
-        { empresa_id: ctx.empresa_id, tipo: 'evolution' },
-        { $set: { config, status, updated_at: new Date() }, $setOnInsert: { id: uuidv4(), empresa_id: ctx.empresa_id, tipo: 'evolution', created_at: new Date() } },
-        { upsert: true }
-      )
+      const atualizado = await integracaoRepo.upsert(ctx.empresa_id, 'evolution', { config, status })
       await audit(database, ctx, 'update', 'integracao', 'evolution', { status })
-      return json(clean(await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'evolution' })))
+      return json(clean(atualizado))
     }
     if (route === '/integracoes/n8n' && method === 'PUT') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
       const config = { webhookUrl: b.webhookUrl || '', apiKey: b.apiKey || '', eventos: b.eventos || ['order.created', 'order.status_changed'] }
       const status = config.webhookUrl ? 'configurado' : 'nao_configurado'
-      await database.collection('integracoes').updateOne(
-        { empresa_id: ctx.empresa_id, tipo: 'n8n' },
-        { $set: { config, status, updated_at: new Date() }, $setOnInsert: { id: uuidv4(), empresa_id: ctx.empresa_id, tipo: 'n8n', created_at: new Date() } },
-        { upsert: true }
-      )
+      const atualizado = await integracaoRepo.upsert(ctx.empresa_id, 'n8n', { config, status })
       await audit(database, ctx, 'update', 'integracao', 'n8n', { status })
-      return json(clean(await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'n8n' })))
+      return json(clean(atualizado))
     }
     if (route === '/integracoes/evolution/testar' && method === 'POST') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
-      const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'evolution' })
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'evolution')
       const result = await fetchInstanceStatus(integ?.config || {})
       return json(result)
     }
     if (route === '/integracoes/n8n/testar' && method === 'POST') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
-      const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'n8n' })
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'n8n')
       const result = await testN8nConnection(integ?.config || {})
       return json(result)
     }
@@ -1153,7 +1143,7 @@ async function handler(request, { params }) {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
       const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
-      const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'mercadopago' })
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
       if (!integ || !isGatewayConfigured('mercadopago', integ.config)) return err('Mercado Pago nao configurado', 400)
       const b = (await request.json()) || {}
       const totals = computeComanda(comanda)
@@ -1218,7 +1208,7 @@ async function handler(request, { params }) {
       if (!p) return err('Pagamento nao encontrado', 404)
       // se pix mercadopago pendente, consulta status autoritativo
       if (p.provider === 'mercadopago' && p.status === 'pending' && p.provider_payment_id) {
-        const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'mercadopago' })
+        const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
         if (integ && isGatewayConfigured('mercadopago', integ.config)) {
           try {
             const st = await getPaymentProvider('mercadopago', integ.config).getStatus(p.provider_payment_id)
@@ -1317,7 +1307,7 @@ async function handler(request, { params }) {
       if (!b.texto) return err('texto obrigatorio')
       const conversa = await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
       if (!conversa) return err('Conversa nao encontrada', 404)
-      const integ = await database.collection('integracoes').findOne({ empresa_id: ctx.empresa_id, tipo: 'evolution' })
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'evolution')
       if (!integ || !(integ.config?.serverUrl && integ.config?.apiKey)) return err('Evolution API nao configurada', 400)
       try {
         await sendWhatsappMessage(integ.config, { to: conversa.contato_numero, message: b.texto })
