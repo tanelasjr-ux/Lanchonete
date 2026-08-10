@@ -225,7 +225,10 @@ export interface ClienteRepository extends Repository<Cliente> {
 export interface PedidoRepository extends Repository<Pedido> {
   nextNumero(empresaId: UUID): Promise<number>;
 }
-export interface TransacaoRepository extends Repository<Transacao> {}
+export interface TransacaoRepository extends Repository<Transacao> {
+  /** GET /financeiro/transacoes: mais recentes primeiro, com limite. */
+  listRecentes(empresaId: UUID, limit: number): Promise<Transacao[]>;
+}
 
 /** Empresa e a raiz do tenant: nao tem empresa_id proprio, nao usa Repository<T>. */
 export interface EmpresaRepository {

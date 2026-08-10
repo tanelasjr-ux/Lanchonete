@@ -26,6 +26,8 @@ import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEW
 import { createCategoriaRepository } from '@/lib/repositories/mongo/categoriaRepository'
 import { createProdutoRepository } from '@/lib/repositories/mongo/produtoRepository'
 import { createClienteRepository } from '@/lib/repositories/mongo/clienteRepository'
+import { createUsuarioRepository } from '@/lib/repositories/mongo/usuarioRepository'
+import { createTransacaoRepository } from '@/lib/repositories/mongo/transacaoRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -393,6 +395,8 @@ async function handler(request, { params }) {
     const categoriaRepo = createCategoriaRepository(database)
     const produtoRepo = createProdutoRepository(database)
     const clienteRepo = createClienteRepository(database)
+    const usuarioRepo = createUsuarioRepository(database)
+    const transacaoRepo = createTransacaoRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -405,7 +409,7 @@ async function handler(request, { params }) {
       const { empresa_nome, nome, email, senha } = body || {}
       if (!empresa_nome || !nome || !email || !senha) return err('Campos obrigatorios: empresa_nome, nome, email, senha')
       const emailNorm = String(email).toLowerCase().trim()
-      const exists = await database.collection('usuarios').findOne({ email: emailNorm })
+      const exists = await usuarioRepo.findByEmail(emailNorm)
       if (exists) return err('E-mail ja cadastrado', 409)
 
       const empresa_id = uuidv4()
@@ -446,7 +450,7 @@ async function handler(request, { params }) {
         ativo: true,
         created_at: new Date(),
       }
-      await database.collection('usuarios').insertOne(usuario)
+      await usuarioRepo.create(usuario)
 
       const ctx = { empresa_id, usuario_id, nome, papel: 'OWNER' }
       await seedEmpresa(database, empresa_id, ctx)
@@ -459,7 +463,7 @@ async function handler(request, { params }) {
     if (route === '/auth/login' && method === 'POST') {
       const { email, senha } = (await request.json()) || {}
       if (!email || !senha) return err('E-mail e senha obrigatorios')
-      const usuario = await database.collection('usuarios').findOne({ email: String(email).toLowerCase().trim() })
+      const usuario = await usuarioRepo.findByEmail(String(email).toLowerCase().trim())
       if (!usuario || !verifyPassword(senha, usuario.senha_hash)) return err('Credenciais invalidas', 401)
       if (!usuario.ativo) return err('Usuario inativo', 403)
       const empresa = await database.collection('empresas').findOne({ id: usuario.empresa_id })
@@ -538,7 +542,7 @@ async function handler(request, { params }) {
     /* ---- a partir daqui, tudo autenticado ---- */
     const session = await auth(request)
     if (!session) return err('Nao autorizado', 401)
-    const usuario = await database.collection('usuarios').findOne({ id: session.usuario_id, empresa_id: session.empresa_id })
+    const usuario = await usuarioRepo.findById(session.empresa_id, session.usuario_id)
     if (!usuario || !usuario.ativo) return err('Sessao invalida', 401)
     const ctx = { empresa_id: session.empresa_id, usuario_id: session.usuario_id, nome: usuario.nome, papel: usuario.papel }
     const tenant = { empresa_id: ctx.empresa_id } // escopo multitenant obrigatorio
@@ -577,7 +581,7 @@ async function handler(request, { params }) {
     /* ==================== USUARIOS ==================== */
     if (route === '/usuarios' && method === 'GET') {
       if (!can(ctx.papel, 'usuarios')) return err('Sem permissao', 403)
-      const list = await database.collection('usuarios').find(tenant).sort({ created_at: -1 }).toArray()
+      const list = await usuarioRepo.list(ctx.empresa_id)
       return json(list.map(clean))
     }
     if (route === '/usuarios' && method === 'POST') {
@@ -585,7 +589,7 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       if (!b.nome || !b.email || !b.senha) return err('nome, email e senha obrigatorios')
       const emailNorm = String(b.email).toLowerCase().trim()
-      if (await database.collection('usuarios').findOne({ email: emailNorm })) return err('E-mail ja cadastrado', 409)
+      if (await usuarioRepo.findByEmail(emailNorm)) return err('E-mail ja cadastrado', 409)
       const novo = {
         id: uuidv4(),
         empresa_id: ctx.empresa_id,
@@ -596,7 +600,7 @@ async function handler(request, { params }) {
         ativo: true,
         created_at: new Date(),
       }
-      await database.collection('usuarios').insertOne(novo)
+      await usuarioRepo.create(novo)
       await audit(database, ctx, 'create', 'usuario', novo.id, { email: emailNorm, papel: novo.papel })
       return json(clean(novo), 201)
     }
@@ -606,14 +610,14 @@ async function handler(request, { params }) {
       const upd = {}
       for (const k of ['nome', 'papel', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.senha) upd.senha_hash = hashPassword(b.senha)
-      await database.collection('usuarios').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
+      const atualizado = await usuarioRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(database, ctx, 'update', 'usuario', seg[1], upd)
-      return json(clean(await database.collection('usuarios').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(atualizado))
     }
     if (seg[0] === 'usuarios' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'usuarios')) return err('Sem permissao', 403)
       if (seg[1] === ctx.usuario_id) return err('Voce nao pode remover a si mesmo', 400)
-      await database.collection('usuarios').deleteOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      await usuarioRepo.delete(ctx.empresa_id, seg[1])
       await audit(database, ctx, 'delete', 'usuario', seg[1])
       return json({ ok: true })
     }
@@ -784,7 +788,7 @@ async function handler(request, { params }) {
       // Regra de negocio: ao concluir/entregar, gera receita e atualiza metricas do cliente
       const finais = ['concluido', 'ENTREGUE']
       if (finais.includes(b.status) && !finais.includes(pedido.status)) {
-        await database.collection('transacoes').insertOne({
+        await transacaoRepo.create({
           id: uuidv4(),
           empresa_id: ctx.empresa_id,
           tipo: 'receita',
@@ -807,7 +811,7 @@ async function handler(request, { params }) {
     /* ==================== FINANCEIRO ==================== */
     if (route === '/financeiro/transacoes' && method === 'GET') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
-      const list = await database.collection('transacoes').find(tenant).sort({ data: -1 }).limit(500).toArray()
+      const list = await transacaoRepo.listRecentes(ctx.empresa_id, 500)
       return json(list.map(clean))
     }
     if (route === '/financeiro/transacoes' && method === 'POST') {
@@ -825,13 +829,13 @@ async function handler(request, { params }) {
         data: b.data ? new Date(b.data) : new Date(),
         created_at: new Date(),
       }
-      await database.collection('transacoes').insertOne(doc)
+      await transacaoRepo.create(doc)
       await audit(database, ctx, 'create', 'transacao', doc.id, { tipo: doc.tipo, valor: doc.valor })
       return json(clean(doc), 201)
     }
     if (route === '/financeiro/resumo' && method === 'GET') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
-      const list = await database.collection('transacoes').find(tenant).toArray()
+      const list = await transacaoRepo.list(ctx.empresa_id)
       const receitas = list.filter((t) => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0)
       const despesas = list.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0)
       const days = []
@@ -852,7 +856,7 @@ async function handler(request, { params }) {
     if (route === '/dashboard/metrics' && method === 'GET') {
       const [pedidos, transacoes, produtos, clientes] = await Promise.all([
         database.collection('pedidos').find(tenant).toArray(),
-        database.collection('transacoes').find(tenant).toArray(),
+        transacaoRepo.list(ctx.empresa_id),
         produtoRepo.list(ctx.empresa_id),
         clienteRepo.count(ctx.empresa_id),
       ])
@@ -1194,7 +1198,7 @@ async function handler(request, { params }) {
         created_at: new Date(), updated_at: new Date(),
       }
       await database.collection('pedidos').insertOne(pedido)
-      await database.collection('transacoes').insertOne({
+      await transacaoRepo.create({
         id: uuidv4(), empresa_id: ctx.empresa_id, tipo: 'receita', categoria: 'Vendas',
         descricao: `Comanda ${comanda.mesa_nome} (Pedido #${numero})`, valor: totals.total, pedido_id: pedido.id, comanda_id: comanda.id,
         data: new Date(), created_at: new Date(),
@@ -1357,7 +1361,7 @@ async function handler(request, { params }) {
 
       const [pedidosAll, transAll, pagsAll] = await Promise.all([
         database.collection('pedidos').find(tenant).toArray(),
-        database.collection('transacoes').find(tenant).toArray(),
+        transacaoRepo.list(ctx.empresa_id),
         database.collection('pagamentos').find(tenant).toArray(),
       ])
       let pedidos = pedidosAll.filter((p) => inRange(p.created_at))
