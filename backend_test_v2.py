@@ -13,10 +13,10 @@ import requests
 import json
 import random
 import string
+import os
 from datetime import datetime
 
-# Base URL from .env
-BASE_URL = "https://dine-operations.preview.emergentagent.com/api"
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
 
 # Test results tracking
 results = {

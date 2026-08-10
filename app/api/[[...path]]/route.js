@@ -23,6 +23,9 @@ import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evo
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus } from '@/lib/integrations/supabase'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
+import { createCategoriaRepository } from '@/lib/repositories/mongo/categoriaRepository'
+import { createProdutoRepository } from '@/lib/repositories/mongo/produtoRepository'
+import { createClienteRepository } from '@/lib/repositories/mongo/clienteRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -387,6 +390,9 @@ async function handler(request, { params }) {
 
   try {
     const database = await getDb()
+    const categoriaRepo = createCategoriaRepository(database)
+    const produtoRepo = createProdutoRepository(database)
+    const clienteRepo = createClienteRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -511,10 +517,10 @@ async function handler(request, { params }) {
       const tipo = data.messageType || (msg.imageMessage ? 'image' : msg.audioMessage ? 'audio' : msg.documentMessage ? 'document' : 'text')
       const texto = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || (tipo !== 'text' ? `[${tipo}]` : '')
       // localiza/cria cliente por telefone (multitenant)
-      let cliente = await database.collection('clientes').findOne({ empresa_id: empresaId, telefone: numero })
+      let cliente = await clienteRepo.findByTelefone(empresaId, numero)
       if (!cliente) {
         cliente = { id: uuidv4(), empresa_id: empresaId, nome, telefone: numero, email: '', endereco: '', observacoes: '', total_pedidos: 0, total_gasto: 0, created_at: new Date() }
-        await database.collection('clientes').insertOne(cliente)
+        await clienteRepo.create(cliente)
       }
       // localiza/cria conversa
       let conversa = await database.collection('conversas').findOne({ empresa_id: empresaId, contato_numero: numero })
@@ -614,7 +620,7 @@ async function handler(request, { params }) {
 
     /* ==================== CATEGORIAS ==================== */
     if (route === '/categorias' && method === 'GET') {
-      const list = await database.collection('categorias').find(tenant).sort({ ordem: 1 }).toArray()
+      const list = await categoriaRepo.list(ctx.empresa_id)
       return json(list.map(clean))
     }
     if (route === '/categorias' && method === 'POST') {
@@ -622,7 +628,7 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       if (!b.nome) return err('nome obrigatorio')
       const doc = { id: uuidv4(), empresa_id: ctx.empresa_id, nome: b.nome, ordem: b.ordem ?? 99, ativo: true, created_at: new Date() }
-      await database.collection('categorias').insertOne(doc)
+      await categoriaRepo.create(doc)
       await audit(database, ctx, 'create', 'categoria', doc.id, { nome: b.nome })
       return json(clean(doc), 201)
     }
@@ -631,21 +637,21 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const upd = {}
       for (const k of ['nome', 'ordem', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
-      await database.collection('categorias').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
+      const atualizado = await categoriaRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(database, ctx, 'update', 'categoria', seg[1], upd)
-      return json(clean(await database.collection('categorias').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(atualizado))
     }
     if (seg[0] === 'categorias' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
-      await database.collection('categorias').deleteOne({ id: seg[1], empresa_id: ctx.empresa_id })
-      await database.collection('produtos').deleteMany({ categoria_id: seg[1], empresa_id: ctx.empresa_id })
+      await categoriaRepo.delete(ctx.empresa_id, seg[1])
+      await produtoRepo.deleteManyByCategoria(ctx.empresa_id, seg[1])
       await audit(database, ctx, 'delete', 'categoria', seg[1])
       return json({ ok: true })
     }
 
     /* ==================== PRODUTOS ==================== */
     if (route === '/produtos' && method === 'GET') {
-      const list = await database.collection('produtos').find(tenant).sort({ created_at: -1 }).toArray()
+      const list = await produtoRepo.list(ctx.empresa_id)
       return json(list.map(clean))
     }
     if (route === '/produtos' && method === 'POST') {
@@ -664,7 +670,7 @@ async function handler(request, { params }) {
         ativo: true,
         created_at: new Date(),
       }
-      await database.collection('produtos').insertOne(doc)
+      await produtoRepo.create(doc)
       await audit(database, ctx, 'create', 'produto', doc.id, { nome: b.nome, preco: doc.preco })
       return json(clean(doc), 201)
     }
@@ -674,20 +680,20 @@ async function handler(request, { params }) {
       const upd = {}
       for (const k of ['categoria_id', 'nome', 'descricao', 'imagem', 'disponivel', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.preco !== undefined) upd.preco = Number(b.preco)
-      await database.collection('produtos').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
+      const atualizado = await produtoRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(database, ctx, 'update', 'produto', seg[1], upd)
-      return json(clean(await database.collection('produtos').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(atualizado))
     }
     if (seg[0] === 'produtos' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
-      await database.collection('produtos').deleteOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      await produtoRepo.delete(ctx.empresa_id, seg[1])
       await audit(database, ctx, 'delete', 'produto', seg[1])
       return json({ ok: true })
     }
 
     /* ==================== CLIENTES ==================== */
     if (route === '/clientes' && method === 'GET') {
-      const list = await database.collection('clientes').find(tenant).sort({ created_at: -1 }).toArray()
+      const list = await clienteRepo.list(ctx.empresa_id)
       return json(list.map(clean))
     }
     if (route === '/clientes' && method === 'POST') {
@@ -706,7 +712,7 @@ async function handler(request, { params }) {
         total_gasto: 0,
         created_at: new Date(),
       }
-      await database.collection('clientes').insertOne(doc)
+      await clienteRepo.create(doc)
       await audit(database, ctx, 'create', 'cliente', doc.id, { nome: b.nome })
       return json(clean(doc), 201)
     }
@@ -715,13 +721,13 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const upd = {}
       for (const k of ['nome', 'telefone', 'email', 'endereco', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
-      await database.collection('clientes').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
+      const atualizado = await clienteRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(database, ctx, 'update', 'cliente', seg[1], upd)
-      return json(clean(await database.collection('clientes').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(atualizado))
     }
     if (seg[0] === 'clientes' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'clientes')) return err('Sem permissao', 403)
-      await database.collection('clientes').deleteOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      await clienteRepo.delete(ctx.empresa_id, seg[1])
       await audit(database, ctx, 'delete', 'cliente', seg[1])
       return json({ ok: true })
     }
@@ -743,7 +749,7 @@ async function handler(request, { params }) {
       const numero = (await database.collection('pedidos').countDocuments(tenant)) + 1
       let cliente_nome = b.cliente_nome || 'Consumidor'
       if (b.cliente_id) {
-        const c = await database.collection('clientes').findOne({ id: b.cliente_id, empresa_id: ctx.empresa_id })
+        const c = await clienteRepo.findById(ctx.empresa_id, b.cliente_id)
         if (c) cliente_nome = c.nome
       }
       const doc = {
@@ -790,10 +796,7 @@ async function handler(request, { params }) {
           created_at: new Date(),
         })
         if (pedido.cliente_id) {
-          await database.collection('clientes').updateOne(
-            { id: pedido.cliente_id, empresa_id: ctx.empresa_id },
-            { $inc: { total_pedidos: 1, total_gasto: pedido.total } }
-          )
+          await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, pedido.total)
         }
       }
       await audit(database, ctx, 'update', 'pedido', seg[1], upd)
@@ -850,8 +853,8 @@ async function handler(request, { params }) {
       const [pedidos, transacoes, produtos, clientes] = await Promise.all([
         database.collection('pedidos').find(tenant).toArray(),
         database.collection('transacoes').find(tenant).toArray(),
-        database.collection('produtos').find(tenant).toArray(),
-        database.collection('clientes').countDocuments(tenant),
+        produtoRepo.list(ctx.empresa_id),
+        clienteRepo.count(ctx.empresa_id),
       ])
       const today = new Date()
       today.setHours(0, 0, 0, 0)
@@ -1010,7 +1013,7 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       let cliente_nome = b.cliente_nome || 'Cliente'
       if (b.cliente_id) {
-        const c = await database.collection('clientes').findOne({ id: b.cliente_id, empresa_id: ctx.empresa_id })
+        const c = await clienteRepo.findById(ctx.empresa_id, b.cliente_id)
         if (c) cliente_nome = c.nome
       }
       const emp = await database.collection('empresas').findOne({ id: ctx.empresa_id })
@@ -1071,7 +1074,7 @@ async function handler(request, { params }) {
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       let nome = b.nome, preco = b.preco
       if (b.produto_id) {
-        const p = await database.collection('produtos').findOne({ id: b.produto_id, empresa_id: ctx.empresa_id })
+        const p = await produtoRepo.findById(ctx.empresa_id, b.produto_id)
         if (p) { nome = p.nome; preco = p.preco }
       }
       if (!nome || preco === undefined) return err('produto invalido')
@@ -1196,7 +1199,7 @@ async function handler(request, { params }) {
         descricao: `Comanda ${comanda.mesa_nome} (Pedido #${numero})`, valor: totals.total, pedido_id: pedido.id, comanda_id: comanda.id,
         data: new Date(), created_at: new Date(),
       })
-      if (comanda.cliente_id) await database.collection('clientes').updateOne({ id: comanda.cliente_id, empresa_id: ctx.empresa_id }, { $inc: { total_pedidos: 1, total_gasto: totals.total } })
+      if (comanda.cliente_id) await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, comanda.cliente_id, totals.total)
       await database.collection('comandas').updateOne({ id: comanda.id, empresa_id: ctx.empresa_id }, { $set: { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() } })
       if (comanda.mesa_id) await database.collection('mesas').updateOne({ id: comanda.mesa_id, empresa_id: ctx.empresa_id }, { $set: { status: 'livre', comanda_id: null, updated_at: new Date() } })
       await audit(database, ctx, 'fechar', 'comanda', comanda.id, { total: totals.total, pedido: numero })
@@ -1288,7 +1291,7 @@ async function handler(request, { params }) {
       if (!can(ctx.papel, 'atendimento')) return err('Sem permissao', 403)
       const conversa = await database.collection('conversas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
       if (!conversa) return err('Conversa nao encontrada', 404)
-      const cliente = conversa.cliente_id ? await database.collection('clientes').findOne({ id: conversa.cliente_id, empresa_id: ctx.empresa_id }) : null
+      const cliente = conversa.cliente_id ? await clienteRepo.findById(ctx.empresa_id, conversa.cliente_id) : null
       const pedidos = await database.collection('pedidos').find({ empresa_id: ctx.empresa_id, cliente_id: conversa.cliente_id }).sort({ created_at: -1 }).toArray()
       const at = pedidoAtivoDoCliente(pedidos, conversa.cliente_id)
       const ultimoPedido = pedidos[0] || null
