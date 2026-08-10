@@ -257,7 +257,14 @@ export interface IntegracaoRepository {
 }
 
 export interface MesaRepository extends Repository<Mesa> {
-  countAtivas(empresaId: UUID): Promise<number>;
+  /** POST /mesas/configurar cria N mesas de uma vez. */
+  createMany(entities: Mesa[]): Promise<void>;
+  /**
+   * Sincroniza o status da mesa a partir do saldo da comanda (reloadComanda),
+   * mas nunca reabre uma mesa que ja foi liberada (status <> 'livre' e guarda,
+   * nao uma condicao de negocio nova).
+   */
+  syncStatusOcupada(empresaId: UUID, mesaId: UUID, status: MesaStatus): Promise<void>;
 }
 
 /** Operacoes de item/pagamento vao alem do CRUD generico de Repository<T>. */

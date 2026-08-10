@@ -30,6 +30,7 @@ import { createUsuarioRepository } from '@/lib/repositories/mongo/usuarioReposit
 import { createTransacaoRepository } from '@/lib/repositories/mongo/transacaoRepository'
 import { createAuditoriaRepository } from '@/lib/repositories/mongo/auditoriaRepository'
 import { createIntegracaoRepository } from '@/lib/repositories/mongo/integracaoRepository'
+import { createMesaRepository } from '@/lib/repositories/mongo/mesaRepository'
 
 /* ============================ INFRA: MongoDB ============================= */
 let client
@@ -399,6 +400,7 @@ async function handler(request, { params }) {
     const transacaoRepo = createTransacaoRepository(database)
     const auditoriaRepo = createAuditoriaRepository(database)
     const integracaoRepo = createIntegracaoRepository(database)
+    const mesaRepo = createMesaRepository(database)
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
@@ -966,7 +968,7 @@ async function handler(request, { params }) {
     /* ==================== MESAS (salao) ==================== */
     if (route === '/mesas' && method === 'GET') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
-      const mesas = await database.collection('mesas').find({ ...tenant, ativo: true }).sort({ numero: 1 }).toArray()
+      const mesas = await mesaRepo.list(ctx.empresa_id, { ativo: true })
       // anexa resumo da comanda aberta
       const comandaIds = mesas.map((m) => m.comanda_id).filter(Boolean)
       const comandas = comandaIds.length ? await database.collection('comandas').find({ empresa_id: ctx.empresa_id, id: { $in: comandaIds } }).toArray() : []
@@ -982,26 +984,26 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const quantidade = Math.max(0, Math.min(500, Number(b.quantidade || 0)))
       const capacidade = Number(b.capacidade || 4)
-      const existentes = await database.collection('mesas').find(tenant).sort({ numero: 1 }).toArray()
+      const existentes = await mesaRepo.list(ctx.empresa_id)
       const maxNum = existentes.reduce((mx, m) => Math.max(mx, m.numero), 0)
       const novas = []
       for (let n = existentes.length + 1; n <= quantidade; n++) {
         const numero = Math.max(n, maxNum + 1) // garante numeracao unica crescente
         novas.push({ id: uuidv4(), empresa_id: ctx.empresa_id, numero: n, nome: `Mesa ${padMesa(n)}`, capacidade, status: 'livre', comanda_id: null, ativo: true, created_at: new Date(), updated_at: new Date() })
       }
-      if (novas.length) await database.collection('mesas').insertMany(novas)
+      if (novas.length) await mesaRepo.createMany(novas)
       // se reduzir: desativa mesas livres excedentes (nunca remove com comanda aberta)
       if (quantidade < existentes.length) {
         const excedentes = existentes.filter((m) => m.numero > quantidade && m.status === 'livre')
-        for (const m of excedentes) await database.collection('mesas').updateOne({ id: m.id, empresa_id: ctx.empresa_id }, { $set: { ativo: false, updated_at: new Date() } })
+        for (const m of excedentes) await mesaRepo.update(ctx.empresa_id, m.id, { ativo: false, updated_at: new Date() })
       }
       await audit(database, ctx, 'configurar', 'mesas', ctx.empresa_id, { quantidade, capacidade })
-      const mesas = await database.collection('mesas').find({ ...tenant, ativo: true }).sort({ numero: 1 }).toArray()
+      const mesas = await mesaRepo.list(ctx.empresa_id, { ativo: true })
       return json(mesas.map(clean))
     }
     if (seg[0] === 'mesas' && seg[1] && seg[2] === 'abrir' && method === 'POST') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
-      const mesa = await database.collection('mesas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
+      const mesa = await mesaRepo.findById(ctx.empresa_id, seg[1])
       if (!mesa) return err('Mesa nao encontrada', 404)
       if (mesa.comanda_id) return err('Mesa ja possui comanda aberta', 409)
       const b = (await request.json()) || {}
@@ -1020,7 +1022,7 @@ async function handler(request, { params }) {
       }
       Object.assign(comanda, computeComanda(comanda))
       await database.collection('comandas').insertOne(comanda)
-      await database.collection('mesas').updateOne({ id: mesa.id, empresa_id: ctx.empresa_id }, { $set: { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() } })
+      await mesaRepo.update(ctx.empresa_id, mesa.id, { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() })
       await audit(database, ctx, 'abrir', 'comanda', comanda.id, { mesa: mesa.nome })
       return json(clean(comanda), 201)
     }
@@ -1030,9 +1032,9 @@ async function handler(request, { params }) {
       const upd = { updated_at: new Date() }
       for (const k of ['nome', 'capacidade']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.status !== undefined && MESA_STATUS.includes(b.status)) upd.status = b.status
-      await database.collection('mesas').updateOne({ id: seg[1], empresa_id: ctx.empresa_id }, { $set: upd })
+      const atualizada = await mesaRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(database, ctx, 'update', 'mesa', seg[1], upd)
-      return json(clean(await database.collection('mesas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })))
+      return json(clean(atualizada))
     }
 
     /* ==================== COMANDAS ==================== */
@@ -1043,7 +1045,7 @@ async function handler(request, { params }) {
       await database.collection('comandas').updateOne({ id, empresa_id: ctx.empresa_id }, { $set: { subtotal: c.subtotal, desconto_valor: c.desconto_valor, taxa_valor: c.taxa_valor, total: c.total, pago: c.pago, restante: c.restante, updated_at: new Date() } })
       if (c.mesa_id) {
         const mesaStatus = c.restante <= 0 && c.total > 0 ? 'aguardando_pagamento' : 'ocupada'
-        await database.collection('mesas').updateOne({ id: c.mesa_id, empresa_id: ctx.empresa_id, status: { $ne: 'livre' } }, { $set: { status: mesaStatus } })
+        await mesaRepo.syncStatusOcupada(ctx.empresa_id, c.mesa_id, mesaStatus)
       }
       return c
     }
@@ -1110,12 +1112,12 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const comanda = await database.collection('comandas').findOne({ id: seg[1], empresa_id: ctx.empresa_id })
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
-      const destino = await database.collection('mesas').findOne({ id: b.mesa_id, empresa_id: ctx.empresa_id })
+      const destino = await mesaRepo.findById(ctx.empresa_id, b.mesa_id)
       if (!destino) return err('Mesa destino nao encontrada', 404)
       if (destino.comanda_id) return err('Mesa destino ocupada', 409)
       // libera mesa origem
-      if (comanda.mesa_id) await database.collection('mesas').updateOne({ id: comanda.mesa_id, empresa_id: ctx.empresa_id }, { $set: { status: 'livre', comanda_id: null, updated_at: new Date() } })
-      await database.collection('mesas').updateOne({ id: destino.id, empresa_id: ctx.empresa_id }, { $set: { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() } })
+      if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
+      await mesaRepo.update(ctx.empresa_id, destino.id, { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() })
       await database.collection('comandas').updateOne({ id: comanda.id, empresa_id: ctx.empresa_id }, { $set: { mesa_id: destino.id, mesa_nome: destino.nome, updated_at: new Date() } })
       await audit(database, ctx, 'transferir', 'comanda', comanda.id, { de: comanda.mesa_nome, para: destino.nome })
       return json(clean(await database.collection('comandas').findOne({ id: comanda.id, empresa_id: ctx.empresa_id })))
@@ -1195,7 +1197,7 @@ async function handler(request, { params }) {
       })
       if (comanda.cliente_id) await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, comanda.cliente_id, totals.total)
       await database.collection('comandas').updateOne({ id: comanda.id, empresa_id: ctx.empresa_id }, { $set: { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() } })
-      if (comanda.mesa_id) await database.collection('mesas').updateOne({ id: comanda.mesa_id, empresa_id: ctx.empresa_id }, { $set: { status: 'livre', comanda_id: null, updated_at: new Date() } })
+      if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
       await audit(database, ctx, 'fechar', 'comanda', comanda.id, { total: totals.total, pedido: numero })
       await emitEvent(database, ctx, 'comanda.closed', { comanda_id: comanda.id, total: totals.total })
       return json({ ok: true, pedido_numero: numero, total: totals.total })
