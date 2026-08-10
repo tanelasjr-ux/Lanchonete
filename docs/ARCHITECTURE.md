@@ -45,6 +45,29 @@ Modulos nao implementados (Mesas, Estoque, CRM, Campanhas, Fidelidade, Billing)
 ja possuem espaco em `empresas.config.feature_flags` e placeholders no schema,
 permitindo ativacao incremental sem migracao disruptiva.
 
+### ADR-006 — Regras de negocio pertencem exclusivamente ao Service
+**Regras de negocio** (calculo de totais, transicoes de status, geracao de
+receita, regras de pedidos/comandas/financeiro) vivem **somente no Service**
+(hoje inline em `app/api/[[...path]]/route.js`; nas implementacoes futuras de
+persistencia, no Service que orquestra os `*Repository`). **Nunca em trigger
+de banco.**
+
+O **Postgres** (Supabase) e responsavel apenas por integridade e automacoes
+mecanicas: RLS, foreign keys, `UNIQUE`, `CHECK`, `NOT NULL`, indices,
+`updated_at` automatico, sequencias/numeracao. Uma automacao mecanica nao
+decide nada sobre o dominio (ex.: atribuir um numero sequencial e mecanico;
+decidir que "concluir um pedido gera receita" e regra de negocio).
+
+Historico: `supabase/triggers.sql` chegou a conter duas triggers que
+violavam este principio (`pedido_recalc_total` recalculando total de pedido,
+`pedido_on_conclusao` gerando receita e atualizando metricas do cliente ao
+concluir pedido) — escritas antes desta decisao existir. Removidas na
+Fase 3.5 da migracao MongoDB -> Supabase (ver
+`docs/plans/PHASE-3.5-TRIGGER-CLEANUP.md` e
+`docs/plans/MONGO-TO-SUPABASE-AUDIT.md`). Qualquer trigger futura que pareca
+necessaria para regra de negocio deve ser justificada por escrito antes de
+ser criada — o padrao e nao existir.
+
 ## 3. Modulos (bounded contexts)
 
 | Modulo       | Entidades                              | Status |
