@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-11 (fim de sessao — Fase 6B concluida)
+Ultima atualizacao: 2026-08-11 (Fase 7 concluida — switch de runtime)
 
 ## Como usar este arquivo
 
@@ -17,26 +17,26 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-**Onde paramos (2026-08-11):** a Fase 6B foi concluida — o schema completo
-(migrations `0001`→`0013`) esta aplicado no **projeto Supabase real**, os
-repositories foram validados por la (39/39, incluindo isolamento
-multi-tenant) e os dados das 71 empresas do MongoDB de desenvolvimento foram
-migrados e validados (71/71, 0 divergencias).
+**Onde paramos (2026-08-11):** a **Fase 7 foi concluida** — a aplicacao agora
+roda **indiferentemente sobre MongoDB ou sobre Supabase**, escolhido pela
+variavel `DATABASE_PROVIDER`, com **paridade comprovada pela suite de
+regressao completa nos dois backends** (v1 40/40, v2 39/39, v3 32/33 em
+ambos — a unica falha do v3 e o nao-bug conhecido da Evolution API).
 
-**Estado do codigo:** arvore git limpa, **5 commits locais hoje**, nada
-enviado ao remoto (`git push` precisa da sua confirmacao). Nenhum arquivo
-temporario pendente.
+**Estado do codigo:** arvore git limpa, **8 commits locais**, nada enviado ao
+remoto (`git push` precisa da sua confirmacao). Build de producao: PASS.
 
-**O runtime continua 100% MongoDB.** O Supabase esta pronto e populado, mas
-a aplicacao ainda le e escreve no Mongo — trocar isso e a Fase 7.
+**O runtime ATIVO continua `mongo`** (default deliberado). O Supabase esta
+pronto, populado e validado como runtime — ligar e mudar uma variavel.
 
 **Para retomar:**
 1. Subir o ambiente local (Docker Desktop -> `docker start ros-mongo-local`,
    depois `yarn dev:no-reload`). Passo a passo completo no §7.
 2. O projeto Supabase e remoto: continua populado, nao precisa resubir nada.
-3. Decidir o proximo passo — as opcoes em aberto estao no §10. A principal
-   e a **Fase 7 (troca de runtime)**, que so comeca com sua aprovacao
-   explicita.
+3. Conferir o backend ativo: `GET /api/health` -> campo `database`.
+4. Proximos passos em aberto no §10 — os principais sao a **auditoria de
+   Auth** (pre-requisito para Supabase Auth) e a **decisao de infra no
+   EasyPanel**. O corte de producao em si depende de decisao sua.
 
 ---
 
@@ -97,14 +97,17 @@ Entidades: `Empresa`, `Usuario`, `Categoria`, `Produto`, `Cliente`, `Pedido`
 
 ## 2.3 Implementacoes de repositorio
 
-- `lib/repositories/mongo/` — **16 repositories. E o runtime ATIVO hoje.**
-- `lib/repositories/supabase/` — **15 repositories. Prontos e validados
-  contra o Supabase real, mas ainda NAO usados em runtime.**
+- `lib/repositories/mongo/` — **16 repositories** (runtime ativo por default).
+- `lib/repositories/supabase/` — **15 repositories**, validados contra o
+  Supabase real e aprovados pela suite de regressao completa como runtime.
+- `lib/repositories/factory.js` — **escolhe o backend** (Fase 7). Unico lugar
+  do sistema que sabe qual persistencia esta em uso.
 
-`route.js` so acessa `db.collection()` diretamente em 3 casos deliberados,
-fora do contrato `Repository<T>`: `ensureIndexes()` (infra), o bulk-insert do
-seed (`insertMany`, o contrato so define `create()` singular) e
-`webhook_events` (idempotencia tecnica, nao e entidade de dominio).
+`route.js` **nao conhece mais nenhum driver de banco**. Os 3 acessos diretos
+que existiam fora do contrato foram eliminados na Fase 7: `ensureIndexes()`
+(foi para a factory; no Supabase e no-op, os indices vem das migrations),
+bulk-insert do seed (virou `createMany()` nos repositories) e
+`webhook_events` (virou `webhookEventsRepository`, nos dois backends).
 
 ## 2.4 Autenticacao e autorizacao
 
@@ -162,7 +165,7 @@ Raiz do tenant: `empresas`. Catalogos globais: `papeis`, `permissoes`.
 
 ## 4.3 Migrations e ORDEM DE EXECUCAO (nao obvia)
 
-`supabase/migrations/0001` a `0013`, mais `triggers.sql`, `policies_rls.sql`,
+`supabase/migrations/0001` a `0014`, mais `triggers.sql`, `policies_rls.sql`,
 `seed.sql`. **A ordem correta nao e so numerica** — `0002+` dependem de
 funcoes definidas em `triggers.sql`/`policies_rls.sql`:
 
@@ -173,6 +176,7 @@ funcoes definidas em `triggers.sql`/`policies_rls.sql`:
 -> 0008_conversas_mensagens -> 0009_repository_support_functions
 -> 0010_atomic_create_functions -> 0011_migration_upsert_functions
 -> 0012_pedidos_comanda_id -> 0013_increment_conversa_patch_parcial
+-> 0014_resync_contador_por_empresa
 ```
 
 Essa ordem esta no `README.md` e **ja foi executada de ponta a ponta** duas
@@ -191,6 +195,26 @@ vezes (Postgres local em Docker e projeto Supabase real).
 - `upsert_pedido_com_itens()`, `upsert_comanda_com_itens()`,
   `resync_pedido_contadores()` — versoes idempotentes, usadas **so** pela
   ferramenta de migracao.
+
+---
+
+# 4.4 Switch de runtime (`DATABASE_PROVIDER`)
+
+A escolha do backend vive so em `lib/repositories/factory.js`:
+
+```bash
+DATABASE_PROVIDER=mongo      # default (omitir tem o mesmo efeito)
+DATABASE_PROVIDER=supabase   # exige SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+```
+
+- Conferir o que esta ativo: `GET /api/health` -> campo `database`.
+- **Sem fallback silencioso**: `supabase` sem credenciais **falha**, em vez de
+  cair para o Mongo — um fallback silencioso gravaria dados no banco errado
+  sem ninguem perceber.
+- **Sem modo hibrido**: misturar backends na mesma requisicao daria leitura
+  inconsistente e quebraria as FKs do Postgres.
+- Trocar exige reiniciar o processo (o `next dev` recarrega `.env` sozinho).
+- Detalhes: `docs/plans/PHASE-7-RUNTIME-SWITCH.md`.
 
 ---
 
@@ -229,12 +253,17 @@ Fluxo WhatsApp completo (testar inteiro ao mexer em qualquer parte):
 | 5 — `Supabase*Repository` | **Concluida** (`docs/plans/PHASE-5-SUPABASE-REPOSITORIES.md`) |
 | 6 — Ferramenta de migracao de dados | **Concluida** (`docs/plans/PHASE-6-DATA-MIGRATION.md`) |
 | 6B — Validacao contra Supabase REAL | **Concluida** (`docs/plans/PHASE-6B-SUPABASE-REAL.md`) |
-| **7 — Troca de runtime para Supabase** | **NAO INICIADA** — aguarda decisao do dono |
+| 7 — Switch de runtime (`DATABASE_PROVIDER`) | **Concluida** (`docs/plans/PHASE-7-RUNTIME-SWITCH.md`) |
+| **Corte de producao (rodar sobre Supabase de verdade)** | **NAO FEITO** — aguarda decisao do dono |
 | Auth -> Supabase Auth | **NAO INICIADA** — falta auditoria propria |
 | Realtime / Storage | **NAO INICIADOS** |
 
-**O runtime da aplicacao continua 100% MongoDB.** Preencher as variaveis
-Supabase no `.env` **nao** troca a persistencia — isso e a Fase 7.
+**O runtime ATIVO e `mongo`** (default deliberado da Fase 7). A aplicacao ja
+roda igualmente bem sobre Supabase — basta `DATABASE_PROVIDER=supabase` —
+mas trocar em producao e uma decisao de negocio, nao tecnica: exige janela de
+manutencao e nova migracao contra o Mongo de PRODUCAO (o que foi migrado ate
+agora foi o Mongo de desenvolvimento). Conferir o backend ativo:
+`GET /api/health` -> campo `database`.
 
 ## 6.1 O que a Fase 6B (hoje) entregou
 
@@ -341,14 +370,25 @@ Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
    hardcoded no `route.js`.
 9. Ao apagar uma empresa, o `ON DELETE CASCADE` limpa todo o tenant — util
    para limpar dado de teste, perigoso em producao.
+10. **O seed criava a mesa demo apontando para uma comanda inexistente**
+    (violava `mesas_comanda_id_fkey`). No Mongo passava — nao ha FK. Mesma
+    dependencia circular `mesas ⇄ comandas` da ferramenta de migracao;
+    resolvido com as mesmas 2 passadas (Fase 7).
+11. **Bulk insert de pedidos nao avanca `pedido_contadores`** — usa `numero`
+    explicito e nao passa pela trigger, entao o proximo pedido criado pela
+    aplicacao colidia (`pedidos_empresa_id_numero_key`). No Mongo nao ocorre
+    porque `nextNumero()` la e `count()+1`. Corrigido com
+    `resync_pedido_contador_empresa()` (migration `0014`), chamada pelo
+    `createMany()` do repository Supabase. **Regra geral: todo caminho de
+    carga em lote com numero explicito precisa realinhar o contador.**
 
 ---
 
 # 10. Pendencias e proximos passos
 
-- [ ] **Fase 7 — troca de runtime**: implementar o switch de provider
-      (`DATABASE_PROVIDER`) e rodar a suite completa de regressao contra
-      Supabase. **Nao iniciar sem aprovacao explicita do dono.**
+- [ ] **Corte de producao para Supabase**: o switch ja existe e esta
+      validado (Fase 7), mas ligar em producao exige janela de manutencao e
+      nova migracao contra o Mongo de PRODUCAO. **Decisao do dono.**
 - [ ] **Corte de producao**: a migracao rodou contra o Mongo de
       *desenvolvimento*. Um corte real exige janela de manutencao e nova
       execucao contra o Mongo de producao (sempre `--dry-run` antes).
@@ -367,6 +407,8 @@ Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
 # 11. Commits locais (mais recentes primeiro, nenhum pushed)
 
 ```
+537ab77 feat(fase7): paridade completa de runtime MongoDB <-> Supabase
+2ccf90d refactor(fase7): factory de repositories com switch DATABASE_PROVIDER
 87afa2a feat(supabase): valida schema, repositories e migracao contra Supabase real
 d6ee777 docs: update HANDOFF.md - Fase 6 (migration tooling) complete
 7bd641a feat(migration): ferramenta de migracao de dados MongoDB -> Supabase (Fase 6)
@@ -401,13 +443,14 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 **Codigo**
 - `app/api/[[...path]]/route.js` — API inteira (Controller + Service).
 - `packages/domain/src/index.ts` — contratos de dominio.
-- `lib/repositories/mongo/` — 16 repositories (runtime ativo).
-- `lib/repositories/supabase/` — 15 repositories (prontos, fora do runtime).
+- `lib/repositories/mongo/` — 16 repositories (backend default).
+- `lib/repositories/supabase/` — 15 repositories (validados como runtime).
+- `lib/repositories/factory.js` — switch `DATABASE_PROVIDER` (Fase 7).
 - `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`, `payments/`.
 - `components/`, `hooks/` — frontend.
 
 **Banco**
-- `supabase/migrations/0001`…`0013`, `triggers.sql`, `policies_rls.sql`,
+- `supabase/migrations/0001`…`0014`, `triggers.sql`, `policies_rls.sql`,
   `seed.sql`. Ordem real de execucao: `README.md` e §4.3 aqui.
 
 **Ferramentas**
@@ -422,6 +465,7 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `PHASE-5-REPOSITORIES-AUDIT.md`, `PHASE-5-SUPABASE-REPOSITORIES.md`.
 - `PHASE-6-MIGRATION-AUDIT.md`, `PHASE-6-DATA-MIGRATION.md`.
 - `PHASE-6B-SUPABASE-REAL.md` — validacao contra o Supabase hospedado.
+- `PHASE-7-RUNTIME-SWITCH.md` — switch de runtime e paridade comprovada.
 - `docs/ARCHITECTURE.md` (ADR-006), `docs/FOLDER_STRUCTURE.md`.
 
 **Testes**
