@@ -255,16 +255,23 @@ nenhuma rota).
    hospedado não foram exercitados. Recomenda-se repetir pelo menos os
    testes críticos (§7.2) contra um projeto Supabase real de staging antes
    da Fase 6.
-2. **`pedidoRepo.create`/`comandaRepo.create` fazem 2 operações separadas**
-   (insert pai, depois insert filhos) — não estão dentro de uma transação
-   Postgres explícita. Se o processo cair exatamente entre as duas, o pai
-   fica sem itens. O Mongo não tem esse risco (documento único, atômico
-   por natureza). Mitigação recomendada para a Fase 6: envolver em uma
-   função Postgres transacional (RPC) se esse risco for considerado
-   inaceitável para produção — não implementado agora por estar fora do
-   escopo estrito desta fase (nenhum requisito explícito pediu isso, e
-   introduzir lógica transacional complexa via RPC quando o Service ainda
-   nem usa este repository seria antecipar a Fase 6).
+2. ~~`pedidoRepo.create`/`comandaRepo.create` fazem 2 operações separadas...~~
+   **RESOLVIDO** (correção preventiva antes da Fase 6, 2026-08-11): ambos
+   agora usam uma função PL/pgSQL (`create_pedido_com_itens`/
+   `create_comanda_com_itens`, migration `0010_atomic_create_functions.sql`)
+   que insere pai e filhos na mesma função — atômica por natureza (se
+   qualquer instrução falhar, tudo é revertido). A função não decide nenhum
+   valor de negócio, só persiste o que o Service já calculou (mesma
+   classificação "mecânica" das demais funções de apoio). Testado
+   explicitamente: 2 cenários de sucesso (pedido+itens e comanda+item
+   persistidos juntos) e 2 cenários de falha proposital (item com
+   `quantidade` inválida) confirmando que o pai **não** fica órfão — nem
+   pedido nem comanda são criados quando o item falha. Achado durante a
+   própria correção: a primeira versão usava `jsonb_populate_record` com
+   base nula, que zera silenciosamente qualquer campo omitido em vez de
+   aplicar o default da coluna (ex.: `subtotal` viraria `NULL` em vez de
+   `0`) — corrigido para inserção explícita coluna a coluna com os mesmos
+   defaults já declarados no schema.
 3. Ver também os riscos já registrados e ainda não resolvidos das Fases 1
    e 4 (Auth, numeração de mesas, etc.) — continuam válidos e não foram
    reavaliados nesta fase por não fazerem parte do seu escopo.
