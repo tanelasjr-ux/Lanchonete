@@ -55,8 +55,8 @@ pois tem FK nullable para os dois):
 5. produtos                 (depende de categorias, empresas)
 6. clientes                 (depende de empresas)
 7. mesas — passo A: inserir SEM comanda_id (sempre null nesta etapa)
-8. pedidos + pedido_itens   (depende de clientes, empresas)
-9. comandas + comanda_itens (depende de mesas, clientes, empresas)
+8. comandas + comanda_itens (depende de mesas, clientes, empresas)
+9. pedidos + pedido_itens   (depende de clientes, empresas E comandas — ver nota abaixo)
 10. mesas — passo B: UPDATE comanda_id agora que a comanda existe
 11. pagamentos               (depende de comandas E pedidos)
 12. transacoes                (depende de pedidos, comandas)
@@ -68,11 +68,18 @@ pois tem FK nullable para os dois):
                                      por último por ser só log)
 ```
 
-`mesas` precisa de 2 passadas porque `mesas.comanda_id` referencia uma
-comanda que só existe depois do passo 9 — inserir tudo com `comanda_id=null`
-primeiro e fechar a referência depois é mais simples e seguro do que
-inverter a ordem toda (comandas não podem vir antes de mesas, já que
-`comandas.mesa_id` é `not null`).
+**Correção feita durante o teste real desta própria ferramenta (não só
+lendo o SQL):** a primeira versão testada tinha `pedidos` antes de
+`comandas` (ordem original deste documento). Isso funcionava quando este
+documento foi escrito, mas ficou inválido depois da correção do §3.1
+(`pedidos.comanda_id` virou uma FK real para `comandas`) — rodar a
+migração real produziu o erro esperado e correto do Postgres:
+`insert or update on table "pedidos" violates foreign key constraint
+"pedidos_comanda_id_fkey"` (comanda ainda não existia). Corrigido invertendo
+a ordem: `comandas` migra antes de `pedidos`. `mesas` continua precisando de
+2 passadas (mesmo motivo de antes: `mesas.comanda_id` referencia uma comanda
+que só existe depois do passo 8; comandas não podem vir antes de mesas
+porque `comandas.mesa_id` é `not null`).
 
 **Pós-migração, passo obrigatório (não é uma "19ª coleção", é acerto de
 estado):** recalcular `pedido_contadores.ultimo_numero` = `max(numero)` por
