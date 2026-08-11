@@ -222,7 +222,7 @@ números únicos e sequenciais (1..25), zero erros, zero duplicatas (ver
 
 ## 9. Multi-tenancy e RLS
 
-- Todas as 18 tabelas de domínio (todas exceto `papeis`/`permissoes`,
+- Todas as 17 tabelas de domínio (todas exceto `papeis`/`permissoes`,
   catálogo global, e `pedido_contadores`, infra interna sem exposição via
   API/repository) têm `empresa_id` e RLS habilitada.
 - Policy padrão `<tabela>_tenant`: `USING (empresa_id = current_empresa_id())

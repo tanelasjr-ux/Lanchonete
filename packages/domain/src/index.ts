@@ -157,10 +157,26 @@ export interface Mesa extends TenantScoped {
   created_at: string; updated_at: string;
 }
 
+/** Resumo denormalizado de um pagamento, embutido no runtime de `Comanda.pagamentos`. */
+export interface PagamentoResumo {
+  id: UUID; metodo: string; valor: number; status: string;
+  provider: PagamentoProvider; created_at: string;
+}
+
 export interface Comanda extends TenantScoped {
   id: UUID; mesa_id: UUID; mesa_nome: string;
   cliente_id: UUID | null; cliente_nome: string; pessoas: number;
   status: ComandaStatus; itens: ComandaItem[];
+  /**
+   * Lacuna encontrada na Fase 5 (auditoria de repositories): computeComanda()
+   * no Service sempre leu este campo do objeto em memoria, mas ele nunca
+   * tinha sido declarado aqui. No Mongo e um array embutido (fonte real);
+   * no Postgres NAO existe coluna equivalente (decisao da Fase 4: pagamentos
+   * e tabela propria, fonte unica) - o SupabaseComandaRepository reconstroi
+   * este campo em memoria a partir da tabela `pagamentos` só para preservar
+   * o contrato que o Service ja espera, sem alterar computeComanda().
+   */
+  pagamentos: PagamentoResumo[];
   desconto: number; desconto_tipo: DescontoTipo; taxa_servico_percent: number;
   operador_id: UUID; operador_nome: string;
   aberta_em: string; fechada_em: string | null;
@@ -293,7 +309,7 @@ export interface ComandaRepository extends Repository<Comanda> {
   updateItemCampos(empresaId: UUID, comandaId: UUID, itemId: UUID, patch: Partial<Pick<ComandaItem, 'quantidade' | 'observacao'>>): Promise<void>;
   removeItem(empresaId: UUID, comandaId: UUID, itemId: UUID): Promise<void>;
   /** $push no array `pagamentos` (copia denormalizada - ver auditoria: duplica dado do PagamentoRepository). */
-  pushPagamentoResumo(empresaId: UUID, comandaId: UUID, resumo: { id: UUID; metodo: string; valor: number; status: string; provider: PagamentoProvider; created_at: string }): Promise<void>;
+  pushPagamentoResumo(empresaId: UUID, comandaId: UUID, resumo: PagamentoResumo): Promise<void>;
   /** Persiste os campos ja computados por computeComanda() no Service - nunca recalcula aqui. */
   setDerivados(empresaId: UUID, comandaId: UUID, derivados: ComandaComputed): Promise<void>;
   /** GET /mesas: batch-fetch das comandas abertas para montar o resumo por mesa. */
