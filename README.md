@@ -52,7 +52,8 @@ O cadastro cria a empresa (tenant) e ja popula **dados de demonstracao**
    `0005_comandas.sql` -> `0006_pagamentos.sql` -> `0007_webhook_events.sql`
    -> `0008_conversas_mensagens.sql` -> `0009_repository_support_functions.sql`
    -> `0010_atomic_create_functions.sql` -> `0011_migration_upsert_functions.sql`
-   -> `0012_pedidos_comanda_id.sql`. As migrations `0002`+ dependem das
+   -> `0012_pedidos_comanda_id.sql` -> `0013_increment_conversa_patch_parcial.sql`.
+   As migrations `0002`+ dependem das
    funções `set_updated_at()`/`current_empresa_id()` definidas em
    `triggers.sql`/`policies_rls.sql`, por isso essas duas rodam antes delas
    (`seed.sql` pode rodar em qualquer ponto depois de `0001`, já que só usa
@@ -61,11 +62,19 @@ O cadastro cria a empresa (tenant) e ja popula **dados de demonstracao**
 3. Preencha em `.env`: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 4. O provider desacoplado (`lib/integrations/supabase.js`) passa a ficar disponivel.
 
-> **Estado da migração (2026-08-10):** o schema Supabase (Fase 4) já cobre
-> todo o domínio atual — ver `docs/plans/PHASE-4-SUPABASE-SCHEMA.md`. O
-> runtime da aplicação continua 100% MongoDB até a Fase 5/6 (repositories
-> Supabase + migração de dados) serem implementadas; ativar as variáveis
-> acima hoje não troca a persistência usada pela API.
+> **Estado da migração (2026-08-11):** schema (Fases 4/6), repositories
+> (Fase 5) e ferramenta de migração de dados (Fase 6) estão prontos e já
+> foram aplicados e validados contra um **projeto Supabase real hospedado**
+> — ver `docs/plans/PHASE-6B-SUPABASE-REAL.md`. O runtime da aplicação
+> continua 100% MongoDB: preencher as variáveis acima **não** troca a
+> persistência usada pela API (isso é a Fase 7, ainda não iniciada).
+>
+> **Multi-tenancy:** um único projeto Supabase atende todas as empresas
+> (SaaS multi-tenant). Toda tabela de domínio carrega `empresa_id`, com
+> isolamento em duas camadas (aplicação + RLS). Cada empresa tem sua
+> própria linha em `integracoes` (`empresa_id` + `tipo='evolution'`), ou
+> seja, **uma instância Evolution por empresa, não um projeto por
+> empresa**.
 
 ## Integracoes
 
