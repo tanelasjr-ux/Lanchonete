@@ -17,13 +17,20 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-**Onde paramos (2026-08-11):** a **Fase 8 (auditoria de Auth) foi concluida** — ver `docs/plans/PHASE-8-AUTH-AUDIT.md`. Ela achou e corrigiu **3 vulnerabilidades reais no JWT** e recomenda que a implementacao de Supabase Auth aconteca **depois** do corte de banco (nao antes). Antes dela, a **Fase 7 havia sido concluida** — a aplicacao agora
-roda **indiferentemente sobre MongoDB ou sobre Supabase**, escolhido pela
-variavel `DATABASE_PROVIDER`, com **paridade comprovada pela suite de
-regressao completa nos dois backends** (v1 40/40, v2 39/39, v3 32/33 em
-ambos — a unica falha do v3 e o nao-bug conhecido da Evolution API).
+**Onde paramos (2026-08-11):** duas fases concluidas nesta sessao.
 
-**Estado do codigo:** arvore git limpa, **8 commits locais**, nada enviado ao
+- **Fase 7 — switch de runtime.** A aplicacao roda **indiferentemente sobre
+  MongoDB ou sobre Supabase**, escolhido pela variavel `DATABASE_PROVIDER`,
+  com **paridade comprovada pela suite completa nos dois backends** (v1 40/40,
+  v2 39/39, v3 32/33 em ambos — a unica falha do v3 e o nao-bug conhecido da
+  Evolution API). `docs/plans/PHASE-7-RUNTIME-SWITCH.md`.
+- **Fase 8 — auditoria de Auth.** Mapeou o mecanismo atual, respondeu com
+  fatos verificados contra o Supabase real as perguntas que definem a
+  migracao, e **corrigiu 3 vulnerabilidades reais no JWT** encontradas no
+  caminho. Recomenda implementar Supabase Auth **depois** do corte de banco,
+  nao antes. `docs/plans/PHASE-8-AUTH-AUDIT.md`.
+
+**Estado do codigo:** arvore git limpa, **10 commits locais**, nada enviado ao
 remoto (`git push` precisa da sua confirmacao). Build de producao: PASS.
 
 **O runtime ATIVO continua `mongo`** (default deliberado). O Supabase esta
@@ -34,9 +41,10 @@ pronto, populado e validado como runtime — ligar e mudar uma variavel.
    depois `yarn dev:no-reload`). Passo a passo completo no §7.
 2. O projeto Supabase e remoto: continua populado, nao precisa resubir nada.
 3. Conferir o backend ativo: `GET /api/health` -> campo `database`.
-4. Proximos passos em aberto no §10 — os principais sao a **auditoria de
-   Auth** (pre-requisito para Supabase Auth) e a **decisao de infra no
-   EasyPanel**. O corte de producao em si depende de decisao sua.
+4. Proximos passos no §10. Todos os que restam **dependem de decisao sua**:
+   corte de producao para Supabase, implementacao de Supabase Auth (a
+   auditoria ja definiu a ordem e a estrategia), infra no EasyPanel, e o
+   `git push`.
 
 ---
 
@@ -426,6 +434,9 @@ Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
 # 11. Commits locais (mais recentes primeiro, nenhum pushed)
 
 ```
+bb2b304 docs: atualiza HANDOFF.md com a Fase 8 (auditoria de Auth)
+c7ac605 security(auth): corrige 3 vulnerabilidades no JWT + auditoria da Fase 8
+48a871f docs: atualiza HANDOFF.md com a Fase 7 (switch de runtime)
 537ab77 feat(fase7): paridade completa de runtime MongoDB <-> Supabase
 2ccf90d refactor(fase7): factory de repositories com switch DATABASE_PROVIDER
 87afa2a feat(supabase): valida schema, repositories e migracao contra Supabase real
