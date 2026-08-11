@@ -32,25 +32,50 @@ import { getRepositories, getProviderName } from '@/lib/repositories/factory'
  * ======================================================================= */
 
 /* ============================ AUTH HELPERS ============================== */
-const JWT_SECRET = process.env.JWT_SECRET || 'ros_dev_secret'
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/**
+ * Em producao o segredo e OBRIGATORIO: sem ele, qualquer um consegue assinar
+ * um token valido para qualquer empresa/usuario (o fallback de dev que existia
+ * aqui era um valor publico, versionado no proprio codigo). Falhar no boot e
+ * preferivel a subir um ambiente silenciosamente forjavel.
+ */
+const JWT_SECRET = (() => {
+  const s = process.env.JWT_SECRET
+  if (s) return s
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET e obrigatorio em producao — nao ha valor padrao seguro.')
+  }
+  return 'ros_dev_secret_apenas_local'
+})()
+const TOKEN_TTL_SEC = 7 * 24 * 60 * 60
+const nowSec = () => Math.floor(Date.now() / 1000)
 
 function b64url(input) {
   return Buffer.from(input).toString('base64url')
 }
 function signToken(payload) {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-  const body = b64url(JSON.stringify({ ...payload, iat: Date.now(), exp: Date.now() + TOKEN_TTL_MS }))
+  // `iat`/`exp` em SEGUNDOS (NumericDate, RFC 7519). Antes eram gravados em
+  // milissegundos: internamente coerente, mas qualquer biblioteca JWT padrao
+  // — inclusive a do Supabase — leria o valor como segundos e concluiria que
+  // o token so expira no ano ~58600, ou seja, nunca. Ver PHASE-8-AUTH-AUDIT.
+  const body = b64url(JSON.stringify({ ...payload, iat: nowSec(), exp: nowSec() + TOKEN_TTL_SEC }))
   const sig = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url')
   return `${header}.${body}.${sig}`
 }
 function verifyToken(token) {
   try {
     const [header, body, sig] = token.split('.')
-    const expected = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url')
-    if (sig !== expected) return null
+    const expectedBuf = Buffer.from(crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url'))
+    const sigBuf = Buffer.from(sig || '')
+    // Comparacao em tempo constante: `!==` em string vaza, pelo tempo de
+    // resposta, quantos caracteres iniciais da assinatura estao corretos.
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) return null
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString())
-    if (!payload.exp || payload.exp < Date.now()) return null
+    if (!payload.exp) return null
+    // Aceita tokens antigos (exp em ms) durante a transicao: qualquer valor
+    // acima de ~ano 2286 em segundos so pode ser um timestamp em ms.
+    const expSec = payload.exp > 1e11 ? Math.floor(payload.exp / 1000) : payload.exp
+    if (expSec < nowSec()) return null
     return payload
   } catch {
     return null
