@@ -15,6 +15,31 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 ---
 
+# 0. PONTO DE RETOMADA (leia isto primeiro)
+
+**Onde paramos (2026-08-11):** a Fase 6B foi concluida — o schema completo
+(migrations `0001`→`0013`) esta aplicado no **projeto Supabase real**, os
+repositories foram validados por la (39/39, incluindo isolamento
+multi-tenant) e os dados das 71 empresas do MongoDB de desenvolvimento foram
+migrados e validados (71/71, 0 divergencias).
+
+**Estado do codigo:** arvore git limpa, **5 commits locais hoje**, nada
+enviado ao remoto (`git push` precisa da sua confirmacao). Nenhum arquivo
+temporario pendente.
+
+**O runtime continua 100% MongoDB.** O Supabase esta pronto e populado, mas
+a aplicacao ainda le e escreve no Mongo — trocar isso e a Fase 7.
+
+**Para retomar:**
+1. Subir o ambiente local (Docker Desktop -> `docker start ros-mongo-local`,
+   depois `yarn dev:no-reload`). Passo a passo completo no §7.
+2. O projeto Supabase e remoto: continua populado, nao precisa resubir nada.
+3. Decidir o proximo passo — as opcoes em aberto estao no §10. A principal
+   e a **Fase 7 (troca de runtime)**, que so comeca com sua aprovacao
+   explicita.
+
+---
+
 # 1. O que e o produto
 
 **Restaurant OS** — SaaS de atendimento e gestao para restaurantes,
