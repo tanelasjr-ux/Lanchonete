@@ -233,12 +233,24 @@ export interface Repository<T extends TenantScoped> {
   delete(empresaId: UUID, id: UUID): Promise<void>;
 }
 
-export interface ProdutoRepository extends Repository<Produto> {
+/**
+ * Bulk insert. Existe porque o seed de demonstracao (`seedEmpresa()` em
+ * route.js) cria varias entidades de uma vez; ate a Fase 6 isso era feito com
+ * `db.collection().insertMany()` direto, fora do contrato. A Fase 7 (switch de
+ * provider) precisou abstrair esse acesso para que o runtime Supabase nao
+ * dependesse do Mongo so para o seed. Nao substitui `create()`: e uma
+ * operacao de carga, sem retorno das entidades criadas.
+ */
+export interface BulkCreatable<T> {
+  createMany(entities: T[]): Promise<void>;
+}
+
+export interface ProdutoRepository extends Repository<Produto>, BulkCreatable<Produto> {
   /** Cascade usado ao excluir uma categoria (route.js). */
   deleteManyByCategoria(empresaId: UUID, categoriaId: UUID): Promise<void>;
 }
-export interface CategoriaRepository extends Repository<Categoria> {}
-export interface ClienteRepository extends Repository<Cliente> {
+export interface CategoriaRepository extends Repository<Categoria>, BulkCreatable<Categoria> {}
+export interface ClienteRepository extends Repository<Cliente>, BulkCreatable<Cliente> {
   /** Usado pelo webhook do WhatsApp para achar/criar cliente pelo numero. */
   findByTelefone(empresaId: UUID, telefone: string): Promise<Cliente | null>;
   /** Disparado ao concluir pedido/fechar comanda (nao e recalculo, e incremento). */
@@ -246,7 +258,7 @@ export interface ClienteRepository extends Repository<Cliente> {
   /** Usado no dashboard (totalClientes) sem precisar carregar a lista inteira. */
   count(empresaId: UUID): Promise<number>;
 }
-export interface PedidoRepository extends Repository<Pedido> {
+export interface PedidoRepository extends Repository<Pedido>, BulkCreatable<Pedido> {
   /** numero sequencial por empresa; nao atomico hoje (count+1), ver auditoria. */
   nextNumero(empresaId: UUID): Promise<number>;
   /** GET /pedidos: mais recentes primeiro, com limite. */
@@ -254,7 +266,7 @@ export interface PedidoRepository extends Repository<Pedido> {
   /** Usado na Central de Atendimento para achar o pedido ativo do cliente. */
   findByCliente(empresaId: UUID, clienteId: UUID): Promise<Pedido[]>;
 }
-export interface TransacaoRepository extends Repository<Transacao> {
+export interface TransacaoRepository extends Repository<Transacao>, BulkCreatable<Transacao> {
   /** GET /financeiro/transacoes: mais recentes primeiro, com limite. */
   listRecentes(empresaId: UUID, limit: number): Promise<Transacao[]>;
 }
@@ -279,7 +291,7 @@ export interface AuditoriaRepository {
 }
 
 /** Chave e (empresaId, tipo) em vez de id — sempre upsert. */
-export interface IntegracaoRepository {
+export interface IntegracaoRepository extends BulkCreatable<Integracao> {
   list(empresaId: UUID): Promise<Integracao[]>;
   findByTipo(empresaId: UUID, tipo: IntegracaoTipo): Promise<Integracao | null>;
   upsert(empresaId: UUID, tipo: IntegracaoTipo, patch: Partial<Pick<Integracao, 'config' | 'status'>>): Promise<Integracao>;
@@ -322,14 +334,14 @@ export interface PagamentoRepository extends Repository<PagamentoRegistro> {
   atualizarStatusPorProviderPaymentId(empresaId: UUID, provider: PagamentoProvider, providerPaymentId: string, status: string): Promise<void>;
 }
 
-export interface ConversaRepository extends Repository<Conversa> {
+export interface ConversaRepository extends Repository<Conversa>, BulkCreatable<Conversa> {
   findByContatoNumero(empresaId: UUID, contatoNumero: string): Promise<Conversa | null>;
   /** Webhook do WhatsApp: nova mensagem numa conversa ja existente (nao e recalculo, e incremento). */
   incrementarNaoLidas(empresaId: UUID, id: UUID, patch: Partial<Conversa>): Promise<void>;
 }
 
 /** Log imutavel: so create + list, sem update/delete. */
-export interface MensagemRepository {
+export interface MensagemRepository extends BulkCreatable<Mensagem> {
   list(empresaId: UUID, conversaId: UUID): Promise<Mensagem[]>;
   create(mensagem: Omit<Mensagem, 'id' | 'created_at'>): Promise<Mensagem>;
 }

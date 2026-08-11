@@ -15,7 +15,6 @@
  * (SUPABASE_URL/KEYS) o provider em lib/integrations/supabase fica disponivel.
  */
 
-import { MongoClient } from 'mongodb'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import crypto from 'crypto'
@@ -23,49 +22,14 @@ import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evo
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus } from '@/lib/integrations/supabase'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
-import { createCategoriaRepository } from '@/lib/repositories/mongo/categoriaRepository'
-import { createProdutoRepository } from '@/lib/repositories/mongo/produtoRepository'
-import { createClienteRepository } from '@/lib/repositories/mongo/clienteRepository'
-import { createUsuarioRepository } from '@/lib/repositories/mongo/usuarioRepository'
-import { createTransacaoRepository } from '@/lib/repositories/mongo/transacaoRepository'
-import { createAuditoriaRepository } from '@/lib/repositories/mongo/auditoriaRepository'
-import { createIntegracaoRepository } from '@/lib/repositories/mongo/integracaoRepository'
-import { createMesaRepository } from '@/lib/repositories/mongo/mesaRepository'
-import { createConversaRepository } from '@/lib/repositories/mongo/conversaRepository'
-import { createMensagemRepository } from '@/lib/repositories/mongo/mensagemRepository'
-import { createPedidoRepository } from '@/lib/repositories/mongo/pedidoRepository'
-import { createComandaRepository } from '@/lib/repositories/mongo/comandaRepository'
-import { createPagamentoRepository } from '@/lib/repositories/mongo/pagamentoRepository'
-import { createEmpresaRepository } from '@/lib/repositories/mongo/empresaRepository'
+import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 
-/* ============================ INFRA: MongoDB ============================= */
-let client
-let db
-async function getDb() {
-  if (!db) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
-    await ensureIndexes(db)
-  }
-  return db
-}
-
-let _indexed = false
-async function ensureIndexes(database) {
-  if (_indexed) return
-  _indexed = true
-  try {
-    await database.collection('usuarios').createIndex({ email: 1 }, { unique: true })
-    await database.collection('usuarios').createIndex({ empresa_id: 1 })
-    for (const c of ['categorias', 'produtos', 'clientes', 'pedidos', 'transacoes', 'auditoria', 'integracoes', 'mesas', 'comandas', 'pagamentos', 'webhook_events', 'conversas', 'mensagens']) {
-      await database.collection(c).createIndex({ empresa_id: 1 })
-    }
-    await database.collection('empresas').createIndex({ slug: 1 }, { unique: true })
-  } catch (e) {
-    // indices sao best-effort no runtime
-  }
-}
+/* ============================ INFRA: persistencia ========================
+ * A escolha do backend (MongoDB ou Supabase) vive inteiramente em
+ * lib/repositories/factory.js, controlada por DATABASE_PROVIDER. Este
+ * arquivo nao conhece mais nenhum driver de banco: fala so com os
+ * contratos de packages/domain (Fase 7 da migracao).
+ * ======================================================================= */
 
 /* ============================ AUTH HELPERS ============================== */
 const JWT_SECRET = process.env.JWT_SECRET || 'ros_dev_secret'
@@ -149,9 +113,9 @@ async function auth(request) {
 }
 
 /* ============================ AUDITORIA ============================= */
-async function audit(database, ctx, acao, entidade, entidade_id, dados = {}) {
+async function audit(repos, ctx, acao, entidade, entidade_id, dados = {}) {
   try {
-    await createAuditoriaRepository(database).registrar({
+    await repos.auditoriaRepo.registrar({
       empresa_id: ctx.empresa_id,
       usuario_id: ctx.usuario_id,
       usuario_nome: ctx.nome || null,
@@ -166,9 +130,9 @@ async function audit(database, ctx, acao, entidade, entidade_id, dados = {}) {
 }
 
 /* ============================ EVENTOS (n8n) ============================= */
-async function emitEvent(database, ctx, event, payload) {
+async function emitEvent(repos, ctx, event, payload) {
   try {
-    const integ = await createIntegracaoRepository(database).findByTipo(ctx.empresa_id, 'n8n')
+    const integ = await repos.integracaoRepo.findByTipo(ctx.empresa_id, 'n8n')
     await triggerN8nEvent(integ?.config || {}, event, { empresa_id: ctx.empresa_id, ...payload })
   } catch {
     /* fire-and-forget */
@@ -212,7 +176,7 @@ function computeComanda(comanda) {
 const MESA_STATUS = ['livre', 'ocupada', 'aguardando_pagamento', 'reservada']
 
 /* ============================ SEED (demo) ============================= */
-async function seedEmpresa(database, empresa_id, ctx) {
+async function seedEmpresa(repos, empresa_id, ctx) {
   const now = Date.now()
   const cats = [
     { nome: 'Entradas', ordem: 1 },
@@ -220,7 +184,7 @@ async function seedEmpresa(database, empresa_id, ctx) {
     { nome: 'Bebidas', ordem: 3 },
     { nome: 'Sobremesas', ordem: 4 },
   ].map((c) => ({ id: uuidv4(), empresa_id, ...c, ativo: true, created_at: new Date() }))
-  await database.collection('categorias').insertMany(cats)
+  await repos.categoriaRepo.createMany(cats)
   const byName = Object.fromEntries(cats.map((c) => [c.nome, c.id]))
 
   const prods = [
@@ -247,7 +211,7 @@ async function seedEmpresa(database, empresa_id, ctx) {
     ativo: true,
     created_at: new Date(),
   }))
-  await database.collection('produtos').insertMany(prods)
+  await repos.produtoRepo.createMany(prods)
 
   const clientes = [
     ['Ana Souza', '5511988880001'],
@@ -265,7 +229,7 @@ async function seedEmpresa(database, empresa_id, ctx) {
     total_gasto: 0,
     created_at: new Date(),
   }))
-  await database.collection('clientes').insertMany(clientes)
+  await repos.clienteRepo.createMany(clientes)
 
   // Pedidos distribuidos nos ultimos 7 dias -> popula dashboard e financeiro
   const statuses = ['concluido', 'concluido', 'concluido', 'pronto', 'em_preparo', 'recebido', 'cancelado']
@@ -333,11 +297,11 @@ async function seedEmpresa(database, empresa_id, ctx) {
       created_at: new Date(now - d * 86400000),
     })
   }
-  if (pedidos.length) await database.collection('pedidos').insertMany(pedidos)
-  if (transacoes.length) await database.collection('transacoes').insertMany(transacoes)
+  if (pedidos.length) await repos.pedidoRepo.createMany(pedidos)
+  if (transacoes.length) await repos.transacaoRepo.createMany(transacoes)
 
   // Registro de integracoes vazias (prontas para ativar)
-  await database.collection('integracoes').insertMany([
+  await repos.integracaoRepo.createMany([
     { id: uuidv4(), empresa_id, tipo: 'evolution', config: {}, status: 'nao_configurado', created_at: new Date() },
     { id: uuidv4(), empresa_id, tipo: 'n8n', config: {}, status: 'nao_configurado', created_at: new Date() },
     { id: uuidv4(), empresa_id, tipo: 'mercadopago', config: { mode: 'sandbox' }, status: 'nao_configurado', created_at: new Date() },
@@ -365,14 +329,14 @@ async function seedEmpresa(database, empresa_id, ctx) {
   Object.assign(comandaBase, computeComanda(comandaBase))
   mesaDemo.status = 'ocupada'
   mesaDemo.comanda_id = comandaId
-  await database.collection('mesas').insertMany(mesas)
-  await createComandaRepository(database).create(comandaBase)
+  await repos.mesaRepo.createMany(mesas)
+  await repos.comandaRepo.create(comandaBase)
 
   // Central de Atendimento: 2 conversas demo
   const conv1 = { id: uuidv4(), empresa_id, cliente_id: clientes[0].id, contato_nome: clientes[0].nome, contato_numero: clientes[0].telefone, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: 'Ola! Meu pedido ja saiu?', ultima_mensagem_em: new Date(now - 5 * 60000), nao_lidas: 2, operador_id: null, pedido_ativo_id: null, created_at: new Date(now - 3600000), updated_at: new Date() }
   const conv2 = { id: uuidv4(), empresa_id, cliente_id: clientes[1].id, contato_nome: clientes[1].nome, contato_numero: clientes[1].telefone, status: 'AGUARDANDO_CLIENTE', ultima_mensagem: 'Perfeito, obrigado!', ultima_mensagem_em: new Date(now - 30 * 60000), nao_lidas: 0, operador_id: ctx.usuario_id, pedido_ativo_id: null, created_at: new Date(now - 7200000), updated_at: new Date() }
-  await database.collection('conversas').insertMany([conv1, conv2])
-  await database.collection('mensagens').insertMany([
+  await repos.conversaRepo.createMany([conv1, conv2])
+  await repos.mensagemRepo.createMany([
     { id: uuidv4(), empresa_id, conversa_id: conv1.id, direcao: 'in', tipo: 'text', texto: 'Boa noite!', from_me: false, status: 'delivered', created_at: new Date(now - 20 * 60000) },
     { id: uuidv4(), empresa_id, conversa_id: conv1.id, direcao: 'in', tipo: 'text', texto: 'Ola! Meu pedido ja saiu?', from_me: false, status: 'delivered', created_at: new Date(now - 5 * 60000) },
     { id: uuidv4(), empresa_id, conversa_id: conv2.id, direcao: 'in', tipo: 'text', texto: 'Quero fazer um pedido de delivery', from_me: false, status: 'delivered', created_at: new Date(now - 40 * 60000) },
@@ -380,7 +344,7 @@ async function seedEmpresa(database, empresa_id, ctx) {
     { id: uuidv4(), empresa_id, conversa_id: conv2.id, direcao: 'in', tipo: 'text', texto: 'Perfeito, obrigado!', from_me: false, status: 'delivered', created_at: new Date(now - 30 * 60000) },
   ])
 
-  await audit(database, ctx, 'seed', 'empresa', empresa_id, { produtos: prods.length, pedidos: pedidos.length, mesas: mesas.length })
+  await audit(repos, ctx, 'seed', 'empresa', empresa_id, { produtos: prods.length, pedidos: pedidos.length, mesas: mesas.length })
 }
 
 /* ======================================================================= */
@@ -398,25 +362,24 @@ async function handler(request, { params }) {
   const method = request.method
 
   try {
-    const database = await getDb()
-    const categoriaRepo = createCategoriaRepository(database)
-    const produtoRepo = createProdutoRepository(database)
-    const clienteRepo = createClienteRepository(database)
-    const usuarioRepo = createUsuarioRepository(database)
-    const transacaoRepo = createTransacaoRepository(database)
-    const auditoriaRepo = createAuditoriaRepository(database)
-    const integracaoRepo = createIntegracaoRepository(database)
-    const mesaRepo = createMesaRepository(database)
-    const conversaRepo = createConversaRepository(database)
-    const mensagemRepo = createMensagemRepository(database)
-    const pedidoRepo = createPedidoRepository(database)
-    const comandaRepo = createComandaRepository(database)
-    const pagamentoRepo = createPagamentoRepository(database)
-    const empresaRepo = createEmpresaRepository(database)
+    const repos = await getRepositories()
+    const {
+      categoriaRepo, produtoRepo, clienteRepo, usuarioRepo, transacaoRepo,
+      auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
+      pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
+    } = repos
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
-      return json({ service: 'restaurant-os', status: 'ok', providers: { supabase: supabaseProviderStatus() } })
+      return json({
+        service: 'restaurant-os',
+        status: 'ok',
+        // `database` e o backend REALMENTE em uso nesta requisicao; o bloco
+        // `providers.supabase` continua indicando apenas se ha credenciais
+        // configuradas (que nao implica que o Supabase seja o runtime ativo).
+        database: getProviderName(),
+        providers: { supabase: supabaseProviderStatus() },
+      })
     }
 
     /* ==================== AUTH ==================== */
@@ -469,8 +432,8 @@ async function handler(request, { params }) {
       await usuarioRepo.create(usuario)
 
       const ctx = { empresa_id, usuario_id, nome, papel: 'OWNER' }
-      await seedEmpresa(database, empresa_id, ctx)
-      await audit(database, ctx, 'register', 'empresa', empresa_id, { empresa_nome })
+      await seedEmpresa(repos, empresa_id, ctx)
+      await audit(repos, ctx, 'register', 'empresa', empresa_id, { empresa_nome })
 
       const token = signToken({ usuario_id, empresa_id, papel: 'OWNER' })
       return json({ token, usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS.OWNER })
@@ -484,7 +447,7 @@ async function handler(request, { params }) {
       if (!usuario.ativo) return err('Usuario inativo', 403)
       const empresa = await empresaRepo.findById(usuario.empresa_id)
       const token = signToken({ usuario_id: usuario.id, empresa_id: usuario.empresa_id, papel: usuario.papel })
-      await audit(database, { empresa_id: usuario.empresa_id, usuario_id: usuario.id, nome: usuario.nome }, 'login', 'usuario', usuario.id)
+      await audit(repos, { empresa_id: usuario.empresa_id, usuario_id: usuario.id, nome: usuario.nome }, 'login', 'usuario', usuario.id)
       return json({ token, usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS[usuario.papel] || [] })
     }
 
@@ -506,10 +469,8 @@ async function handler(request, { params }) {
       if (!ok) return json({ error: 'assinatura invalida' }, 401)
       // idempotencia: dedupe por evento
       const eventKey = `${empresaId}:${dataId}:${request.headers.get('x-request-id') || ''}`
-      const dedupe = await database.collection('webhook_events').updateOne(
-        { eventKey }, { $setOnInsert: { eventKey, empresa_id: empresaId, provider: 'mercadopago', received_at: new Date() } }, { upsert: true }
-      )
-      if (!dedupe.upsertedCount) return json({ ok: true, duplicated: true })
+      const dedupe = await webhookEventsRepo.upsert(empresaId, eventKey, 'mercadopago')
+      if (!dedupe.isNew) return json({ ok: true, duplicated: true })
       // busca status autoritativo no gateway
       let statusInfo
       try { statusInfo = await provider.getStatus(dataId) } catch { return json({ ok: true }) }
@@ -544,7 +505,7 @@ async function handler(request, { params }) {
       if (!conversa) {
         conversa = { id: uuidv4(), empresa_id: empresaId, cliente_id: cliente.id, contato_nome: cliente.nome || nome, contato_numero: numero, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: texto, ultima_mensagem_em: new Date(), nao_lidas: 1, operador_id: null, pedido_ativo_id: null, created_at: new Date(), updated_at: new Date() }
         await conversaRepo.create(conversa)
-        await audit(database, { empresa_id: empresaId, usuario_id: null, nome: 'WhatsApp' }, 'criar', 'conversa', conversa.id, { numero })
+        await audit(repos, { empresa_id: empresaId, usuario_id: null, nome: 'WhatsApp' }, 'criar', 'conversa', conversa.id, { numero })
       } else {
         await conversaRepo.incrementarNaoLidas(empresaId, conversa.id, { ultima_mensagem: texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_EQUIPE', updated_at: new Date() })
       }
@@ -587,7 +548,7 @@ async function handler(request, { params }) {
       upd.config = config
       upd.updated_at = new Date()
       const atualizada = await empresaRepo.update(ctx.empresa_id, upd)
-      await audit(database, ctx, 'update', 'empresa', ctx.empresa_id, { campos: Object.keys(upd) })
+      await audit(repos, ctx, 'update', 'empresa', ctx.empresa_id, { campos: Object.keys(upd) })
       return json(clean(atualizada))
     }
 
@@ -614,7 +575,7 @@ async function handler(request, { params }) {
         created_at: new Date(),
       }
       await usuarioRepo.create(novo)
-      await audit(database, ctx, 'create', 'usuario', novo.id, { email: emailNorm, papel: novo.papel })
+      await audit(repos, ctx, 'create', 'usuario', novo.id, { email: emailNorm, papel: novo.papel })
       return json(clean(novo), 201)
     }
     if (seg[0] === 'usuarios' && seg[1] && method === 'PUT') {
@@ -624,14 +585,14 @@ async function handler(request, { params }) {
       for (const k of ['nome', 'papel', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.senha) upd.senha_hash = hashPassword(b.senha)
       const atualizado = await usuarioRepo.update(ctx.empresa_id, seg[1], upd)
-      await audit(database, ctx, 'update', 'usuario', seg[1], upd)
+      await audit(repos, ctx, 'update', 'usuario', seg[1], upd)
       return json(clean(atualizado))
     }
     if (seg[0] === 'usuarios' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'usuarios')) return err('Sem permissao', 403)
       if (seg[1] === ctx.usuario_id) return err('Voce nao pode remover a si mesmo', 400)
       await usuarioRepo.delete(ctx.empresa_id, seg[1])
-      await audit(database, ctx, 'delete', 'usuario', seg[1])
+      await audit(repos, ctx, 'delete', 'usuario', seg[1])
       return json({ ok: true })
     }
 
@@ -646,7 +607,7 @@ async function handler(request, { params }) {
       if (!b.nome) return err('nome obrigatorio')
       const doc = { id: uuidv4(), empresa_id: ctx.empresa_id, nome: b.nome, ordem: b.ordem ?? 99, ativo: true, created_at: new Date() }
       await categoriaRepo.create(doc)
-      await audit(database, ctx, 'create', 'categoria', doc.id, { nome: b.nome })
+      await audit(repos, ctx, 'create', 'categoria', doc.id, { nome: b.nome })
       return json(clean(doc), 201)
     }
     if (seg[0] === 'categorias' && seg[1] && method === 'PUT') {
@@ -655,14 +616,14 @@ async function handler(request, { params }) {
       const upd = {}
       for (const k of ['nome', 'ordem', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
       const atualizado = await categoriaRepo.update(ctx.empresa_id, seg[1], upd)
-      await audit(database, ctx, 'update', 'categoria', seg[1], upd)
+      await audit(repos, ctx, 'update', 'categoria', seg[1], upd)
       return json(clean(atualizado))
     }
     if (seg[0] === 'categorias' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
       await categoriaRepo.delete(ctx.empresa_id, seg[1])
       await produtoRepo.deleteManyByCategoria(ctx.empresa_id, seg[1])
-      await audit(database, ctx, 'delete', 'categoria', seg[1])
+      await audit(repos, ctx, 'delete', 'categoria', seg[1])
       return json({ ok: true })
     }
 
@@ -688,7 +649,7 @@ async function handler(request, { params }) {
         created_at: new Date(),
       }
       await produtoRepo.create(doc)
-      await audit(database, ctx, 'create', 'produto', doc.id, { nome: b.nome, preco: doc.preco })
+      await audit(repos, ctx, 'create', 'produto', doc.id, { nome: b.nome, preco: doc.preco })
       return json(clean(doc), 201)
     }
     if (seg[0] === 'produtos' && seg[1] && method === 'PUT') {
@@ -698,13 +659,13 @@ async function handler(request, { params }) {
       for (const k of ['categoria_id', 'nome', 'descricao', 'imagem', 'disponivel', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.preco !== undefined) upd.preco = Number(b.preco)
       const atualizado = await produtoRepo.update(ctx.empresa_id, seg[1], upd)
-      await audit(database, ctx, 'update', 'produto', seg[1], upd)
+      await audit(repos, ctx, 'update', 'produto', seg[1], upd)
       return json(clean(atualizado))
     }
     if (seg[0] === 'produtos' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
       await produtoRepo.delete(ctx.empresa_id, seg[1])
-      await audit(database, ctx, 'delete', 'produto', seg[1])
+      await audit(repos, ctx, 'delete', 'produto', seg[1])
       return json({ ok: true })
     }
 
@@ -730,7 +691,7 @@ async function handler(request, { params }) {
         created_at: new Date(),
       }
       await clienteRepo.create(doc)
-      await audit(database, ctx, 'create', 'cliente', doc.id, { nome: b.nome })
+      await audit(repos, ctx, 'create', 'cliente', doc.id, { nome: b.nome })
       return json(clean(doc), 201)
     }
     if (seg[0] === 'clientes' && seg[1] && method === 'PUT') {
@@ -739,13 +700,13 @@ async function handler(request, { params }) {
       const upd = {}
       for (const k of ['nome', 'telefone', 'email', 'endereco', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
       const atualizado = await clienteRepo.update(ctx.empresa_id, seg[1], upd)
-      await audit(database, ctx, 'update', 'cliente', seg[1], upd)
+      await audit(repos, ctx, 'update', 'cliente', seg[1], upd)
       return json(clean(atualizado))
     }
     if (seg[0] === 'clientes' && seg[1] && method === 'DELETE') {
       if (!can(ctx.papel, 'clientes')) return err('Sem permissao', 403)
       await clienteRepo.delete(ctx.empresa_id, seg[1])
-      await audit(database, ctx, 'delete', 'cliente', seg[1])
+      await audit(repos, ctx, 'delete', 'cliente', seg[1])
       return json({ ok: true })
     }
 
@@ -784,8 +745,8 @@ async function handler(request, { params }) {
         updated_at: new Date(),
       }
       await pedidoRepo.create(doc)
-      await audit(database, ctx, 'create', 'pedido', doc.id, { numero, total })
-      await emitEvent(database, ctx, 'order.created', { pedido: clean(doc) })
+      await audit(repos, ctx, 'create', 'pedido', doc.id, { numero, total })
+      await emitEvent(repos, ctx, 'order.created', { pedido: clean(doc) })
       return json(clean(doc), 201)
     }
     if (seg[0] === 'pedidos' && seg[1] && method === 'PUT') {
@@ -815,8 +776,8 @@ async function handler(request, { params }) {
           await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, pedido.total)
         }
       }
-      await audit(database, ctx, 'update', 'pedido', seg[1], upd)
-      if (b.status) await emitEvent(database, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: b.status })
+      await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
+      if (b.status) await emitEvent(repos, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: b.status })
       return json(clean(await pedidoRepo.findById(ctx.empresa_id, seg[1])))
     }
 
@@ -842,7 +803,7 @@ async function handler(request, { params }) {
         created_at: new Date(),
       }
       await transacaoRepo.create(doc)
-      await audit(database, ctx, 'create', 'transacao', doc.id, { tipo: doc.tipo, valor: doc.valor })
+      await audit(repos, ctx, 'create', 'transacao', doc.id, { tipo: doc.tipo, valor: doc.valor })
       return json(clean(doc), 201)
     }
     if (route === '/financeiro/resumo' && method === 'GET') {
@@ -939,7 +900,7 @@ async function handler(request, { params }) {
       }
       const status = config.accessToken ? 'configurado' : 'nao_configurado'
       await integracaoRepo.upsert(ctx.empresa_id, 'mercadopago', { config, status })
-      await audit(database, ctx, 'update', 'integracao', 'mercadopago', { status, mode: config.mode })
+      await audit(repos, ctx, 'update', 'integracao', 'mercadopago', { status, mode: config.mode })
       return json({ ok: true, status, mode: config.mode, hasAccessToken: Boolean(config.accessToken) })
     }
     if (route === '/integracoes/evolution' && method === 'PUT') {
@@ -948,7 +909,7 @@ async function handler(request, { params }) {
       const config = { serverUrl: b.serverUrl || '', apiKey: b.apiKey || '', instance: b.instance || 'restaurant-os' }
       const status = config.serverUrl && config.apiKey ? 'configurado' : 'nao_configurado'
       const atualizado = await integracaoRepo.upsert(ctx.empresa_id, 'evolution', { config, status })
-      await audit(database, ctx, 'update', 'integracao', 'evolution', { status })
+      await audit(repos, ctx, 'update', 'integracao', 'evolution', { status })
       return json(clean(atualizado))
     }
     if (route === '/integracoes/n8n' && method === 'PUT') {
@@ -957,7 +918,7 @@ async function handler(request, { params }) {
       const config = { webhookUrl: b.webhookUrl || '', apiKey: b.apiKey || '', eventos: b.eventos || ['order.created', 'order.status_changed'] }
       const status = config.webhookUrl ? 'configurado' : 'nao_configurado'
       const atualizado = await integracaoRepo.upsert(ctx.empresa_id, 'n8n', { config, status })
-      await audit(database, ctx, 'update', 'integracao', 'n8n', { status })
+      await audit(repos, ctx, 'update', 'integracao', 'n8n', { status })
       return json(clean(atualizado))
     }
     if (route === '/integracoes/evolution/testar' && method === 'POST') {
@@ -1005,7 +966,7 @@ async function handler(request, { params }) {
         const excedentes = existentes.filter((m) => m.numero > quantidade && m.status === 'livre')
         for (const m of excedentes) await mesaRepo.update(ctx.empresa_id, m.id, { ativo: false, updated_at: new Date() })
       }
-      await audit(database, ctx, 'configurar', 'mesas', ctx.empresa_id, { quantidade, capacidade })
+      await audit(repos, ctx, 'configurar', 'mesas', ctx.empresa_id, { quantidade, capacidade })
       const mesas = await mesaRepo.list(ctx.empresa_id, { ativo: true })
       return json(mesas.map(clean))
     }
@@ -1031,7 +992,7 @@ async function handler(request, { params }) {
       Object.assign(comanda, computeComanda(comanda))
       await comandaRepo.create(comanda)
       await mesaRepo.update(ctx.empresa_id, mesa.id, { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() })
-      await audit(database, ctx, 'abrir', 'comanda', comanda.id, { mesa: mesa.nome })
+      await audit(repos, ctx, 'abrir', 'comanda', comanda.id, { mesa: mesa.nome })
       return json(clean(comanda), 201)
     }
     if (seg[0] === 'mesas' && seg[1] && method === 'PUT') {
@@ -1041,7 +1002,7 @@ async function handler(request, { params }) {
       for (const k of ['nome', 'capacidade']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.status !== undefined && MESA_STATUS.includes(b.status)) upd.status = b.status
       const atualizada = await mesaRepo.update(ctx.empresa_id, seg[1], upd)
-      await audit(database, ctx, 'update', 'mesa', seg[1], upd)
+      await audit(repos, ctx, 'update', 'mesa', seg[1], upd)
       return json(clean(atualizada))
     }
 
@@ -1085,7 +1046,7 @@ async function handler(request, { params }) {
       const item = { id: uuidv4(), produto_id: b.produto_id || null, nome, preco: Number(preco), quantidade: Number(b.quantidade || 1), observacao: b.observacao || '', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() }
       await comandaRepo.pushItem(ctx.empresa_id, seg[1], item)
       const c = await reloadComanda(seg[1])
-      await audit(database, ctx, 'add_item', 'comanda', seg[1], { item: nome, quantidade: item.quantidade })
+      await audit(repos, ctx, 'add_item', 'comanda', seg[1], { item: nome, quantidade: item.quantidade })
       return json(clean(c), 201)
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'itens' && seg[3] && method === 'PUT') {
@@ -1102,7 +1063,7 @@ async function handler(request, { params }) {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
       await comandaRepo.removeItem(ctx.empresa_id, seg[1], seg[3])
       const c = await reloadComanda(seg[1])
-      await audit(database, ctx, 'remove_item', 'comanda', seg[1], { item_id: seg[3] })
+      await audit(repos, ctx, 'remove_item', 'comanda', seg[1], { item_id: seg[3] })
       return json(clean(c))
     }
     if (seg[0] === 'comandas' && seg[1] && seg.length === 2 && method === 'PUT') {
@@ -1112,7 +1073,7 @@ async function handler(request, { params }) {
       for (const k of ['pessoas', 'desconto', 'desconto_tipo', 'taxa_servico_percent', 'cliente_id', 'cliente_nome']) if (b[k] !== undefined) set[k] = b[k]
       await comandaRepo.update(ctx.empresa_id, seg[1], set)
       const c = await reloadComanda(seg[1])
-      await audit(database, ctx, 'update', 'comanda', seg[1], set)
+      await audit(repos, ctx, 'update', 'comanda', seg[1], set)
       return json(clean(c))
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'transferir' && method === 'POST') {
@@ -1127,7 +1088,7 @@ async function handler(request, { params }) {
       if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
       await mesaRepo.update(ctx.empresa_id, destino.id, { status: 'ocupada', comanda_id: comanda.id, updated_at: new Date() })
       const atualizada = await comandaRepo.update(ctx.empresa_id, comanda.id, { mesa_id: destino.id, mesa_nome: destino.nome, updated_at: new Date() })
-      await audit(database, ctx, 'transferir', 'comanda', comanda.id, { de: comanda.mesa_nome, para: destino.nome })
+      await audit(repos, ctx, 'transferir', 'comanda', comanda.id, { de: comanda.mesa_nome, para: destino.nome })
       return json(clean(atualizada))
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'pagamentos' && method === 'POST') {
@@ -1146,7 +1107,7 @@ async function handler(request, { params }) {
       await pagamentoRepo.create(pagamento) // fonte de verdade (sem delete fisico)
       await comandaRepo.pushPagamentoResumo(ctx.empresa_id, comanda.id, { id: pagamento.id, metodo: pagamento.metodo, valor: pagamento.valor, status: 'approved', provider: 'manual', created_at: pagamento.created_at })
       const c = await reloadComanda(comanda.id)
-      await audit(database, ctx, 'pagamento', 'comanda', comanda.id, { metodo: b.metodo, valor: pagamento.valor })
+      await audit(repos, ctx, 'pagamento', 'comanda', comanda.id, { metodo: b.metodo, valor: pagamento.valor })
       return json(clean(c), 201)
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'pix' && method === 'POST') {
@@ -1178,7 +1139,7 @@ async function handler(request, { params }) {
         created_at: new Date(), updated_at: new Date(),
       }
       await pagamentoRepo.create(pagamento)
-      await audit(database, ctx, 'pix_criado', 'comanda', comanda.id, { valor, provider_payment_id: result.providerPaymentId })
+      await audit(repos, ctx, 'pix_criado', 'comanda', comanda.id, { valor, provider_payment_id: result.providerPaymentId })
       return json({ id: pagamento.id, status: pagamento.status, valor, qr_code: result.qrCode, qr_code_base64: result.qrCodeBase64, ticket_url: result.ticketUrl }, 201)
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'fechar' && method === 'POST') {
@@ -1206,8 +1167,8 @@ async function handler(request, { params }) {
       if (comanda.cliente_id) await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, comanda.cliente_id, totals.total)
       await comandaRepo.update(ctx.empresa_id, comanda.id, { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() })
       if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
-      await audit(database, ctx, 'fechar', 'comanda', comanda.id, { total: totals.total, pedido: numero })
-      await emitEvent(database, ctx, 'comanda.closed', { comanda_id: comanda.id, total: totals.total })
+      await audit(repos, ctx, 'fechar', 'comanda', comanda.id, { total: totals.total, pedido: numero })
+      await emitEvent(repos, ctx, 'comanda.closed', { comanda_id: comanda.id, total: totals.total })
       return json({ ok: true, pedido_numero: numero, total: totals.total })
     }
 
@@ -1324,7 +1285,7 @@ async function handler(request, { params }) {
       } catch (e) { return err(`Falha ao enviar: ${e.message}`, 502) }
       const mensagem = await mensagemRepo.create({ empresa_id: ctx.empresa_id, conversa_id: conversa.id, direcao: 'out', tipo: 'text', texto: b.texto, media_url: null, from_me: true, status: 'sent', provider_message_id: null, operador_id: ctx.usuario_id })
       await conversaRepo.update(ctx.empresa_id, conversa.id, { ultima_mensagem: b.texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_CLIENTE', nao_lidas: 0, operador_id: ctx.usuario_id, updated_at: new Date() })
-      await audit(database, ctx, 'mensagem', 'conversa', conversa.id, {})
+      await audit(repos, ctx, 'mensagem', 'conversa', conversa.id, {})
       return json(clean(mensagem), 201)
     }
     if (seg[0] === 'conversas' && seg[1] && seg[2] === 'ler' && method === 'POST') {
@@ -1341,7 +1302,7 @@ async function handler(request, { params }) {
       if (b.operador_id !== undefined) set.operador_id = b.operador_id
       if (b.pedido_ativo_id !== undefined) set.pedido_ativo_id = b.pedido_ativo_id
       const atualizada = await conversaRepo.update(ctx.empresa_id, seg[1], set)
-      await audit(database, ctx, 'update', 'conversa', seg[1], set)
+      await audit(repos, ctx, 'update', 'conversa', seg[1], set)
       return json(clean(atualizada))
     }
 
