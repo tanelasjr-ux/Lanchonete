@@ -17,7 +17,7 @@ export type Papel = 'OWNER' | 'ADMIN' | 'GERENTE' | 'ATENDENTE' | 'COZINHA';
 export type PedidoStatus =
   | 'recebido' | 'em_preparo' | 'pronto' | 'concluido' | 'cancelado'
   | 'NOVO' | 'CONFIRMADO' | 'EM_PREPARACAO' | 'PRONTO' | 'SAIU_PARA_ENTREGA' | 'ENTREGUE' | 'CANCELADO';
-export type PedidoTipo = 'balcao' | 'delivery' | 'retirada';
+export type PedidoTipo = 'balcao' | 'delivery' | 'retirada' | 'mesa';
 export type Pagamento = 'pix' | 'cartao' | 'dinheiro';
 export type TransacaoTipo = 'receita' | 'despesa';
 export type IntegracaoTipo = 'evolution' | 'n8n' | 'mercadopago';

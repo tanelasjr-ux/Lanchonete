@@ -50,7 +50,9 @@ O cadastro cria a empresa (tenant) e ja popula **dados de demonstracao**
    `supabase/migrations/0002_core_fixes.sql` ->
    `0003_pedido_numero_atomico.sql` -> `0004_mesas.sql` ->
    `0005_comandas.sql` -> `0006_pagamentos.sql` -> `0007_webhook_events.sql`
-   -> `0008_conversas_mensagens.sql`. As migrations `0002`+ dependem das
+   -> `0008_conversas_mensagens.sql` -> `0009_repository_support_functions.sql`
+   -> `0010_atomic_create_functions.sql` -> `0011_migration_upsert_functions.sql`
+   -> `0012_pedidos_comanda_id.sql`. As migrations `0002`+ dependem das
    funções `set_updated_at()`/`current_empresa_id()` definidas em
    `triggers.sql`/`policies_rls.sql`, por isso essas duas rodam antes delas
    (`seed.sql` pode rodar em qualquer ponto depois de `0001`, já que só usa
