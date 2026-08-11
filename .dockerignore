@@ -1,0 +1,56 @@
+# ============================================================================
+# Restaurant OS :: .dockerignore
+# ----------------------------------------------------------------------------
+# O Dockerfile faz `COPY . .`. Sem este arquivo, segredos e dados de cliente
+# entrariam na imagem e ficariam extraiveis por qualquer um que a obtenha.
+# Toda configuracao sensivel deve chegar em RUNTIME, por variavel de ambiente
+# (no EasyPanel: aba Environment do servico), nunca embutida no build.
+# ============================================================================
+
+# --- SEGREDOS: nunca na imagem ---
+.env
+.env.*
+!.env.example
+
+# --- DADOS DE CLIENTE: dumps do banco, podem conter dado real ---
+backups/
+
+# --- Artefatos de build e dependencias (reconstruidos dentro da imagem) ---
+node_modules
+.next
+out
+build
+dist
+
+# --- Controle de versao e metadados ---
+.git
+.gitignore
+.dockerignore
+
+# --- Ambiente de desenvolvimento / ferramentas ---
+.claude
+.vscode
+.idea
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Testes e scripts que nao rodam em producao ---
+backend_test*.py
+test_result.md
+scripts/
+_*.mjs
+
+# --- Documentacao (nao afeta o runtime) ---
+docs/
+*.md
+!README.md
+
+# --- Infra que nao pertence a imagem do app ---
+docker-compose.yml
+supabase/
+
+# --- Sistema operacional ---
+.DS_Store
+Thumbs.db

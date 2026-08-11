@@ -20,7 +20,7 @@ import { NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evolution'
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
-import { supabaseProviderStatus } from '@/lib/integrations/supabase'
+import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations/supabase'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 
@@ -35,17 +35,26 @@ import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 /**
  * Em producao o segredo e OBRIGATORIO: sem ele, qualquer um consegue assinar
  * um token valido para qualquer empresa/usuario (o fallback de dev que existia
- * aqui era um valor publico, versionado no proprio codigo). Falhar no boot e
- * preferivel a subir um ambiente silenciosamente forjavel.
+ * aqui antes era um valor publico, versionado no proprio codigo).
+ *
+ * A checagem e LAZY (no primeiro uso, nao na carga do modulo) por um motivo
+ * concreto: `next build` avalia este modulo para coletar dados das rotas, com
+ * NODE_ENV=production e sem as variaveis de runtime — uma versao anterior
+ * disto, avaliada no import, quebrava o build da imagem Docker. Assinar ou
+ * verificar token so acontece em runtime, que e exatamente onde a exigencia
+ * precisa valer.
  */
-const JWT_SECRET = (() => {
+let _jwtSecret = null
+function getJwtSecret() {
+  if (_jwtSecret) return _jwtSecret
   const s = process.env.JWT_SECRET
-  if (s) return s
+  if (s) { _jwtSecret = s; return _jwtSecret }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('JWT_SECRET e obrigatorio em producao — nao ha valor padrao seguro.')
   }
-  return 'ros_dev_secret_apenas_local'
-})()
+  _jwtSecret = 'ros_dev_secret_apenas_local'
+  return _jwtSecret
+}
 const TOKEN_TTL_SEC = 7 * 24 * 60 * 60
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -59,13 +68,13 @@ function signToken(payload) {
   // — inclusive a do Supabase — leria o valor como segundos e concluiria que
   // o token so expira no ano ~58600, ou seja, nunca. Ver PHASE-8-AUTH-AUDIT.
   const body = b64url(JSON.stringify({ ...payload, iat: nowSec(), exp: nowSec() + TOKEN_TTL_SEC }))
-  const sig = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url')
+  const sig = crypto.createHmac('sha256', getJwtSecret()).update(`${header}.${body}`).digest('base64url')
   return `${header}.${body}.${sig}`
 }
 function verifyToken(token) {
   try {
     const [header, body, sig] = token.split('.')
-    const expectedBuf = Buffer.from(crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url'))
+    const expectedBuf = Buffer.from(crypto.createHmac('sha256', getJwtSecret()).update(`${header}.${body}`).digest('base64url'))
     const sigBuf = Buffer.from(sig || '')
     // Comparacao em tempo constante: `!==` em string vaza, pelo tempo de
     // resposta, quantos caracteres iniciais da assinatura estao corretos.
@@ -406,15 +415,29 @@ async function handler(request, { params }) {
 
     /* -------- health / meta -------- */
     if (route === '/' || route === '/health') {
+      // Reporta configuracao FALTANTE, nao os valores (nunca vazar segredo).
+      // Existe porque um deploy sem JWT_SECRET subia "ok" e so quebrava no
+      // primeiro login bem-sucedido — falha tardia e confusa de diagnosticar.
+      // Aqui ela fica visivel no primeiro healthcheck.
+      const faltando = []
+      if (!process.env.JWT_SECRET) faltando.push('JWT_SECRET')
+      if (getProviderName() === 'supabase' && !isSupabaseConfigured()) {
+        faltando.push('SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY')
+      }
+      if (getProviderName() === 'mongo' && !(process.env.MONGO_URL && process.env.DB_NAME)) {
+        faltando.push('MONGO_URL/DB_NAME')
+      }
+      const degradado = faltando.length > 0 && process.env.NODE_ENV === 'production'
       return json({
         service: 'restaurant-os',
-        status: 'ok',
+        status: degradado ? 'degraded' : 'ok',
         // `database` e o backend REALMENTE em uso nesta requisicao; o bloco
         // `providers.supabase` continua indicando apenas se ha credenciais
         // configuradas (que nao implica que o Supabase seja o runtime ativo).
         database: getProviderName(),
+        ...(faltando.length ? { config_faltando: faltando } : {}),
         providers: { supabase: supabaseProviderStatus() },
-      })
+      }, degradado ? 503 : 200)
     }
 
     /* ==================== AUTH ==================== */
