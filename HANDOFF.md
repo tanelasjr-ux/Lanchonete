@@ -1,188 +1,349 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-11 (fim de sessao — Fase 6 concluida)
+Ultima atualizacao: 2026-08-11 (fim de sessao — Fase 6B concluida)
 
 ## Como usar este arquivo
 
-No inicio de qualquer sessao de trabalho neste projeto, leia este arquivo
-primeiro — ele resume onde o trabalho parou e o que falta decidir. No fim de
-cada sessao (ou quando pedido "gere um handoff"), este arquivo deve ser
-reescrito com o estado real e atualizado, substituindo o conteudo anterior.
+Leia este arquivo **primeiro** em qualquer sessao de trabalho neste projeto.
+Ele e a memoria de longo prazo do Restaurant OS: deve ser possivel entender o
+sistema inteiro lendo este documento + os arquivos em `docs/` que ele
+referencia, sem depender de historico de conversa.
 
-## Estado atual
+Quando o dono do projeto pedir um handoff, este arquivo e **reescrito por
+completo** com o estado atual (nao e um resumo do dia — e o retrato inteiro
+do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
-**Governanca do projeto:** `CLAUDE.md` na raiz define modo de agente
-autonomo (nao pedir autorizacao por etapa, exceto para git push/force
-push/branch remota, operacoes destrutivas sem rollback, credencial externa
-faltante, ou decisao de produto ambigua). Ler `CLAUDE.md` antes de executar
-qualquer tarefa.
+---
 
-**Migracao MongoDB -> Supabase — progresso real (fases 1 a 6 concluidas,
-cada uma aprovada explicitamente pelo dono do projeto antes de comecar):**
+# 1. O que e o produto
 
-- **Fase 1 (auditoria):** concluida. `docs/plans/MONGO-TO-SUPABASE-AUDIT.md`.
-- **Fase 2 (`packages/domain/src/index.ts`):** concluida. Contratos completos
-  para as 15 entidades + repositories (TypeScript, nao compilado — sem
-  tsconfig/typescript no projeto, serve como documentacao de contrato).
-- **Fase 3 (extrair Mongo de `route.js` para `lib/repositories/mongo/*`):**
-  concluida. As 16 colecoes (15 do plano + `empresaRepository`, achado no
-  fim) foram extraidas em 8 lotes, sempre preservando comportamento
-  identico (testado a cada lote). `route.js` so acessa `db.collection()`
-  direto para `ensureIndexes()`, seed bulk-insert e `webhook_events` (fora
-  do escopo do contrato `Repository<T>`).
-- **Fase 3.5 (limpeza de triggers de negocio):** concluida.
-  `pedido_recalc_total()`/`pedido_on_conclusao()` removidas do Postgres —
-  so restam triggers mecanicas (`set_updated_at`, numeracao atomica de
-  pedido). ADR-006 em `docs/ARCHITECTURE.md` documenta o principio "regra de
-  negocio so no Service". `docs/plans/PHASE-3.5-TRIGGER-CLEANUP.md`.
-- **Fase 4 (schema Supabase completo):** concluida. 6 tabelas novas
-  (`mesas`, `comandas`, `comanda_itens`, `pagamentos`, `webhook_events`,
-  `conversas`, `mensagens`), correcoes em tabelas existentes, numeracao
-  atomica de pedido (`pedido_contadores` + trigger). `docs/plans/PHASE-4-SUPABASE-SCHEMA.md`.
-  Migrations `0001` a `0008` + `triggers.sql`/`policies_rls.sql`/`seed.sql`.
-  **Ordem de execucao real e nao-obvia** (documentada no README): `0001` ->
-  `triggers.sql` -> `policies_rls.sql` -> `seed.sql` -> `0002` em diante,
-  porque `0002+` dependem de funcoes definidas em `triggers.sql`/`policies_rls.sql`.
-- **Fase 5 (`Supabase*Repository`, runtime continua Mongo):** concluida. 15
-  repositories (14 entidades + `webhookEventsRepository`) em
-  `lib/repositories/supabase/*.js`, satisfazendo os mesmos contratos de
-  `domain.ts` que os `Mongo*Repository`. `route.js` **nao foi tocado** —
-  ainda 100% MongoDB em runtime. `docs/plans/PHASE-5-SUPABASE-REPOSITORIES.md`,
-  `docs/plans/PHASE-5-REPOSITORIES-AUDIT.md`.
-  - **Correcao preventiva feita antes da Fase 6**: `pedidoRepository.create()`/
-    `comandaRepository.create()` faziam 2 escritas separadas (pai + itens)
-    sem atomicidade — corrigido com RPCs Postgres (`create_pedido_com_itens()`,
-    `create_comanda_com_itens()`, migration `0010`). Achado durante os testes
-    da propria correcao: `jsonb_populate_record()` zera com `NULL` (nao o
-    `DEFAULT` da coluna) campos ausentes no JSON — corrigido usando `INSERT`
-    com lista de colunas explicita + `coalesce()`.
-- **Fase 6 (ferramenta de migracao de dados MongoDB -> Supabase):
-  CONCLUIDA NESTA SESSAO.** `scripts/migrate-mongo-to-supabase.mjs` (CLI
-  idempotente, `--dry-run`/`--empresa`/`--checkpoint`/`--log`) e
-  `scripts/validate-migration.mjs` (validacao pos-migracao, so leitura).
-  Testado contra as 71 empresas reais do MongoDB de desenvolvimento: 100%
-  migrado, 0 divergencias, 0 regressao. Detalhes completos e o resumo no
-  formato pedido pelo usuario estao em `docs/plans/PHASE-6-DATA-MIGRATION.md`.
-  **Runtime da aplicacao continua 100% MongoDB** — esta fase so entregou a
-  ferramenta e validou que ela funciona; nao trocou `DATABASE_PROVIDER`
-  nem tocou `route.js`.
+**Restaurant OS** — SaaS de atendimento e gestao para restaurantes,
+lanchonetes e similares, com WhatsApp como canal principal de atendimento.
+Modulos: cardapio, pedidos (balcao/delivery/retirada/mesa), mesas e comandas,
+clientes/CRM, financeiro, pagamentos, conversas de WhatsApp, relatorios,
+auditoria e RBAC.
 
-  **4 achados reais corrigidos durante esta fase** (encontrados testando
-  contra dados/Postgres reais, nao so lendo codigo — ver
-  `docs/plans/PHASE-6-DATA-MIGRATION.md` §1 para detalhe completo):
-  1. `pedidos.comanda_id` nunca existiu como coluna (pedidos originados de
-     fechamento de comanda sempre carregam esse campo no Mongo real) —
-     coluna nova + FK, migration `0012_pedidos_comanda_id.sql`.
-  2. `pedidos_tipo_check` nao incluia `'mesa'` (4o valor real de `tipo`,
-     usado no mesmo fluxo do item 1) — constraint corrigida na mesma
-     migration. `packages/domain/src/index.ts`: `PedidoTipo` ampliado.
-  3. Ordem de migracao `pedidos` antes de `comandas` ficou invalida depois
-     da correcao do item 1 (nova FK `pedidos.comanda_id -> comandas.id`) —
-     ordem invertida no script de migracao E em
-     `docs/plans/PHASE-6-MIGRATION-AUDIT.md` §2.
-  4. Upsert em lote via PostgREST nao aplica o `DEFAULT` da coluna por
-     linha quando o lote mistura documentos com/sem um campo opcional
-     (`updated_at`, presente so em documentos ja editados no Mongo) — grava
-     `NULL` em vez do default, violando `not null`. Corrigido no proprio
-     script (`updated_at` ausente cai para `created_at`).
-  5. `upsert_pedido_com_itens()`/`upsert_comanda_com_itens()` (RPCs
-     idempotentes usadas so pela ferramenta de migracao) adicionadas na
-     migration `0011_migration_upsert_functions.sql`.
+**Modelo comercial: SaaS multi-tenant.** Varios restaurantes clientes sao
+atendidos por **uma unica instalacao e um unico projeto Supabase**. Nunca
+criar um projeto/banco por cliente. O que varia por empresa e a **instancia
+da Evolution API** (credenciais por tenant na tabela `integracoes`).
 
-  Migrations Supabase atuais: `0001` a `0012` (ordem completa de execucao
-  documentada no `README.md`, secao "Ativando o Supabase").
+---
 
-- **Auth:** ainda 100% JWT local (HMAC-SHA256 + scrypt). Migracao para
-  Supabase Auth (decisao tomada na Fase 1) **ainda nao iniciada** — precisa
-  de auditoria propria antes de comecar (estrategia de migracao de senha,
-  formato de sessao, onde ficam as claims de RBAC).
+# 2. Arquitetura
 
-- **Fase 7 (troca de runtime em producao): NAO INICIADA.** Aguardando
-  aprovacao explicita do dono do projeto, conforme instruido em toda a
-  sessao ("nao avancar automaticamente").
-
-**Infraestrutura (EasyPanel / Hostinger, IP 187.77.226.88):** projeto
-"restaurante" no EasyPanel ja tem `evolution-api`, `evolution-api-db`,
-`evolution-api-redis` e `n8n` rodando. **Ainda nao existe** um servico "app"
-nem MongoDB de producao no mesmo projeto — decisao em aberto, nao avancada
-em nenhuma sessao ate agora.
-
-## Ambiente local de desenvolvimento
-
-Processos abaixo rodam localmente na maquina do usuario e **nao sobrevivem a
-um desligamento/reboot** — para retomar:
-
-1. `.env` ja existe na raiz do projeto (nao versionado) com `MONGO_URL`,
-   `DB_NAME`, `JWT_SECRET` de desenvolvimento, `CORS_ORIGINS=*`.
-2. Subir o MongoDB local: `docker start ros-mongo-local` (container ja
-   existe; se tiver sido removido, recriar com
-   `docker run -d --name ros-mongo-local -p 27017:27017 mongo:7`).
-   Banco de dev real: `restaurant_os_dev` (71 empresas acumuladas de uso
-   organico durante as Fases 3-6 — dataset util para testes, nao apagar).
-3. Ambiente de teste Supabase local (Postgres + PostgREST, usado nas Fases
-   4-6 para validar schema/repositories/migracao contra um Postgres real
-   sem precisar de projeto Supabase hospedado): containers Docker
-   `ros-pg-test` (imagem oficial `public.ecr.aws/supabase/postgres:17.6.1.158`)
-   e `ros-postgrest-test` (`public.ecr.aws/supabase/postgrest:v14.16`) numa
-   rede `ros-supabase-test`. **Nao sobem sozinhos** — se precisar recriar,
-   ver o padrao usado nas Fases 4-6 (Postgres com `POSTGRES_PASSWORD=postgres`,
-   PostgREST apontando `PGRST_DB_URI=postgres://postgres:postgres@ros-pg-test:5432/postgres`
-   e `PGRST_JWT_SECRET` combinando com um JWT `service_role` mintado
-   localmente via Node `crypto` — sem Kong, por isso o cliente de teste usa
-   `@supabase/postgrest-js` `PostgrestClient` direto na porta do PostgREST,
-   nao `@supabase/supabase-js` `createClient()`, que espera o prefixo
-   `/rest/v1` do Kong). Migrations `0001` a `0012` ja aplicadas nesse
-   Postgres de teste ao fim desta sessao; dados de teste da Fase 6 foram
-   limpos, restam so os 3 registros de fixture das Fases 4/5.
-4. `corepack enable` (necessario nesta maquina para `yarn` resolver no PATH
-   do Git Bash).
-5. `node_modules` ja existe; se nao existir, `yarn install`.
-6. Subir o app: `yarn dev:no-reload` (roda em `localhost:3000`).
-7. Rodar os testes de regressao: `PYTHONIOENCODING=utf-8 python backend_test.py`
-   (e `_v2`/`_v3`) — `PYTHONIOENCODING=utf-8` evita crash de encoding no
-   console do Windows por causa dos emojis nos logs.
-
-## Decisoes ja tomadas (nao renegociar sem confirmar com o usuario)
-
-1. **Itens de pedido/comanda**: tabelas relacionais (`pedido_itens`,
-   `comanda_itens`), nao JSONB, com snapshot historico completo por item.
-   Preco do item nunca recalculado a partir do preco atual do produto.
-2. **Regras de negocio**: exclusivamente no Service (`route.js` hoje).
-   Postgres so cuida de integridade (FK, NOT NULL, CHECK, UNIQUE, indices,
-   RLS) + funcoes mecanicas (numeracao atomica, upsert atomico pai+filhos).
-   Nenhuma funcao Postgres decide valor de negocio — todas recebem o valor
-   ja calculado pelo Service/script de migracao.
-3. **Autenticacao**: migrar tambem para **Supabase Auth** (nao so a
-   persistencia) — ainda sem auditoria propria, nao iniciado.
-4. **Migracao de dados**: MongoDB e sempre a fonte de verdade durante todo
-   o processo; nunca alterar/apagar dado no Mongo; nunca trocar o runtime
-   sem aprovacao explicita; migrar com base no formato REAL dos documentos
-   Mongo, nunca assumir que bate 100% com `domain.ts` (esta disciplina
-   encontrou 4 dos 5 achados reais desta sessao, ver Fase 6 acima).
-
-## Pendencias / proximos passos
-
-- [ ] **Fase 7 (avaliar troca de runtime)**: schema, repositories e
-      ferramenta de migracao estao prontos e validados localmente. Decisao
-      de quando/como avancar e do dono do projeto — nao iniciar sem
-      aprovacao explicita.
-- [ ] **Migracao de dados em ambiente real**: a ferramenta (`scripts/migrate-mongo-to-supabase.mjs`)
-      so foi testada contra o Postgres de teste local (Docker). Antes de
-      rodar contra um projeto Supabase hospedado de verdade, rodar
-      `--dry-run` primeiro e revisar o relatorio.
-- [ ] **Auditoria de Auth**: estrategia de migracao de senha (scrypt local
-      -> Supabase Auth), formato de sessao/token, onde ficam as claims de
-      RBAC — antes de iniciar qualquer trabalho de Supabase Auth.
-- [ ] **Decisao de infra**: criar o servico "app" no projeto "restaurante"
-      do EasyPanel e resolver a origem do MongoDB/Postgres de producao
-      (self-hosted no EasyPanel vs gerenciado externo) antes do primeiro
-      deploy real.
-- [ ] Nenhum commit desta sessao foi enviado ao remoto (`git push`) — tudo
-      local na branch `main`.
-
-## Commits locais (nao pushed, mais recentes primeiro)
+## 2.1 Camadas
 
 ```
+Route Handler (HTTP)  ->  Controller  ->  Service  ->  Repository  ->  Database
+```
+
+Tudo vive hoje em **um unico route handler catch-all**:
+`app/api/[[...path]]/route.js` (Next.js App Router). Ele concentra dispatch
+HTTP, autenticacao/autorizacao, regras de negocio e orquestracao. Nao e um
+acidente: o projeto nasceu assim e a migracao em curso decidiu **nao**
+reescrever isso agora (evitar big-bang), so extrair a camada de dados.
+
+**Principios que nao podem ser quebrados:**
+
+- **Regra de negocio existe so no Service** (hoje, dentro do `route.js`).
+  Nunca em repository, nunca em trigger/function do Postgres. Formalizado no
+  ADR-006 (`docs/ARCHITECTURE.md`) e ja custou uma correcao de design real
+  (ver §8).
+- **O banco cuida so de integridade**: FK, NOT NULL, CHECK, UNIQUE, indices,
+  RLS. As unicas funcoes Postgres permitidas sao **mecanicas** — numeracao
+  atomica, incremento atomico, upsert atomico pai+filhos — e sempre recebem
+  o valor ja decidido pelo Service.
+- **Persistencia desacoplada por Repository Pattern**: o Service depende de
+  contratos, nao de MongoDB nem de Supabase.
+
+## 2.2 Contratos de dominio
+
+`packages/domain/src/index.ts` — entidades e interfaces de repositorio
+(TypeScript, **nao compilado**; o projeto nao tem `tsconfig`/`typescript`.
+Serve como documentacao executavel do contrato). Ambos os backends
+(`Mongo*Repository` e `Supabase*Repository`) satisfazem exatamente as mesmas
+interfaces.
+
+Entidades: `Empresa`, `Usuario`, `Categoria`, `Produto`, `Cliente`, `Pedido`
+(+`PedidoItem`), `Mesa`, `Comanda` (+`ComandaItem`, `PagamentoResumo`),
+`PagamentoRegistro`, `Transacao`, `Integracao`, `Conversa`, `Mensagem`,
+`Auditoria`.
+
+## 2.3 Implementacoes de repositorio
+
+- `lib/repositories/mongo/` — **16 repositories. E o runtime ATIVO hoje.**
+- `lib/repositories/supabase/` — **15 repositories. Prontos e validados
+  contra o Supabase real, mas ainda NAO usados em runtime.**
+
+`route.js` so acessa `db.collection()` diretamente em 3 casos deliberados,
+fora do contrato `Repository<T>`: `ensureIndexes()` (infra), o bulk-insert do
+seed (`insertMany`, o contrato so define `create()` singular) e
+`webhook_events` (idempotencia tecnica, nao e entidade de dominio).
+
+## 2.4 Autenticacao e autorizacao
+
+- **Auth: JWT local** (HMAC-SHA256) + senhas com **scrypt**. Ainda **nao**
+  migrado para Supabase Auth (decisao tomada, execucao nao iniciada — §10).
+- **RBAC: hardcoded** nos objetos `ROLES`/`PERMISSIONS` do `route.js`.
+  As tabelas `papeis`/`permissoes` existem no Supabase e tem seed, mas **o
+  app nao le elas** — armadilha conhecida, nao "corrigir" sem decisao.
+- Papeis: `OWNER`, `ADMIN`, `GERENTE`, `ATENDENTE`, `COZINHA`.
+
+---
+
+# 3. Multi-tenancy (regra critica do produto)
+
+Toda entidade de dominio carrega **`empresa_id`**. Isolamento em **duas
+camadas, sempre as duas**:
+
+1. **Aplicacao**: toda query e escopada por `empresa_id` extraido do token.
+2. **Postgres RLS**: 17 tabelas com RLS habilitado, 18 policies.
+
+Nunca confiar so em RLS, nem so na aplicacao. Ao criar qualquer entidade
+nova: incluir `empresa_id`, criar a policy RLS e escrever teste de isolamento
+cross-tenant.
+
+Verificado no Supabase real: **0 tabelas de dominio sem `empresa_id`** (fora
+os catalogos globais `papeis`/`permissoes` e a raiz `empresas`, por desenho),
+com **71 empresas convivendo no mesmo projeto** e 6 testes de isolamento
+(list/`findById`/`update` cross-tenant) passando.
+
+---
+
+# 4. Modelo de dados
+
+## 4.1 Decisoes estruturais
+
+- **Itens de pedido/comanda sao tabelas relacionais filhas**
+  (`pedido_itens`, `comanda_itens`), nao JSONB — decisao do dono do projeto.
+  No MongoDB sao arrays embutidos; a traducao acontece no repository.
+- **Snapshot historico por item**: `nome` e `preco` sao congelados no momento
+  da venda. **Nunca** recalcular a partir do preco atual do produto.
+- **`comanda.pagamentos`**: array embutido no Mongo (copia denormalizada);
+  no Postgres **nao existe coluna** — a tabela `pagamentos` e a fonte unica.
+  O `SupabaseComandaRepository` **reconstroi** esse campo em memoria a cada
+  leitura, so para preservar o contrato que `computeComanda()` ja espera.
+- **Numeracao de pedido**: tabela `pedido_contadores` + funcao atomica por
+  tenant (substituiu um `count()+1` com race condition).
+
+## 4.2 Tabelas (20 no Supabase)
+
+Dominio com `empresa_id`: `usuarios`, `categorias`, `produtos`, `clientes`,
+`mesas`, `comandas`, `comanda_itens`, `pedidos`, `pedido_itens`,
+`pagamentos`, `transacoes`, `integracoes`, `conversas`, `mensagens`,
+`auditoria`, `webhook_events`, `pedido_contadores`.
+Raiz do tenant: `empresas`. Catalogos globais: `papeis`, `permissoes`.
+
+## 4.3 Migrations e ORDEM DE EXECUCAO (nao obvia)
+
+`supabase/migrations/0001` a `0013`, mais `triggers.sql`, `policies_rls.sql`,
+`seed.sql`. **A ordem correta nao e so numerica** — `0002+` dependem de
+funcoes definidas em `triggers.sql`/`policies_rls.sql`:
+
+```
+0001_init.sql -> triggers.sql -> policies_rls.sql -> seed.sql
+-> 0002_core_fixes -> 0003_pedido_numero_atomico -> 0004_mesas
+-> 0005_comandas -> 0006_pagamentos -> 0007_webhook_events
+-> 0008_conversas_mensagens -> 0009_repository_support_functions
+-> 0010_atomic_create_functions -> 0011_migration_upsert_functions
+-> 0012_pedidos_comanda_id -> 0013_increment_conversa_patch_parcial
+```
+
+Essa ordem esta no `README.md` e **ja foi executada de ponta a ponta** duas
+vezes (Postgres local em Docker e projeto Supabase real).
+
+## 4.4 Funcoes Postgres (todas mecanicas, nenhuma decide negocio)
+
+- `set_updated_at()` — trigger de timestamp.
+- `next_pedido_numero()` / `pedidos_set_numero()` — numeracao atomica (a
+  trigger e o `nextNumero()` do repository chamam **a mesma** funcao; nunca
+  ha dois caminhos de numeracao).
+- `increment_cliente_metricas()`, `increment_conversa_nao_lidas()` —
+  equivalente ao `$inc` atomico do Mongo.
+- `create_pedido_com_itens()`, `create_comanda_com_itens()` — insert atomico
+  pai+filhos (usadas pelo app).
+- `upsert_pedido_com_itens()`, `upsert_comanda_com_itens()`,
+  `resync_pedido_contadores()` — versoes idempotentes, usadas **so** pela
+  ferramenta de migracao.
+
+---
+
+# 5. Conexoes e integracoes
+
+Credenciais vivem **so** no `.env` da raiz (nao versionado, esta no
+`.gitignore`). Nunca commitar segredo, nunca escrever chave neste documento.
+
+| O que | Onde configurar (`.env`) | Observacoes |
+|---|---|---|
+| MongoDB (runtime atual) | `MONGO_URL`, `DB_NAME` | Local: container `ros-mongo-local`, banco `restaurant_os_dev` |
+| Supabase (API) | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Projeto real ja configurado; `service_role` nunca vai ao frontend |
+| Supabase (SQL direto) | `SUPABASE_DB_URL` | **Usar o Session Pooler (IPv4)**. A Direct connection (`db.<ref>.supabase.co`) resolve para IPv6 e fica inacessivel desta rede (`Network is unreachable`) |
+| Evolution API (WhatsApp) | tabela `integracoes` (`empresa_id` + `tipo='evolution'`, `config` JSONB) | **Uma instancia por empresa.** Codigo em `lib/integrations/evolution.js` |
+| n8n | tabela `integracoes` (`tipo='n8n'`) | `lib/integrations/n8n.js` |
+| Mercado Pago | tabela `integracoes` (`tipo='mercadopago'`) | `lib/integrations/payments/` |
+
+**Regra inegociavel das integracoes:** sem credencial configurada, retornar
+"nao configurado"/erro apropriado. **Nunca** mockar sucesso — nunca Pix
+falso, QR Code falso, pagamento falso, webhook falso, status falso.
+
+Fluxo WhatsApp completo (testar inteiro ao mexer em qualquer parte):
+`Evolution -> Webhook -> Cliente -> Conversa -> Mensagem -> Pedido -> Atendimento`.
+
+---
+
+# 6. Estado real de cada fase
+
+| Fase | Status |
+|---|---|
+| 1 — Auditoria da migracao | **Concluida** (`docs/plans/MONGO-TO-SUPABASE-AUDIT.md`) |
+| 2 — Contratos de dominio | **Concluida** (`packages/domain/src/index.ts`) |
+| 3 — Extrair Mongo do `route.js` | **Concluida** (16 repositories, 8 lotes testados) |
+| 3.5 — Remover triggers de negocio | **Concluida** (`docs/plans/PHASE-3.5-TRIGGER-CLEANUP.md`) |
+| 4 — Schema Supabase | **Concluida** (`docs/plans/PHASE-4-SUPABASE-SCHEMA.md`) |
+| 5 — `Supabase*Repository` | **Concluida** (`docs/plans/PHASE-5-SUPABASE-REPOSITORIES.md`) |
+| 6 — Ferramenta de migracao de dados | **Concluida** (`docs/plans/PHASE-6-DATA-MIGRATION.md`) |
+| 6B — Validacao contra Supabase REAL | **Concluida** (`docs/plans/PHASE-6B-SUPABASE-REAL.md`) |
+| **7 — Troca de runtime para Supabase** | **NAO INICIADA** — aguarda decisao do dono |
+| Auth -> Supabase Auth | **NAO INICIADA** — falta auditoria propria |
+| Realtime / Storage | **NAO INICIADOS** |
+
+**O runtime da aplicacao continua 100% MongoDB.** Preencher as variaveis
+Supabase no `.env` **nao** troca a persistencia — isso e a Fase 7.
+
+## 6.1 O que a Fase 6B (hoje) entregou
+
+- Projeto Supabase real **nao estava vazio**: tinha 17 tabelas de uma versao
+  antiga do sistema (plataforma "emergent"), modelo generico
+  `id/empresa_id/data jsonb/created_at`, com dados. Por decisao do dono, foi
+  descartado — **com `pg_dump` completo salvo antes** em `backups/`
+  (diretorio no `.gitignore`; pode conter dado real de cliente).
+- Schema atual (0001→0013) aplicado no Supabase real, sem erros: 20 tabelas,
+  17 com RLS, 18 policies, 12 funcoes, seed RBAC (5 papeis / 30 permissoes).
+- **39/39 testes** dos repositories via `@supabase/supabase-js` real (com
+  Kong), incluindo 6 de isolamento multi-tenant.
+- Migracao de dados real: **71/71 empresas, 0 erros**; validacao **71/71,
+  0 divergencias**. Contagens batendo exatamente com o MongoDB.
+
+---
+
+# 7. Ambiente local (como resubir tudo apos reboot)
+
+Nada abaixo sobrevive a um desligamento — resubir nesta ordem:
+
+1. **`.env`** ja existe na raiz (nao versionado): `MONGO_URL`, `DB_NAME`,
+   `JWT_SECRET`, `CORS_ORIGINS`, `NEXT_PUBLIC_BASE_URL` e as chaves Supabase.
+2. **Docker Desktop**: iniciar o app (fica em
+   `%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe`) e esperar o
+   daemon responder a `docker ps`.
+3. **MongoDB**: `docker start ros-mongo-local`
+   (se sumiu: `docker run -d --name ros-mongo-local -p 27017:27017 mongo:7`).
+   Banco `restaurant_os_dev` tem **71 empresas** de uso organico das Fases
+   3-6 — dataset valioso para teste, **nao apagar**.
+4. **Cliente `psql`**: nao existe no PATH desta maquina. Usar container
+   descartavel: `docker run --rm -i postgres:17 psql "<url>" -c "..."`.
+5. **Ambiente Supabase local** (opcional — so se quiser testar sem tocar no
+   projeto real): containers `ros-pg-test`
+   (`public.ecr.aws/supabase/postgres:17.6.1.158`) e `ros-postgrest-test`
+   (`public.ecr.aws/supabase/postgrest:v14.16`) na rede `ros-supabase-test`.
+   **Sem Kong** — por isso os testes locais usam
+   `@supabase/postgrest-js` `PostgrestClient` direto, e nao
+   `createClient()` do `@supabase/supabase-js` (que espera o prefixo
+   `/rest/v1` do gateway). Contra o projeto real, usar `createClient()`.
+6. **`corepack enable`** — necessario nesta maquina para o `yarn` resolver no
+   PATH do Git Bash.
+7. **App**: `yarn dev:no-reload` (`localhost:3000`).
+8. **Testes de regressao**:
+   `PYTHONIOENCODING=utf-8 python backend_test.py` (e `_v2`, `_v3`) — a
+   variavel evita crash de encoding no console do Windows (emojis nos logs).
+
+**Baseline MongoDB** (estavel desde a Fase 3): **v1 40/40, v2 39/39,
+v3 32/33**. A unica "falha" do v3 nao e bug: e `tipo:'conversation'` em vez
+de `'text'` no webhook do WhatsApp — comportamento correto da Evolution API,
+documentado em `test_result.md`.
+
+---
+
+# 8. Decisoes tomadas (nao renegociar sem confirmar)
+
+1. **Um unico projeto Supabase para todos os clientes.** Multi-tenant por
+   `empresa_id`; a instancia Evolution e que muda por empresa. Nunca um
+   projeto por restaurante.
+2. **Itens em tabelas relacionais** com snapshot historico; preco do item
+   nunca recalculado do produto atual.
+3. **Regra de negocio so no Service.** Postgres so cuida de integridade +
+   funcoes mecanicas. Isso ja forcou uma correcao real: o `ComandaRepository`
+   projetado na Fase 2 tinha metodos de alto nivel (`addItem`, `fechar`) que
+   embutiam recalculo/orquestracao — substituidos por metodos finos
+   (`pushItem`, `updateItemCampos`, `removeItem`, `pushPagamentoResumo`,
+   `setDerivados`) que so persistem o que o Service ja calculou.
+4. **Auth migra para Supabase Auth** (nao so a persistencia) — decidido, nao
+   iniciado.
+5. **Migracao de dados**: MongoDB e a fonte de verdade durante todo o
+   processo. Nunca alterar/apagar dado no Mongo; nunca trocar o runtime sem
+   aprovacao explicita; **migrar com base no formato REAL dos documentos**,
+   nunca assumindo que batem com `domain.ts` (essa disciplina achou quase
+   todos os bugs listados no §9).
+6. **Nunca mockar integracao externa** (Evolution / Mercado Pago / n8n).
+
+---
+
+# 9. Achados e armadilhas (para nao redescobrir)
+
+Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
+
+1. **`pedidos.comanda_id` nunca existiu como coluna** — pedidos gerados por
+   fechamento de comanda sempre carregam esse campo no Mongo. Corrigido na
+   migration `0012`.
+2. **`pedidos_tipo_check` nao aceitava `'mesa'`** — 4o valor real de `tipo`,
+   usado no mesmo fluxo. Corrigido na `0012`; `PedidoTipo` ampliado.
+3. **Ordem de migracao**: apos criar a FK do item 1, `comandas` **tem que**
+   migrar antes de `pedidos` (a ordem original era o inverso).
+4. **`jsonb_populate_record()` zera campos ausentes com NULL** em vez de
+   aplicar o `DEFAULT` da coluna. Por isso as funcoes atomicas usam lista de
+   colunas explicita + `coalesce()`.
+5. **Upsert em lote via PostgREST nao aplica `DEFAULT` por linha** — se o
+   lote mistura documentos com e sem um campo opcional (`updated_at`), as
+   linhas sem ele recebem `NULL` e violam `not null`. Diferente de um INSERT
+   de linha unica. Tratado no `pick()` do script de migracao.
+6. **`supabase-js` remove chaves `undefined`** do corpo JSON: uma RPC com
+   parametros obrigatorios sem default falha com `PGRST202` ("function not
+   found in schema cache") quando recebe patch parcial — erro confuso.
+   Corrigido na `0013` com defaults + `coalesce`.
+7. **Direct connection do Supabase e IPv6** — inacessivel desta rede; usar o
+   Session Pooler.
+8. **`papeis`/`permissoes` existem no banco mas o app nao le** — RBAC e
+   hardcoded no `route.js`.
+9. Ao apagar uma empresa, o `ON DELETE CASCADE` limpa todo o tenant — util
+   para limpar dado de teste, perigoso em producao.
+
+---
+
+# 10. Pendencias e proximos passos
+
+- [ ] **Fase 7 — troca de runtime**: implementar o switch de provider
+      (`DATABASE_PROVIDER`) e rodar a suite completa de regressao contra
+      Supabase. **Nao iniciar sem aprovacao explicita do dono.**
+- [ ] **Corte de producao**: a migracao rodou contra o Mongo de
+      *desenvolvimento*. Um corte real exige janela de manutencao e nova
+      execucao contra o Mongo de producao (sempre `--dry-run` antes).
+- [ ] **Auditoria de Auth** antes de qualquer codigo de Supabase Auth:
+      estrategia de migracao de senha (scrypt -> Supabase Auth), formato de
+      sessao/token, onde ficam as claims de RBAC.
+- [ ] **Decisao de infra**: criar o servico "app" no projeto "restaurante"
+      do EasyPanel (Hostinger, IP 187.77.226.88 — ja tem `evolution-api`,
+      `evolution-api-db`, `evolution-api-redis` e `n8n` rodando; **nao** tem
+      servico do app nem banco de producao).
+- [ ] **Nada foi enviado ao remoto** — todos os commits estao locais em
+      `main`. `git push` exige confirmacao do dono (regra do `CLAUDE.md`).
+
+---
+
+# 11. Commits locais (mais recentes primeiro, nenhum pushed)
+
+```
+87afa2a feat(supabase): valida schema, repositories e migracao contra Supabase real
+d6ee777 docs: update HANDOFF.md - Fase 6 (migration tooling) complete
 7bd641a feat(migration): ferramenta de migracao de dados MongoDB -> Supabase (Fase 6)
 5e082a2 feat(supabase): idempotent migration upserts + fix missing pedidos.comanda_id gap
 9f45f80 fix(supabase): atomic create for pedido+itens and comanda+itens (RPC)
@@ -204,29 +365,43 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 2d4642a docs: add CLAUDE.md autonomous agent rules and HANDOFF.md
 ```
 
-## Referencias uteis
+---
 
-- `CLAUDE.md` — regras de operacao autonoma para este projeto.
-- `docs/ARCHITECTURE.md` (inclui ADR-006: regra de negocio so no Service),
-  `docs/FOLDER_STRUCTURE.md` — arquitetura atual.
-- `docs/plans/MONGO-TO-SUPABASE-AUDIT.md` — auditoria original (Fase 1).
-- `docs/plans/PHASE-3.5-TRIGGER-CLEANUP.md` — limpeza de triggers de negocio.
-- `docs/plans/PHASE-4-SUPABASE-SCHEMA.md` — schema Supabase completo.
-- `docs/plans/PHASE-5-REPOSITORIES-AUDIT.md`, `PHASE-5-SUPABASE-REPOSITORIES.md`
-  — repositories Supabase + correcao de atomicidade.
-- `docs/plans/PHASE-6-MIGRATION-AUDIT.md`, `PHASE-6-DATA-MIGRATION.md` —
-  auditoria e execucao da ferramenta de migracao de dados (mais recentes,
-  incluem os achados reais desta sessao).
-- `packages/domain/src/index.ts` — contratos de dominio completos (Fase 2,
-  com correcoes ao longo de todas as fases seguintes).
-- `lib/repositories/mongo/` — 16 `Mongo*Repository` (runtime atual).
-- `lib/repositories/supabase/` — 15 `Supabase*Repository` (prontos, ainda
-  nao usados em runtime).
-- `supabase/migrations/0001` a `0012`, `triggers.sql`, `policies_rls.sql`,
-  `seed.sql` — schema Supabase completo. Ordem de execucao real no
-  `README.md` ("Ativando o Supabase").
-- `scripts/migrate-mongo-to-supabase.mjs`, `scripts/validate-migration.mjs`
-  — ferramenta de migracao de dados (Fase 6).
-- `test_result.md` — historico de testes de backend (contexto); o baseline
-  MongoDB (v1 40/40, v2 39/39, v3 32/33 — unica "falha" e comportamento
-  correto documentado da Evolution API) nao mudou desde a Fase 3.
+# 12. Mapa de arquivos e documentos
+
+**Governanca**
+- `CLAUDE.md` — regras de operacao autonoma (ler antes de qualquer tarefa).
+  Secao 18.1 define o formato obrigatorio deste handoff.
+
+**Codigo**
+- `app/api/[[...path]]/route.js` — API inteira (Controller + Service).
+- `packages/domain/src/index.ts` — contratos de dominio.
+- `lib/repositories/mongo/` — 16 repositories (runtime ativo).
+- `lib/repositories/supabase/` — 15 repositories (prontos, fora do runtime).
+- `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`, `payments/`.
+- `components/`, `hooks/` — frontend.
+
+**Banco**
+- `supabase/migrations/0001`…`0013`, `triggers.sql`, `policies_rls.sql`,
+  `seed.sql`. Ordem real de execucao: `README.md` e §4.3 aqui.
+
+**Ferramentas**
+- `scripts/migrate-mongo-to-supabase.mjs` — migracao de dados (idempotente;
+  `--dry-run`, `--empresa`, `--checkpoint`, `--log`).
+- `scripts/validate-migration.mjs` — validacao pos-migracao (so leitura).
+
+**Documentacao (`docs/plans/`)**
+- `MONGO-TO-SUPABASE-AUDIT.md` — auditoria original.
+- `PHASE-3.5-TRIGGER-CLEANUP.md` — remocao dos triggers de negocio.
+- `PHASE-4-SUPABASE-SCHEMA.md` — schema completo.
+- `PHASE-5-REPOSITORIES-AUDIT.md`, `PHASE-5-SUPABASE-REPOSITORIES.md`.
+- `PHASE-6-MIGRATION-AUDIT.md`, `PHASE-6-DATA-MIGRATION.md`.
+- `PHASE-6B-SUPABASE-REAL.md` — validacao contra o Supabase hospedado.
+- `docs/ARCHITECTURE.md` (ADR-006), `docs/FOLDER_STRUCTURE.md`.
+
+**Testes**
+- `backend_test.py`, `_v2`, `_v3` — regressao de backend (baseline no §7).
+- `test_result.md` — historico e comportamentos conhecidos.
+
+**Backups**
+- `backups/` — dumps do Supabase. **No `.gitignore`** (pode conter dado real).

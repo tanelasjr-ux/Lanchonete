@@ -273,6 +273,48 @@ Apresentar apenas um resumo objetivo neste formato:
 
 Se algo nao puder ser validado, informar claramente no relatorio.
 
+## 18.1. HANDOFF — registro permanente do projeto (regra obrigatoria)
+
+Sempre que o dono do projeto pedir um **handoff** (tipicamente no fim do dia,
+antes de desligar o computador), reescrever `HANDOFF.md` na raiz com o estado
+COMPLETO e atual do projeto. Este arquivo e a memoria de longo prazo do
+projeto: no futuro, deve ser possivel entender o sistema inteiro lendo
+`HANDOFF.md` + os documentos que ele referencia, sem depender do historico de
+conversa.
+
+O handoff **nao e um resumo do dia** — e um retrato completo do projeto
+atualizado com o que mudou hoje. Registrar sempre:
+
+1. **Arquitetura**: camadas (Route -> Controller -> Service -> Repository ->
+   Database), decisoes estruturais e por que foram tomadas, padroes em uso
+   (Repository Pattern, contratos em `packages/domain`), o que e regra de
+   negocio (Service) vs integridade (banco).
+2. **Modelo de dados**: entidades, relacionamentos, multi-tenancy
+   (`empresa_id` em tudo), schema Supabase e ordem real de execucao das
+   migrations, particularidades e armadilhas conhecidas.
+3. **Conexoes e integracoes**: MongoDB, Supabase (URL/pooler/portas e qual
+   usar em cada caso), Evolution API (uma instancia por empresa via
+   `integracoes`), n8n, Mercado Pago — como cada uma se conecta, onde ficam
+   as credenciais (`.env`, nunca no repo) e o que acontece quando nao estao
+   configuradas.
+4. **Estado real de cada fase/frente de trabalho**: o que esta concluido, o
+   que esta em andamento, o que nao foi iniciado — sem otimismo.
+5. **Ambiente local**: como resubir tudo do zero apos um reboot (containers
+   Docker com nomes e imagens, `.env`, comandos, portas).
+6. **Decisoes ja tomadas** que nao devem ser renegociadas sem confirmacao.
+7. **Pendencias e proximos passos**, com o que depende de decisao do dono.
+8. **Achados e armadilhas** descobertos ao longo do caminho (bugs reais,
+   comportamentos nao obvios de ferramentas) — para nao serem redescobertos
+   do zero depois.
+9. **Commits locais recentes** e se ha algo nao enviado ao remoto.
+10. **Referencias**: mapa dos documentos em `docs/` e dos diretorios-chave.
+
+Quando um assunto for extenso, detalhar em um documento proprio em `docs/` e
+referencia-lo no `HANDOFF.md` — o handoff e o indice mestre, nunca um arquivo
+que perdeu informacao. Nunca gravar segredos (senhas, keys, tokens) no
+`HANDOFF.md` nem em qualquer arquivo versionado: registrar apenas onde a
+credencial vive (ex.: "no `.env`, chave `X`").
+
 ## 19. Principio final
 
 Nao ser um assistente que espera instrucao para cada passo. Usar autonomia
