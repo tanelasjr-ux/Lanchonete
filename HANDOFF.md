@@ -30,8 +30,9 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
   caminho. Recomenda implementar Supabase Auth **depois** do corte de banco,
   nao antes. `docs/plans/PHASE-8-AUTH-AUDIT.md`.
 
-**Estado do codigo:** arvore git limpa, **10 commits locais**, nada enviado ao
-remoto (`git push` precisa da sua confirmacao). Build de producao: PASS.
+**Estado do codigo:** arvore git limpa e **sincronizada com o GitHub**
+(`github.com/tanelasjr-ux/Lanchonete`, branch `main`, ultimo commit `ca4c404`).
+Build de producao: PASS. Imagem Docker validada (291 MB, container healthy).
 
 **O runtime ATIVO continua `mongo`** (default deliberado). O Supabase esta
 pronto, populado e validado como runtime — ligar e mudar uma variavel.
@@ -426,14 +427,17 @@ Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
       do EasyPanel (Hostinger, IP 187.77.226.88 — ja tem `evolution-api`,
       `evolution-api-db`, `evolution-api-redis` e `n8n` rodando; **nao** tem
       servico do app nem banco de producao).
-- [ ] **Nada foi enviado ao remoto** — todos os commits estao locais em
-      `main`. `git push` exige confirmacao do dono (regra do `CLAUDE.md`).
+- [x] ~~Enviar ao remoto~~ — **feito**: 31 commits enviados para
+      `github.com/tanelasjr-ux/Lanchonete` (`main`). Historico verificado antes:
+      nenhum segredo jamais entrou nele.
 
 ---
 
-# 11. Commits locais (mais recentes primeiro, nenhum pushed)
+# 11. Commits (mais recentes primeiro — todos ja no GitHub)
 
 ```
+ca4c404 build(deploy): prepara imagem de producao para o EasyPanel
+5e5b02a docs: ponto de retomada e lista de commits atualizados (Fase 8)
 bb2b304 docs: atualiza HANDOFF.md com a Fase 8 (auditoria de Auth)
 c7ac605 security(auth): corrige 3 vulnerabilidades no JWT + auditoria da Fase 8
 48a871f docs: atualiza HANDOFF.md com a Fase 7 (switch de runtime)
@@ -487,6 +491,11 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `scripts/migrate-mongo-to-supabase.mjs` — migracao de dados (idempotente;
   `--dry-run`, `--empresa`, `--checkpoint`, `--log`).
 - `scripts/validate-migration.mjs` — validacao pos-migracao (so leitura).
+
+**Operacao (`docs/operations/`)**
+- `DEPLOY-EASYPANEL.md` — deploy do app no EasyPanel: variaveis, verificacao
+  pos-deploy, rollback e o que NAO usar (o docker-compose da raiz duplicaria
+  Evolution e n8n).
 
 **Documentacao (`docs/plans/`)**
 - `MONGO-TO-SUPABASE-AUDIT.md` — auditoria original.
