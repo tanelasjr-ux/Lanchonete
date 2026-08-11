@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-11 (Fase 7 concluida — switch de runtime)
+Ultima atualizacao: 2026-08-11 (Fase 8 concluida — auditoria de Auth)
 
 ## Como usar este arquivo
 
@@ -17,7 +17,7 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-**Onde paramos (2026-08-11):** a **Fase 7 foi concluida** — a aplicacao agora
+**Onde paramos (2026-08-11):** a **Fase 8 (auditoria de Auth) foi concluida** — ver `docs/plans/PHASE-8-AUTH-AUDIT.md`. Ela achou e corrigiu **3 vulnerabilidades reais no JWT** e recomenda que a implementacao de Supabase Auth aconteca **depois** do corte de banco (nao antes). Antes dela, a **Fase 7 havia sido concluida** — a aplicacao agora
 roda **indiferentemente sobre MongoDB ou sobre Supabase**, escolhido pela
 variavel `DATABASE_PROVIDER`, com **paridade comprovada pela suite de
 regressao completa nos dois backends** (v1 40/40, v2 39/39, v3 32/33 em
@@ -111,8 +111,12 @@ bulk-insert do seed (virou `createMany()` nos repositories) e
 
 ## 2.4 Autenticacao e autorizacao
 
-- **Auth: JWT local** (HMAC-SHA256) + senhas com **scrypt**. Ainda **nao**
-  migrado para Supabase Auth (decisao tomada, execucao nao iniciada — §10).
+- **Auth: JWT local** (HMAC-SHA256, `exp` em segundos) + senhas com **scrypt**
+  (N=16384, r=8, p=1, formato `salt:hash`). Ainda **nao** migrado para Supabase
+  Auth — auditado na Fase 8, implementacao nao iniciada (§10).
+- **O `papel` NUNCA vem do token**: e relido do banco a cada requisicao, no
+  portao unico de auth. Por isso revogar acesso e imediato, e o RBAC nao
+  precisa virar claim na migracao. Nao mudar isso sem entender o efeito.
 - **RBAC: hardcoded** nos objetos `ROLES`/`PERMISSIONS` do `route.js`.
   As tabelas `papeis`/`permissoes` existem no Supabase e tem seed, mas **o
   app nao le elas** — armadilha conhecida, nao "corrigir" sem decisao.
@@ -255,7 +259,8 @@ Fluxo WhatsApp completo (testar inteiro ao mexer em qualquer parte):
 | 6B — Validacao contra Supabase REAL | **Concluida** (`docs/plans/PHASE-6B-SUPABASE-REAL.md`) |
 | 7 — Switch de runtime (`DATABASE_PROVIDER`) | **Concluida** (`docs/plans/PHASE-7-RUNTIME-SWITCH.md`) |
 | **Corte de producao (rodar sobre Supabase de verdade)** | **NAO FEITO** — aguarda decisao do dono |
-| Auth -> Supabase Auth | **NAO INICIADA** — falta auditoria propria |
+| 8 — Auditoria de Auth | **Concluida** (`docs/plans/PHASE-8-AUTH-AUDIT.md`) |
+| Auth -> Supabase Auth (implementacao) | **NAO INICIADA** — auditoria recomenda faze-la DEPOIS do corte de banco |
 | Realtime / Storage | **NAO INICIADOS** |
 
 **O runtime ATIVO e `mongo`** (default deliberado da Fase 7). A aplicacao ja
@@ -381,6 +386,20 @@ Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
     `resync_pedido_contador_empresa()` (migration `0014`), chamada pelo
     `createMany()` do repository Supabase. **Regra geral: todo caminho de
     carga em lote com numero explicito precisa realinhar o contador.**
+12. **`usuarios.id` e IMUTAVEL.** 4 FKs apontam para ele (`operador_id` em
+    comandas/comanda_itens/conversas/mensagens, todas `ON DELETE SET NULL`) e
+    `auditoria.usuario_id` guarda 78 ids **sem FK**. Trocar o id anularia as 4
+    colunas silenciosamente e orfanaria a auditoria inteira. Nenhum plano de
+    Auth deve exigir isso — e nao precisa: a Admin API do Supabase **aceita id
+    customizado** (verificado na Fase 8).
+13. **`service_role` IGNORA RLS.** Hoje o isolamento entre empresas e 100% da
+    camada de aplicacao; as 18 policies existem mas **nunca sao exercidas** em
+    runtime. Migrar Auth **nao** liga o RLS sozinho — sao duas mudancas
+    distintas e nao devem ser feitas juntas.
+14. **O frontend nao tem refresh de token.** Hoje o token dura 7 dias; o do
+    Supabase Auth dura **1 hora**. Sem implementar refresh, todo usuario e
+    deslogado apos 1h — quebra que passa em teste de API e so aparece com
+    usuario real usando o sistema.
 
 ---
 
@@ -392,9 +411,9 @@ Bugs reais encontrados **rodando** contra banco de verdade, nao lendo codigo:
 - [ ] **Corte de producao**: a migracao rodou contra o Mongo de
       *desenvolvimento*. Um corte real exige janela de manutencao e nova
       execucao contra o Mongo de producao (sempre `--dry-run` antes).
-- [ ] **Auditoria de Auth** antes de qualquer codigo de Supabase Auth:
-      estrategia de migracao de senha (scrypt -> Supabase Auth), formato de
-      sessao/token, onde ficam as claims de RBAC.
+- [ ] **Implementacao de Supabase Auth**: a auditoria (Fase 8) esta pronta e
+      recomenda faze-la DEPOIS do corte de banco. Ordem recomendada, riscos e
+      as 4 decisoes de projeto estao em `docs/plans/PHASE-8-AUTH-AUDIT.md`.
 - [ ] **Decisao de infra**: criar o servico "app" no projeto "restaurante"
       do EasyPanel (Hostinger, IP 187.77.226.88 — ja tem `evolution-api`,
       `evolution-api-db`, `evolution-api-redis` e `n8n` rodando; **nao** tem
@@ -466,6 +485,8 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `PHASE-6-MIGRATION-AUDIT.md`, `PHASE-6-DATA-MIGRATION.md`.
 - `PHASE-6B-SUPABASE-REAL.md` — validacao contra o Supabase hospedado.
 - `PHASE-7-RUNTIME-SWITCH.md` — switch de runtime e paridade comprovada.
+- `PHASE-8-AUTH-AUDIT.md` — auditoria de autenticacao: estrategia de migracao,
+  4 decisoes de projeto e as 3 vulnerabilidades de JWT corrigidas.
 - `docs/ARCHITECTURE.md` (ADR-006), `docs/FOLDER_STRUCTURE.md`.
 
 **Testes**
