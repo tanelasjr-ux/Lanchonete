@@ -45,10 +45,25 @@ O cadastro cria a empresa (tenant) e ja popula **dados de demonstracao**
 ## Ativando o Supabase (opcional, sem refatoracao)
 
 1. Crie um projeto no Supabase.
-2. Rode as migrations em ordem no SQL Editor:
-   `supabase/migrations/0001_init.sql` -> `triggers.sql` -> `policies_rls.sql` -> `seed.sql`.
+2. Rode, em ordem, no SQL Editor: `supabase/migrations/0001_init.sql` ->
+   `triggers.sql` -> `policies_rls.sql` -> `seed.sql` -> (nesta ordem)
+   `supabase/migrations/0002_core_fixes.sql` ->
+   `0003_pedido_numero_atomico.sql` -> `0004_mesas.sql` ->
+   `0005_comandas.sql` -> `0006_pagamentos.sql` -> `0007_webhook_events.sql`
+   -> `0008_conversas_mensagens.sql`. As migrations `0002`+ dependem das
+   funções `set_updated_at()`/`current_empresa_id()` definidas em
+   `triggers.sql`/`policies_rls.sql`, por isso essas duas rodam antes delas
+   (`seed.sql` pode rodar em qualquer ponto depois de `0001`, já que só usa
+   `papeis`/`permissoes`). **Esta ordem exata foi testada de ponta a ponta**
+   contra uma imagem Postgres real do Supabase antes de ser documentada.
 3. Preencha em `.env`: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 4. O provider desacoplado (`lib/integrations/supabase.js`) passa a ficar disponivel.
+
+> **Estado da migração (2026-08-10):** o schema Supabase (Fase 4) já cobre
+> todo o domínio atual — ver `docs/plans/PHASE-4-SUPABASE-SCHEMA.md`. O
+> runtime da aplicação continua 100% MongoDB até a Fase 5/6 (repositories
+> Supabase + migração de dados) serem implementadas; ativar as variáveis
+> acima hoje não troca a persistência usada pela API.
 
 ## Integracoes
 
