@@ -328,9 +328,19 @@ async function seedEmpresa(repos, empresa_id, ctx) {
   }
   Object.assign(comandaBase, computeComanda(comandaBase))
   mesaDemo.status = 'ocupada'
-  mesaDemo.comanda_id = comandaId
+  // Duas passadas por causa da dependencia circular mesas <-> comandas
+  // (`mesas.comanda_id` -> comandas, `comandas.mesa_id` -> mesas): a mesa
+  // entra sem comanda_id, a comanda e criada, e so entao a referencia e
+  // fechada. No Mongo a ordem era indiferente (sem FK); no Postgres inserir
+  // a mesa apontando para uma comanda inexistente viola
+  // `mesas_comanda_id_fkey`. Mesma estrategia da ferramenta de migracao
+  // (docs/plans/PHASE-6-MIGRATION-AUDIT.md secao 2). Estado final identico
+  // nos dois backends.
+  mesaDemo.comanda_id = null
   await repos.mesaRepo.createMany(mesas)
   await repos.comandaRepo.create(comandaBase)
+  await repos.mesaRepo.update(empresa_id, mesaDemo.id, { comanda_id: comandaId })
+  mesaDemo.comanda_id = comandaId
 
   // Central de Atendimento: 2 conversas demo
   const conv1 = { id: uuidv4(), empresa_id, cliente_id: clientes[0].id, contato_nome: clientes[0].nome, contato_numero: clientes[0].telefone, status: 'AGUARDANDO_EQUIPE', ultima_mensagem: 'Ola! Meu pedido ja saiu?', ultima_mensagem_em: new Date(now - 5 * 60000), nao_lidas: 2, operador_id: null, pedido_ativo_id: null, created_at: new Date(now - 3600000), updated_at: new Date() }
