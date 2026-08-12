@@ -285,9 +285,16 @@ Sem `JWT_SECRET`, o app sobe mas responde `503 degraded` e recusa autenticar
 
 ## 6.3 Supabase Storage
 
-Bucket  (publico, limite 1 MB, apenas imagens) criado via Admin API.
-Guarda a logo de cada empresa em . E o primeiro uso de
-Storage no projeto — antes so havia banco.
+Bucket `logos` (publico, limite 1 MB, apenas imagens PNG/JPG/WEBP/SVG), criado
+via Admin API do Supabase. Guarda a logo de cada empresa em
+`{empresa_id}/logo.{ext}` — caminho derivado do token, entao uma empresa nao
+consegue sobrescrever a de outra. Upload com `upsert` (trocar substitui em vez
+de acumular arquivo orfao) e cache-buster `?v=` na URL, sem o qual o browser
+continuaria exibindo a logo antiga.
+
+E o primeiro uso de Storage no projeto — antes so havia banco. Codigo isolado
+em `lib/integrations/storage.js`; sem credencial, o endpoint responde 503 em
+vez de fingir sucesso.
 
 ## 6.4 Imagem
 
