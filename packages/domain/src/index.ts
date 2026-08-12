@@ -124,7 +124,17 @@ export interface ComandaItem {
 export interface Pedido extends TenantScoped {
   id: UUID; numero: number; cliente_id: UUID | null; cliente_nome: string;
   itens: PedidoItem[]; tipo: PedidoTipo; pagamento: Pagamento;
-  status: PedidoStatus; observacoes: string; total: number;
+  status: PedidoStatus; observacoes: string;
+  /**
+   * Valores. Mesma gramatica de `Comanda`: `total = subtotal - desconto +
+   * acrescimo`, sempre calculado no Service (nunca em trigger). `desconto` e
+   * `acrescimo` sao ajustes manuais do operador — cortesia, arredondamento,
+   * taxa de entrega, acerto pontual. Pedidos anteriores a migration 0015 tem
+   * `subtotal = total` e os ajustes zerados.
+   */
+  subtotal: number; desconto: number; acrescimo: number; total: number;
+  /** Preenchido quando o pedido nasce do fechamento de uma comanda. */
+  comanda_id?: UUID | null;
   created_at: string; updated_at: string;
 }
 

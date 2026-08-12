@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTheme } from 'next-themes'
 import {
   LayoutDashboard, UtensilsCrossed, Users, ShoppingBag, Wallet, Building2,
@@ -477,10 +477,12 @@ function ClienteDialog({ data, onClose, onSave }) {
 function Pedidos() {
   const [pedidos, setPedidos] = useState([])
   const [dlg, setDlg] = useState(false)
+  const [ajuste, setAjuste] = useState(null) // pedido em ajuste de valor
   const load = useCallback(() => api('/pedidos').then(setPedidos).catch((e) => toast.error(e.message)), [])
   useEffect(() => { load() }, [load])
   const move = async (p, status) => { try { await api(`/pedidos/${p.id}`, { method: 'PUT', body: { status } }); load() } catch (e) { toast.error(e.message) } }
   const cols = [...FLOW]
+  const FINAIS = ['concluido', 'ENTREGUE', 'cancelado']
   return (
     <div className="space-y-6">
       <PageHeader title="Pedidos" description="Acompanhe e movimente os pedidos pelo fluxo de produção." action={<Button onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Novo pedido</Button>} />
@@ -503,9 +505,26 @@ function Pedidos() {
                         <div className="flex items-center justify-between"><span className="font-semibold">#{p.numero}</span><Badge variant="outline" className="text-xs capitalize">{p.tipo}</Badge></div>
                         <div className="text-sm">{p.cliente_nome}</div>
                         <div className="text-xs text-muted-foreground">{(p.itens || []).map((i) => `${i.quantidade}x ${i.nome}`).join(', ')}</div>
-                        <div className="flex items-center justify-between pt-1"><span className="font-bold">{brl(p.total)}</span><span className="text-xs text-muted-foreground">{fmtDate(p.created_at)}</span></div>
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="leading-tight">
+                            <span className="font-bold">{brl(p.total)}</span>
+                            {(Number(p.desconto) > 0 || Number(p.acrescimo) > 0) && (
+                              <span className="block text-[11px] text-muted-foreground">
+                                {brl(p.subtotal)}
+                                {Number(p.desconto) > 0 && <> · <span className="text-destructive">-{brl(p.desconto)}</span></>}
+                                {Number(p.acrescimo) > 0 && <> · +{brl(p.acrescimo)}</>}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{fmtDate(p.created_at)}</span>
+                        </div>
                         <div className="flex gap-2 pt-1">
                           {next && <Button size="sm" className="flex-1 h-8" onClick={() => move(p, next)}>{STATUS[next].label} <ArrowUpRight className="h-3.5 w-3.5 ml-1" /></Button>}
+                          {!FINAIS.includes(p.status) && (
+                            <Button size="sm" variant="outline" className="h-8" title="Ajustar valor (desconto/acrescimo)" onClick={() => setAjuste(p)}>
+                              <Percent className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           {p.status !== 'cancelado' && p.status !== 'concluido' && <Button size="sm" variant="outline" className="h-8 text-destructive" onClick={() => move(p, 'cancelado')}><X className="h-3.5 w-3.5" /></Button>}
                         </div>
                       </CardContent>
@@ -519,7 +538,72 @@ function Pedidos() {
         })}
       </div>
       {dlg && <PedidoDialog onClose={() => setDlg(false)} onSaved={() => { setDlg(false); load() }} />}
+      {ajuste && <AjusteValorDialog pedido={ajuste} onClose={() => setAjuste(null)} onSaved={() => { setAjuste(null); load() }} />}
     </div>
+  )
+}
+
+/**
+ * Ajuste de valor de um pedido ja criado (desconto/acrescimo). O subtotal dos
+ * itens nao muda aqui — para isso o caminho e alterar os itens. O servidor
+ * recalcula o total a partir do subtotal gravado e recusa alterar pedido ja
+ * concluido (nesse ponto ele ja virou receita no financeiro).
+ */
+function AjusteValorDialog({ pedido, onClose, onSaved }) {
+  const [desconto, setDesconto] = useState(String(pedido.desconto ?? 0))
+  const [acrescimo, setAcrescimo] = useState(String(pedido.acrescimo ?? 0))
+  const [saving, setSaving] = useState(false)
+
+  const subtotal = Number(pedido.subtotal) || Number(pedido.total) || 0
+  const descontoNum = Math.max(0, Number(desconto) || 0)
+  const acrescimoNum = Math.max(0, Number(acrescimo) || 0)
+  const total = subtotal - descontoNum + acrescimoNum
+  const excede = descontoNum > subtotal + acrescimoNum
+
+  const salvar = async () => {
+    if (excede) return toast.error('O desconto nao pode ser maior que o valor do pedido')
+    setSaving(true)
+    try {
+      await api(`/pedidos/${pedido.id}`, { method: 'PUT', body: { desconto: descontoNum, acrescimo: acrescimoNum } })
+      toast.success('Valor ajustado')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Ajustar valor — pedido #{pedido.numero}</DialogTitle>
+          <DialogDescription>Aplique desconto ou acrescimo. O subtotal dos itens nao muda.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="ajuste-desconto">Desconto (R$)</Label>
+              <Input id="ajuste-desconto" type="number" min="0" step="0.01" inputMode="decimal" autoFocus
+                value={desconto} onChange={(e) => setDesconto(e.target.value)} aria-invalid={excede || undefined} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="ajuste-acrescimo">Acrescimo (R$)</Label>
+              <Input id="ajuste-acrescimo" type="number" min="0" step="0.01" inputMode="decimal"
+                value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} />
+            </div>
+          </div>
+          {excede && <p className="text-xs text-destructive">O desconto nao pode ser maior que o valor do pedido.</p>}
+          <div className="rounded-lg border p-3 space-y-1 text-sm">
+            <div className="flex items-center justify-between text-muted-foreground"><span>Subtotal</span><span>{brl(subtotal)}</span></div>
+            {descontoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Desconto</span><span>- {brl(descontoNum)}</span></div>}
+            {acrescimoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Acrescimo</span><span>+ {brl(acrescimoNum)}</span></div>}
+            <div className="flex items-center justify-between font-bold text-base pt-1 border-t"><span>Total</span><span>{brl(Math.max(0, total))}</span></div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={saving || excede}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Salvar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
@@ -531,6 +615,8 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
   const [pagamento, setPag] = useState('pix')
   const [mesa_id, setMesaId] = useState('')
   const [pessoas, setPessoas] = useState(2)
+  const [desconto, setDesconto] = useState('')
+  const [acrescimo, setAcrescimo] = useState('')
   const [saving, setSaving] = useState(false)
   useEffect(() => {
     api('/produtos').then(setProds).catch(() => {})
@@ -538,9 +624,15 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
   }, [])
   const add = (p) => setItens((s) => { const ex = s.find((i) => i.produto_id === p.id); if (ex) return s.map((i) => i.produto_id === p.id ? { ...i, quantidade: i.quantidade + 1 } : i); return [...s, { produto_id: p.id, nome: p.nome, preco: p.preco, quantidade: 1 }] })
   const dec = (id) => setItens((s) => s.map((i) => i.produto_id === id ? { ...i, quantidade: Math.max(0, i.quantidade - 1) } : i).filter((i) => i.quantidade > 0))
-  const total = itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
+  const subtotal = itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
+  const descontoNum = Math.max(0, Number(desconto) || 0)
+  const acrescimoNum = Math.max(0, Number(acrescimo) || 0)
+  const total = Math.max(0, subtotal - descontoNum + acrescimoNum)
+  const descontoExcede = descontoNum > subtotal + acrescimoNum
+
   const save = async () => {
     if (!itens.length) return toast.error('Adicione ao menos 1 item')
+    if (descontoExcede) return toast.error('O desconto nao pode ser maior que o valor do pedido')
     setSaving(true)
     try {
       if (tipo === 'mesa') {
@@ -549,7 +641,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
         for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade } })
         toast.success('Comanda aberta na mesa')
       } else {
-        await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento } })
+        await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento, desconto: descontoNum, acrescimo: acrescimoNum } })
         toast.success('Pedido criado')
       }
       onSaved()
@@ -598,7 +690,32 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
                 </div>
               ))}
             </div>
-            <div className="flex items-center justify-between font-bold text-lg pt-2 border-t"><span>Total</span><span>{brl(total)}</span></div>
+            {/* Ajuste de valor: so faz sentido no pedido direto. No tipo "mesa"
+                quem controla desconto/taxa e a comanda, na tela de Mesas. */}
+            {tipo !== 'mesa' && (
+              <>
+                <Separator />
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs" htmlFor="pedido-desconto">Desconto (R$)</Label>
+                    <Input id="pedido-desconto" type="number" min="0" step="0.01" inputMode="decimal" placeholder="0,00"
+                      value={desconto} onChange={(e) => setDesconto(e.target.value)} aria-invalid={descontoExcede || undefined} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs" htmlFor="pedido-acrescimo">Acrescimo (R$)</Label>
+                    <Input id="pedido-acrescimo" type="number" min="0" step="0.01" inputMode="decimal" placeholder="0,00"
+                      value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} />
+                  </div>
+                </div>
+                {descontoExcede && <p className="text-xs text-destructive">O desconto nao pode ser maior que o valor do pedido.</p>}
+              </>
+            )}
+            <div className="space-y-1 pt-2 border-t text-sm">
+              <div className="flex items-center justify-between text-muted-foreground"><span>Subtotal</span><span>{brl(subtotal)}</span></div>
+              {descontoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Desconto</span><span>- {brl(descontoNum)}</span></div>}
+              {acrescimoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Acrescimo</span><span>+ {brl(acrescimoNum)}</span></div>}
+              <div className="flex items-center justify-between font-bold text-lg pt-1"><span>Total</span><span>{brl(total)}</span></div>
+            </div>
           </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{tipo === 'mesa' ? 'Abrir comanda' : 'Criar pedido'}</Button></DialogFooter>
@@ -876,7 +993,47 @@ function Empresa({ reload }) {
   const setAp = (k, v) => setF((s) => ({ ...s, config: { ...s.config, appearance: { ...(s.config?.appearance || {}), [k]: v } } }))
   const setMet = (k, v) => setF((s) => ({ ...s, config: { ...s.config, pagamentos: { ...(s.config?.pagamentos || {}), metodos: { ...(s.config?.pagamentos?.metodos || {}), [k]: v } } } }))
   const saveDados = async () => { try { await api('/empresa', { method: 'PUT', body: { nome: f.nome, nome_comercial: f.nome_comercial, cnpj: f.cnpj, telefone: f.telefone, whatsapp: f.whatsapp, email: f.email, endereco: f.endereco, horario_funcionamento: f.horario_funcionamento, moeda: f.moeda } }); toast.success('Dados atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
-  const saveApp = async () => { try { await api('/empresa', { method: 'PUT', body: { logo: f.logo, config: { appearance: f.config?.appearance } } }); toast.success('Aparencia atualizada'); reload?.() } catch (e) { toast.error(e.message) } }
+  const saveApp = async () => { try { await api('/empresa', { method: 'PUT', body: { config: { appearance: f.config?.appearance } } }); toast.success('Aparencia atualizada'); reload?.() } catch (e) { toast.error(e.message) } }
+
+  /* --- Logo: upload de arquivo (multipart), nao URL --- */
+  const [enviandoLogo, setEnviandoLogo] = useState(false)
+  const inputLogoRef = useRef(null)
+  const MAX_LOGO_MB = 1
+
+  const enviarLogo = async (file) => {
+    if (!file) return
+    // Valida no cliente para dar retorno imediato; o servidor revalida sempre.
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'].includes(file.type)) {
+      toast.error('Formato nao suportado. Use PNG, JPG, WEBP ou SVG.'); return
+    }
+    if (file.size > MAX_LOGO_MB * 1024 * 1024) {
+      toast.error(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Limite: ${MAX_LOGO_MB} MB.`); return
+    }
+    setEnviandoLogo(true)
+    try {
+      const fd = new FormData()
+      fd.append('arquivo', file)
+      const res = await fetch('/api/empresa/logo', { method: 'POST', headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }, body: fd })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Falha ao enviar a logo')
+      setF((s) => ({ ...s, logo: data.logo }))
+      toast.success('Logo atualizada')
+      reload?.()
+    } catch (e) { toast.error(e.message) } finally {
+      setEnviandoLogo(false)
+      if (inputLogoRef.current) inputLogoRef.current.value = '' // permite reenviar o mesmo arquivo
+    }
+  }
+
+  const removerLogo = async () => {
+    setEnviandoLogo(true)
+    try {
+      await api('/empresa/logo', { method: 'DELETE' })
+      setF((s) => ({ ...s, logo: null }))
+      toast.success('Logo removida')
+      reload?.()
+    } catch (e) { toast.error(e.message) } finally { setEnviandoLogo(false) }
+  }
   const savePag = async () => { try { await api('/empresa', { method: 'PUT', body: { config: { pagamentos: f.config?.pagamentos } } }); toast.success('Pagamentos atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
   if (!f) return <Empty>Carregando…</Empty>
   const ap = f.config?.appearance || {}
@@ -911,7 +1068,38 @@ function Empresa({ reload }) {
         <TabsContent value="aparencia" className="mt-4">
           <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><Palette className="h-4 w-4" />Identidade visual</CardTitle><CardDescription>A plataforma passa a usar o nome e as cores da sua empresa.</CardDescription></CardHeader><CardContent className="space-y-4">
             <div className="space-y-2"><Label>Nome exibido</Label><Input value={ap.nome_exibido || ''} onChange={(e) => setAp('nome_exibido', e.target.value)} placeholder="Nome que aparece no painel" /></div>
-            <div className="space-y-2"><Label>Logo (URL)</Label><Input value={f.logo || ''} onChange={set('logo')} placeholder="https://.../logo.png" /></div>
+            <div className="space-y-2">
+              <Label>Logo da empresa</Label>
+              <div className="flex items-center gap-4 rounded-lg border p-3">
+                <div className="h-16 w-16 shrink-0 rounded-lg border bg-muted grid place-items-center overflow-hidden">
+                  {f.logo
+                    ? <img src={f.logo} alt="Logo da empresa" className="h-full w-full object-contain" />
+                    : <ChefHat className="h-6 w-6 text-muted-foreground" aria-hidden="true" />}
+                </div>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <input
+                    ref={inputLogoRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="hidden"
+                    onChange={(e) => enviarLogo(e.target.files?.[0])}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" disabled={enviandoLogo} onClick={() => inputLogoRef.current?.click()}>
+                      {enviandoLogo
+                        ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enviando…</>
+                        : <>{f.logo ? 'Trocar logo' : 'Enviar logo'}</>}
+                    </Button>
+                    {f.logo && (
+                      <Button type="button" variant="ghost" size="sm" className="text-destructive" disabled={enviandoLogo} onClick={removerLogo}>
+                        <Trash2 className="h-4 w-4 mr-2" />Remover
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">PNG, JPG, WEBP ou SVG · ate {MAX_LOGO_MB} MB. Aparece no menu lateral.</p>
+                </div>
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2"><Label>Cor principal</Label><div className="flex gap-2"><input type="color" className="h-9 w-12 rounded border bg-transparent" value={ap.cor_principal || '#4f46e5'} onChange={(e) => setAp('cor_principal', e.target.value)} /><Input value={ap.cor_principal || '#4f46e5'} onChange={(e) => setAp('cor_principal', e.target.value)} /></div></div>
               <div className="space-y-2"><Label>Cor secundaria</Label><div className="flex gap-2"><input type="color" className="h-9 w-12 rounded border bg-transparent" value={ap.cor_secundaria || '#7c3aed'} onChange={(e) => setAp('cor_secundaria', e.target.value)} /><Input value={ap.cor_secundaria || '#7c3aed'} onChange={(e) => setAp('cor_secundaria', e.target.value)} /></div></div>
@@ -1405,24 +1593,61 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const { theme, setTheme } = useTheme()
 
-  const applyBranding = useCallback((empresa, changeTheme) => {
+  /**
+   * `setTheme` do next-themes MUDA DE IDENTIDADE a cada troca de tema (ele
+   * fecha sobre o tema atual para suportar atualizacao funcional). Antes,
+   * `applyBranding` dependia dele e `loadMe` dependia de `applyBranding`, com
+   * um `useEffect([loadMe])` chamando `loadMe(true)`. Resultado: trocar o tema
+   * no botao recriava toda essa cadeia, o efeito disparava de novo, buscava
+   * `/auth/me` e reaplicava `appearance.tema` da empresa por cima da escolha
+   * do usuario — a tela voltava ao tema salvo depois de ~2s (o tempo da
+   * requisicao). Guardar num ref quebra a cadeia: o tema da empresa e um
+   * PADRAO INICIAL, nao algo a ser reimposto a cada recarga de dados.
+   */
+  const temaInicialAplicado = useRef(false)
+  // `setTheme` acessado por ref para nao entrar em nenhuma lista de dependencias.
+  const setThemeRef = useRef(setTheme)
+  useEffect(() => { setThemeRef.current = setTheme }, [setTheme])
+
+  const applyBranding = useCallback((empresa) => {
     const ap = empresa?.config?.appearance || {}
     const root = document.documentElement
     const hsl = ap.cor_principal ? hexToHsl(ap.cor_principal) : null
     if (hsl) { root.style.setProperty('--primary', hsl); root.style.setProperty('--ring', hsl); root.style.setProperty('--sidebar-primary', hsl); root.style.setProperty('--sidebar-ring', hsl) }
-    if (changeTheme && ap.tema) setTheme(ap.tema)
-  }, [setTheme])
+    // Sem `setTheme` aqui de proposito: manter esta funcao livre de qualquer
+    // dependencia que mude junto com o tema.
+  }, [])
 
-  const loadMe = useCallback(async (firstLoad) => {
+  /** Aplica o tema padrao da empresa uma unica vez por sessao de app. */
+  const aplicarTemaInicial = useCallback((empresa) => {
+    if (temaInicialAplicado.current) return
+    const tema = empresa?.config?.appearance?.tema
+    if (tema) setThemeRef.current?.(tema)
+    temaInicialAplicado.current = true
+  }, [])
+
+  const loadMe = useCallback(async () => {
     if (!getToken()) { setMe(null); return }
-    try { const data = await api('/auth/me'); setMe(data); applyBranding(data.empresa, firstLoad) } catch { localStorage.removeItem(TOKEN_KEY); setMe(null) }
-  }, [applyBranding])
-  useEffect(() => { loadMe(true) }, [loadMe])
+    try {
+      const data = await api('/auth/me')
+      setMe(data)
+      applyBranding(data.empresa)
+      aplicarTemaInicial(data.empresa)
+    } catch { localStorage.removeItem(TOKEN_KEY); setMe(null) }
+  }, [applyBranding, aplicarTemaInicial])
+  useEffect(() => { loadMe() }, [loadMe])
 
-  const logout = () => { localStorage.removeItem(TOKEN_KEY); setMe(null); setView('dashboard') }
+  const logout = () => {
+    localStorage.removeItem(TOKEN_KEY)
+    setMe(null)
+    setView('dashboard')
+    // Libera para que o tema padrao da PROXIMA empresa a logar seja aplicado
+    // (sem isso, quem entrasse depois herdaria o tema de quem saiu).
+    temaInicialAplicado.current = false
+  }
 
   if (me === undefined) return <div className="min-h-screen grid place-items-center bg-background"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
-  if (me === null) return <><AuthScreen onAuth={() => loadMe(true)} /><Toaster richColors position="top-right" /></>
+  if (me === null) return <><AuthScreen onAuth={() => loadMe()} /><Toaster richColors position="top-right" /></>
 
   const perms = me.permissions || []
   const has = (p) => perms.includes('*') || perms.includes(p)

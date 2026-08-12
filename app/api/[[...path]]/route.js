@@ -21,6 +21,7 @@ import crypto from 'crypto'
 import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evolution'
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations/supabase'
+import { uploadLogo, removeLogo, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 
@@ -183,6 +184,28 @@ const slugify = (s) =>
 
 const round2 = (n) => Math.round(Number(n || 0) * 100) / 100
 const padMesa = (n) => String(n).padStart(2, '0')
+
+/**
+ * Valores de um pedido a partir do subtotal dos itens, com ajuste manual de
+ * desconto e acrescimo (cortesia, arredondamento, taxa de entrega, acerto).
+ *
+ * Fonte unica de verdade desses numeros — vive aqui, no Service, nunca em
+ * trigger nem em repository (ADR-006). Lanca em entrada invalida para que o
+ * chamador devolva 400, em vez de gravar um valor sem sentido.
+ */
+function computePedidoValores(subtotal, descontoEntrada, acrescimoEntrada) {
+  const sub = round2(subtotal)
+  const desconto = round2(descontoEntrada)
+  const acrescimo = round2(acrescimoEntrada)
+
+  if (!Number.isFinite(desconto) || desconto < 0) throw new Error('Desconto invalido')
+  if (!Number.isFinite(acrescimo) || acrescimo < 0) throw new Error('Acrescimo invalido')
+  // Um pedido nao pode custar menos que zero: o desconto e limitado pelo que
+  // ha para descontar (itens + acrescimo).
+  if (desconto > sub + acrescimo) throw new Error('Desconto maior que o valor do pedido')
+
+  return { subtotal: sub, desconto, acrescimo, total: round2(sub - desconto + acrescimo) }
+}
 
 /**
  * Recalcula os totais de uma comanda a partir dos itens (lancamentos),
@@ -610,6 +633,44 @@ async function handler(request, { params }) {
       return json(clean(atualizada))
     }
 
+    /**
+     * Upload da logo da empresa. Recebe multipart/form-data (campo `arquivo`).
+     * O `empresa_id` vem SEMPRE do token — nunca do corpo — entao nao ha como
+     * uma empresa gravar por cima da logo de outra.
+     */
+    if (route === '/empresa/logo' && method === 'POST') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      if (!isStorageConfigured()) return err('Storage nao configurado no servidor', 503)
+
+      let arquivo
+      try {
+        const form = await request.formData()
+        arquivo = form.get('arquivo')
+      } catch {
+        return err('Envie o arquivo como multipart/form-data no campo "arquivo"')
+      }
+      if (!arquivo || typeof arquivo.arrayBuffer !== 'function') return err('Arquivo ausente')
+
+      try {
+        const buffer = Buffer.from(await arquivo.arrayBuffer())
+        const url = await uploadLogo(ctx.empresa_id, buffer, arquivo.type)
+        const atualizada = await empresaRepo.update(ctx.empresa_id, { logo: url, updated_at: new Date() })
+        await audit(repos, ctx, 'update', 'empresa', ctx.empresa_id, { campos: ['logo'], tamanho_bytes: buffer.length })
+        return json({ logo: url, empresa: clean(atualizada) })
+      } catch (e) {
+        // Erros de validacao (formato/tamanho) sao do usuario, nao do servidor.
+        return err(e.message, 400)
+      }
+    }
+
+    if (route === '/empresa/logo' && method === 'DELETE') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      await removeLogo(ctx.empresa_id)
+      const atualizada = await empresaRepo.update(ctx.empresa_id, { logo: null, updated_at: new Date() })
+      await audit(repos, ctx, 'delete', 'empresa', ctx.empresa_id, { campos: ['logo'] })
+      return json({ logo: null, empresa: clean(atualizada) })
+    }
+
     /* ==================== USUARIOS ==================== */
     if (route === '/usuarios' && method === 'GET') {
       if (!can(ctx.papel, 'usuarios')) return err('Sem permissao', 403)
@@ -780,7 +841,9 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       const itens = Array.isArray(b.itens) ? b.itens : []
       if (!itens.length) return err('Pedido precisa de ao menos 1 item')
-      const total = Math.round(itens.reduce((s, it) => s + Number(it.preco) * Number(it.quantidade || 1), 0) * 100) / 100
+      const subtotal = round2(itens.reduce((s, it) => s + Number(it.preco) * Number(it.quantidade || 1), 0))
+      let valores
+      try { valores = computePedidoValores(subtotal, b.desconto, b.acrescimo) } catch (e) { return err(e.message) }
       const numero = await pedidoRepo.nextNumero(ctx.empresa_id)
       let cliente_nome = b.cliente_nome || 'Consumidor'
       if (b.cliente_id) {
@@ -798,12 +861,15 @@ async function handler(request, { params }) {
         pagamento: b.pagamento || 'pix',
         status: b.status || 'recebido',
         observacoes: b.observacoes || '',
-        total,
+        subtotal: valores.subtotal,
+        desconto: valores.desconto,
+        acrescimo: valores.acrescimo,
+        total: valores.total,
         created_at: new Date(),
         updated_at: new Date(),
       }
       await pedidoRepo.create(doc)
-      await audit(repos, ctx, 'create', 'pedido', doc.id, { numero, total })
+      await audit(repos, ctx, 'create', 'pedido', doc.id, { numero, total: valores.total })
       await emitEvent(repos, ctx, 'order.created', { pedido: clean(doc) })
       return json(clean(doc), 201)
     }
@@ -814,10 +880,47 @@ async function handler(request, { params }) {
       if (!pedido) return err('Pedido nao encontrado', 404)
       const upd = { updated_at: new Date() }
       for (const k of ['status', 'tipo', 'pagamento', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
+
+      const finais = ['concluido', 'ENTREGUE']
+
+      /**
+       * Ajuste manual de valor (desconto/acrescimo). Recalcula o total a partir
+       * do subtotal JA GRAVADO — nunca a partir do que o cliente enviar — para
+       * que ninguem consiga alterar o valor dos itens por esta rota.
+       *
+       * Bloqueado depois de concluido: nesse ponto o pedido ja virou receita em
+       * `transacoes` e ja somou nas metricas do cliente. Mudar o total aqui
+       * deixaria o financeiro divergente em silencio; o caminho correto para
+       * isso e um lancamento de estorno/ajuste no financeiro.
+       */
+      if (b.desconto !== undefined || b.acrescimo !== undefined) {
+        if (finais.includes(pedido.status)) {
+          return err('Nao e possivel alterar o valor de um pedido ja concluido. Registre um ajuste no financeiro.', 409)
+        }
+        // Pedidos criados antes da migration 0015 tem subtotal 0; nesses, o
+        // `total` gravado era exatamente a soma dos itens.
+        const subtotalBase = Number(pedido.subtotal) || Number(pedido.total) || 0
+        let valores
+        try {
+          valores = computePedidoValores(
+            subtotalBase,
+            b.desconto !== undefined ? b.desconto : pedido.desconto,
+            b.acrescimo !== undefined ? b.acrescimo : pedido.acrescimo,
+          )
+        } catch (e) { return err(e.message) }
+        upd.subtotal = valores.subtotal
+        upd.desconto = valores.desconto
+        upd.acrescimo = valores.acrescimo
+        upd.total = valores.total
+      }
+
       await pedidoRepo.update(ctx.empresa_id, seg[1], upd)
 
-      // Regra de negocio: ao concluir/entregar, gera receita e atualiza metricas do cliente
-      const finais = ['concluido', 'ENTREGUE']
+      // Regra de negocio: ao concluir/entregar, gera receita e atualiza metricas do cliente.
+      // Usa o total JA AJUSTADO nesta mesma requisicao (`upd.total`), nao o do
+      // snapshot lido antes: sem isso, ajustar o valor e concluir de uma vez so
+      // lancaria a receita com o valor antigo.
+      const totalFinal = upd.total !== undefined ? upd.total : pedido.total
       if (finais.includes(b.status) && !finais.includes(pedido.status)) {
         await transacaoRepo.create({
           id: uuidv4(),
@@ -825,13 +928,13 @@ async function handler(request, { params }) {
           tipo: 'receita',
           categoria: 'Vendas',
           descricao: `Pedido #${pedido.numero}`,
-          valor: pedido.total,
+          valor: totalFinal,
           pedido_id: pedido.id,
           data: new Date(),
           created_at: new Date(),
         })
         if (pedido.cliente_id) {
-          await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, pedido.total)
+          await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, totalFinal)
         }
       }
       await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
