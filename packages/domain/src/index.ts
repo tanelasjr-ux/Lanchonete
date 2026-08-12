@@ -119,6 +119,8 @@ export interface ComandaItem {
   desconto: number; observacao: string; subtotal: number;
   operador_id: UUID | null; operador_nome: string | null;
   created_at: string;
+  /** Marcado pelo atendente (celular) ou pela TV em modo toque quando o item sai da cozinha. */
+  entregue: boolean;
 }
 
 export interface Pedido extends TenantScoped {
@@ -328,7 +330,7 @@ export interface MesaRepository extends Repository<Mesa> {
  */
 export interface ComandaRepository extends Repository<Comanda> {
   pushItem(empresaId: UUID, comandaId: UUID, item: ComandaItem): Promise<void>;
-  updateItemCampos(empresaId: UUID, comandaId: UUID, itemId: UUID, patch: Partial<Pick<ComandaItem, 'quantidade' | 'observacao'>>): Promise<void>;
+  updateItemCampos(empresaId: UUID, comandaId: UUID, itemId: UUID, patch: Partial<Pick<ComandaItem, 'quantidade' | 'observacao' | 'entregue'>>): Promise<void>;
   removeItem(empresaId: UUID, comandaId: UUID, itemId: UUID): Promise<void>;
   /** $push no array `pagamentos` (copia denormalizada - ver auditoria: duplica dado do PagamentoRepository). */
   pushPagamentoResumo(empresaId: UUID, comandaId: UUID, resumo: PagamentoResumo): Promise<void>;
