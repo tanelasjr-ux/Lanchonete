@@ -19,8 +19,11 @@ ideia original do dono — o atendente *lancar* pedidos pelo celular — fica
 
 ## 2. Decisoes de produto (tomadas nesta sessao, nao renegociar sem confirmar)
 
-1. **KDS e um painel 100% passivo.** Roda numa TV comum da cozinha, sem
-   toque, sem controle remoto, sem interacao nenhuma. So mostra.
+1. **KDS e um painel passivo por padrao.** Pensado pra rodar numa TV comum
+   da cozinha, sem toque, sem controle remoto, sem interacao nenhuma — so
+   mostra. Quem tem hardware touchscreen pode optar pelo modo com toque
+   (item 6 abaixo); a passividade e a regra pro caso comum (TV comum, um
+   cozinheiro sozinho sem tempo de operar tela), nao uma limitacao tecnica.
 2. **Conteudo minimo, sem enfeite:** ordem de chegada, o que e (item +
    quantidade), e excecoes (observacao tipo "sem cebola") em destaque. Nao
    ha colunas por status nem cronometro colorido — um cozinheiro sozinho
@@ -37,6 +40,13 @@ ideia original do dono — o atendente *lancar* pedidos pelo celular — fica
    que parecia:** o campo ja existe de ponta a ponta no backend (banco, RPC,
    rota) para os dois fluxos — falta so o campo na tela. Nao ha migration
    para isso, so UI (`§4`).
+6. **O modo leitura-vs-toque e escolhido por link, nao globalmente.** Ao
+   gerar o link da TV (`§5.4`), o dono escolhe "Somente leitura" (TV comum,
+   item 1 deste `§2`) ou "Com toque" (tablet/TV touchscreen — cada card
+   ganha um toque que marca "pronto", chamando a mesma acao que o celular
+   usa). Por link, nao por empresa, porque o mesmo restaurante pode ter uma
+   TV comum na cozinha **e** um tablet no balcao ao mesmo tempo, cada um com
+   o hardware que tem.
 
 ## 3. Levantamento tecnico (o que ja existe vs o que falta)
 
@@ -64,6 +74,7 @@ create table public.kds_tokens (
   id          uuid primary key default gen_random_uuid(),
   empresa_id  uuid not null references public.empresas(id) on delete cascade,
   token       text not null unique,
+  modo        text not null default 'leitura' check (modo in ('leitura','toque')),
   criado_em   timestamptz not null default now(),
   revogado_em timestamptz
 );
@@ -98,7 +109,15 @@ frontend SPA unico (`app/page.js`), sem introduzir nova stack.
 
 ### 5.1 Endpoint agregador (leitura do KDS e do celular)
 
-`GET /kds/pendentes` — junta num unico payload:
+`GET /kds/pendentes` — **dois modos de autenticacao no mesmo endpoint**,
+resolvidos antes do portao de auth padrao (`route.js:597`, ver `§5.4`):
+- **Bearer JWT normal** (celular do atendente, ou `COZINHA` olhando pelo
+  navegador) — exige permissao `pedidos` (`COZINHA` e `ATENDENTE` ja tem
+  hoje, nenhuma mudanca de RBAC).
+- **`?tv_token=...`** (TV) — valida contra `kds_tokens`
+  (`revogado_em is null`), sem login de usuario.
+
+Junta num unico payload:
 - Pedidos de balcao/delivery/retirada com `normPedidoStatus() in ('novo',
   'em_preparacao')`, com seus itens.
 - Itens de comanda aberta com `entregue = false`, cada um com o nome da mesa.
@@ -106,14 +125,13 @@ frontend SPA unico (`app/page.js`), sem introduzir nova stack.
 Cada elemento da lista carrega: origem (`pedido` ou `mesa`), identificador
 para a acao de marcar como saiu, itens (ou o item, no caso de mesa),
 observacao, `created_at`. Ordenado por `created_at` ascendente (fila: mais
-antigo primeiro).
+antigo primeiro). Quando autenticado por `tv_token`, a resposta inclui
+tambem `modo` (`leitura`/`toque`) daquele token, pra tela decidir se
+desenha o toque.
 
-Permissao: exige `pedidos` — `COZINHA` e `ATENDENTE` ja tem essa permissao
-hoje, nenhuma mudanca de RBAC necessaria para o celular. A TV usa o
-mecanismo de token do `§5.4`, nao essa checagem de papel.
-
-Escopado por `empresa_id` do contexto de autenticacao, como todo o resto do
-sistema (regra do `§5` do `CLAUDE.md`).
+Escopado por `empresa_id` do contexto de autenticacao (token do usuario ou
+`kds_tokens.empresa_id`), como todo o resto do sistema (regra do `§5` do
+`CLAUDE.md`).
 
 ### 5.2 Card = unidade real de criacao, nao agrupamento artificial
 
@@ -127,19 +145,34 @@ outro das 12h30 sob um cronometro so — informacao errada. O agrupamento por
 mesa fica so visual (cards da mesma mesa proximos na tela), nunca uma fusao
 de dados.
 
-### 5.3 Acao de marcar como saiu (celular do atendente)
+### 5.3 Acao de marcar como pronto (celular do atendente e TV em modo toque)
 
-- **Pedido:** reaproveita `PUT /pedidos/:id` (ja existe) — grava
-  `status = 'pronto'`. Sem mudanca de backend.
-- **Item de comanda:** estende o patch ja aceito por `PUT
-  /comandas/:id/itens/:itemId` (`route.js:1213`) para aceitar `entregue`,
-  junto do que ja aceita hoje (`route.js:1218-1219` ja tem o padrao `if
-  (b.campo !== undefined) patch.campo = b.campo` — so adicionar `entregue` a
-  essa lista). Permissao `mesas`, que `ATENDENTE`/`GERENTE` ja tem.
+**Endpoint dedicado unico**, nao reaproveita os PUTs gerais de
+pedido/comanda — decisao deliberada: manter a superficie de escrita do
+`tv_token` minima e auditavel (uma acao especifica, nao edicao geral de
+pedido/comanda). O celular usa o mesmo endpoint, pelo mesmo motivo de nao
+duplicar logica.
 
-Tela nova, leve, dentro do SPA existente: lista dos itens pendentes (mesmo
-dado do `GET /kds/pendentes`), pensada pra tela de celular — um toque em
-cada linha marca como saido. Sem edicao, sem criacao de pedido — so essa
+`POST /kds/concluir`, corpo `{ origem: 'pedido' | 'mesa', id, comanda_id? }`
+(`comanda_id` obrigatorio so quando `origem = 'mesa'`, para escopar a query
+do item). **Mesmo par de modos de autenticacao do `§5.1`:**
+- **Bearer JWT** — `origem: 'pedido'` exige permissao `pedidos`;
+  `origem: 'mesa'` exige permissao `mesas`. Cobre o celular do atendente.
+- **`?tv_token=...`** — so aceito se o token tiver `modo = 'toque'`; com
+  `modo = 'leitura'` a rota devolve 403 mesmo com token valido (o token
+  pode ler, nunca escrever, a nao ser que tenha sido gerado explicitamente
+  como "com toque").
+
+Efeito, por dentro, chamando os repositories ja existentes:
+- `origem: 'pedido'` -> `pedidoRepo.update(empresaId, id, { status: 'pronto' })`.
+- `origem: 'mesa'` -> `comandaRepo.updateItemCampos(empresaId, comanda_id, id,
+  { entregue: true })` — exige adicionar `entregue` ao whitelist hardcoded
+  do lado Mongo (`lib/repositories/mongo/comandaRepository.js:32-37`; o lado
+  Supabase ja repassa o patch sem whitelist, nao precisa mudar).
+
+Tela nova, leve, dentro do SPA existente para o celular: lista dos itens
+pendentes (mesmo dado do `GET /kds/pendentes`), um toque em cada linha
+chama `POST /kds/concluir`. Sem edicao, sem criacao de pedido — so essa
 acao. Acessada por login normal (o atendente ja tem usuario e senha; nao
 precisa de link magico como a TV, porque o celular e pessoal/de trabalho e
 ja fica logado).
@@ -147,27 +180,63 @@ ja fica logado).
 ### 5.4 Acesso da TV (sem login de usuario)
 
 Tela de configuracao da empresa ganha uma acao "Gerar link da TV da
-cozinha", que cria um token opaco de leitura associado a `empresa_id`,
-guardado na tabela `kds_tokens` (schema completo no `§4`). Tabela nova, nao
-reaproveita `integracoes` — aquela e tipada para configuracao de integracao
-externa com credenciais de terceiro, nao para token de acesso proprio;
-misturar os dois conceitos violaria o proposito da tabela existente.
+cozinha", com uma escolha de modo no momento de gerar: **"Somente leitura"**
+(TV comum, sem toque — default) ou **"Com toque"** (tablet/TV touchscreen —
+ver `§5.3`). O token opaco resultante fica associado a `empresa_id` e ao
+modo escolhido, guardado na tabela `kds_tokens` (schema completo no `§4`).
+Tabela nova, nao reaproveita `integracoes` — aquela e tipada para
+configuracao de integracao externa com credenciais de terceiro, nao para
+token de acesso proprio; misturar os dois conceitos violaria o proposito da
+tabela existente.
+
+Um restaurante pode gerar mais de um link ao mesmo tempo (ex.: uma TV comum
+na cozinha em modo leitura **e** um tablet no balcao em modo toque) — nao ha
+limite de um token ativo por empresa; cada geracao cria um registro novo,
+os anteriores continuam validos ate serem revogados individualmente.
 
 Repository proprio (`kdsTokenRepository`), seguindo o padrao existente —
 `route.js` continua sem conhecer driver de banco. O link
-(`/kds/tv?token=...`) abre o painel **sem autenticacao de usuario**, so
-validando o token contra a empresa (existe, `revogado_em is null`).
+(`/?kds_tv=<token>` — ver `§5.5` sobre a rota unica do SPA) abre o painel
+**sem autenticacao de usuario**, so validando o token contra a empresa
+(existe, `revogado_em is null`).
 
 Superficie do token deliberadamente minima: da acesso **so** ao endpoint
-`GET /kds/pendentes` daquela empresa. Nao le cliente, financeiro, cadastro,
-nem qualquer outra rota. Se vazar, o dono revoga e gera outro na mesma tela
-— nenhuma acao de escrita e possivel com ele.
+`GET /kds/pendentes` daquela empresa (sempre) e, quando `modo = 'toque'`,
+tambem a `POST /kds/concluir` (`§5.3`) — nunca a nenhuma outra rota (cliente,
+financeiro, cadastro, edicao de pedido/comanda). Cada link e revogado
+individualmente, na tela de configuracao, sem afetar os demais — util
+justamente porque um restaurante pode ter varios links ativos ao mesmo
+tempo (`§5.4` acima).
 
 Colar uma vez no navegador da TV, definir como pagina inicial, nunca mais
 mexer. Sem sessao expirando: nao ha JWT de 7 dias aqui, o token nao expira
 sozinho (so por revogacao manual) — resolve de raiz o problema que a
 armadilha 14 do HANDOFF causaria numa TV (deslogar sozinha toda semana sem
 ninguem pra digitar senha de novo).
+
+### 5.5 Onde isso entra no SPA de pagina unica
+
+`app/page.js` e a unica pagina Next.js do frontend (`app/layout.js` +
+`app/page.js`, nenhuma outra rota) — a navegacao entre telas hoje e so
+estado React (`view`) dentro do componente `App()`, nunca uma URL diferente.
+O KDS entra nesse mesmo modelo, sem criar rotas Next.js novas:
+
+- **TV:** `App()` le `useSearchParams()` **antes** de chamar `loadMe()`
+  (`app/page.js:1670-1679`). Se existir `?kds_tv=<token>`, renderiza um
+  componente `KDSTv` dedicado, plena tela, e para por ai — nunca chega a
+  checar `localStorage['ros_token']` nem mostra `AuthScreen`. O componente
+  busca `GET /kds/pendentes?tv_token=...` sozinho, sem usar o helper `api()`
+  existente (que sempre injeta o Bearer do usuario logado — errado aqui).
+- **COZINHA logado:** dentro do `App()` normal, logo apos a checagem
+  `me === null` (`app/page.js:1691`), se `me.usuario.papel === 'COZINHA'`
+  renderiza `KDSView` (mesmo painel visual do `KDSTv`, autenticado por
+  Bearer) **em vez de** montar `Sidebar`/`NAV`/`main` — decisao de produto
+  do `§2` item 4 do design original: COZINHA nao tem outra tela.
+- **Celular do atendente:** item novo em `NAV` (`app/page.js:1617-1629`),
+  `{ key: 'kds_concluir', label: 'Cozinha', icon: ChefHat, perm: 'pedidos' }`
+  — aparece pra quem ja tem a permissao `pedidos` (ATENDENTE, GERENTE, ADMIN,
+  OWNER), reaproveitando o `Sidebar`/layout responsivo que ja existe (§10 do
+  `CLAUDE.md` ja exige responsivo mobile+desktop).
 
 ## 6. Layout do KDS (TV)
 
@@ -190,6 +259,13 @@ la, so nao compete mais por atencao com o que acabou de chegar.
 
 Atualizacao por polling a cada 5s (decidido anteriormente na sessao — sem
 Supabase Realtime, que segue nao iniciado no projeto).
+
+**Modo toque:** quando `GET /kds/pendentes` responde `modo: 'toque'`
+(so possivel autenticado por `tv_token`), cada card ganha uma area de toque
+grande que chama `POST /kds/concluir` (`§5.3`) e remove o card otimisticamente
+enquanto a chamada esta em voo. Em `modo: 'leitura'` (default da TV) e
+quando acessado por Bearer JWT como `COZINHA`, nenhum toque e desenhado —
+o card e so leitura, igual ao `§2` item 1.
 
 ## 7. Campo de observacao (UI)
 
@@ -215,9 +291,10 @@ como ja funciona para quantidade zerada (`setQty` remove ao chegar em 0).
 - **App de lancar pedido pelo celular** (a ideia grande original do dono).
   O celular deste design so *le* pendentes e marca "saiu" — nao cria
   pedido. Projeto proprio, com seu proprio brainstorm.
-- **Colunas por status / cronometro colorido / toque na propria TV** —
-  avaliadas e descartadas nesta sessao (`§2`), TV comum sem toque e cozinha
-  com um unico cozinheiro sem tempo pra operar a tela.
+- **Colunas por status / cronometro colorido** — avaliados e descartados
+  nesta sessao (`§2`); o toque na propria tela **nao** foi descartado, virou
+  o modo "com toque" opcional do `§5.3`/`§5.4` pra quem tem hardware
+  touchscreen.
 - **Estacoes de preparo** (chapa, fritadeira, etc.) — faz sentido pra
   cozinha grande com varias pracas; nao pra uma lanchonete.
 
@@ -228,13 +305,16 @@ como ja funciona para quantidade zerada (`setQty` remove ao chegar em 0).
   `CLAUDE.md`).
 - **Backend:** isolamento multi-tenant no `GET /kds/pendentes` (empresa A
   nunca ve pendente de empresa B); pedidos `cancelado`/`concluido`/`ENTREGUE`
-  nao aparecem; item de comanda marcado `entregue` some da lista; token da TV
-  so le a propria empresa e nenhuma escrita e possivel com ele; token
-  revogado deixa de funcionar.
+  nao aparecem; item de comanda marcado `entregue` some da lista; token
+  revogado deixa de funcionar em `GET /kds/pendentes` **e** em
+  `POST /kds/concluir`; token `modo = 'leitura'` le normalmente mas recebe
+  403 em `POST /kds/concluir`; token `modo = 'toque'` consegue concluir
+  pedido e item de mesa; um token nunca enxerga dado de outra empresa.
 - **Frontend (Playwright):** criar pedido com observacao -> aparece no KDS
   em destaque; lancar item em comanda -> aparece no KDS; marcar "saiu" no
   celular -> some do KDS dentro do intervalo de polling; item antigo desce
-  pra faixa de envelhecimento sem sumir.
+  pra faixa de envelhecimento sem sumir; TV em modo toque mostra o toque no
+  card e conclui; TV em modo leitura nao mostra nenhum toque.
 
 ## 10. Documentos relacionados
 
