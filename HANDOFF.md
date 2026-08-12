@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-11 (3 melhorias no ar: tema, logo e ajuste de valor)
+Ultima atualizacao: 2026-08-12 (impressao de cupom implementada — aguardando push)
 
 ## Como usar este arquivo
 
@@ -26,25 +26,32 @@ https://restaurante-app.ilmdzk.easypanel.host
 Rodando sobre **Supabase**, com HTTPS, no projeto `restaurante` do EasyPanel.
 O dono ja opera pela interface (empresa "Tanelas FooD").
 
-**Estado do codigo:** arvore limpa e sincronizada com o GitHub
-(`github.com/tanelasjr-ux/Lanchonete`, `main`, commit `8926206`).
+**Estado do codigo:** commitado localmente (`4c80ae4`), **1 commit a frente
+do GitHub** — nao enviado ainda. O EasyPanel implanta sozinho ao receber
+push na `main`, e o dono estava fora da maquina quando a tarefa terminou;
+por seguranca (§13 do `CLAUDE.md`: push exige confirmacao), o push ficou
+para a proxima sessao em vez de publicar sem ele por perto.
 
-**O EasyPanel implanta sozinho ao receber push na `main`** — confirmado hoje.
-Nao e preciso clicar em Implantar; basta lembrar que **quem ja estava com o
-app aberto precisa de Ctrl+Shift+R** para largar o JS antigo do cache.
+**Entregue nesta sessao (commitado, AINDA NAO publicado):**
+4. **Impressao de cupom** — comanda da cozinha (sem precos) e via do
+   cliente (com valores), para qualquer pedido ou fechamento de comanda.
+   Ver §4.1 (decisao estrutural) e §10 armadilha 21.
 
-**Entregue hoje (ja no ar e validado no navegador):**
+**Entregue na sessao anterior (ja no ar e validado no navegador):**
 1. Correcao do tema que revertia sozinho depois de ~2s.
 2. Desconto e acrescimo em pedidos, com ajuste apos a criacao.
 3. Upload de logo por arquivo (antes so aceitava colar URL).
 
 **Para retomar:**
-1. Ambiente local so e necessario para desenvolver: Docker Desktop ->
+1. `git push origin main` — so isso ja publica a impressao de cupom (o
+   EasyPanel implanta sozinho). Lembrar do Ctrl+Shift+R em quem ja estiver
+   com o app aberto.
+2. Ambiente local so e necessario para desenvolver: Docker Desktop ->
    `docker start ros-mongo-local` -> `yarn dev:no-reload`. Detalhes no §8.
-2. Saude do servidor: `GET /api/health`. Se vier `"status":"degraded"`, o
+3. Saude do servidor: `GET /api/health`. Se vier `"status":"degraded"`, o
    campo `config_faltando` diz exatamente qual variavel esta faltando.
-3. Proximas frentes no §11 — a lista esta priorizada, e as tres primeiras
-   sao lacunas que travam a operacao de um restaurante real.
+4. Proximas frentes no §11 — a impressao (item 1 da lista) sai da pendencia;
+   os proximos dois itens priorizados sao KDS e delivery completo.
 
 ---
 
@@ -180,6 +187,15 @@ policies sao defesa em profundidade que nunca e exercida.
   exige lancamento no financeiro, nao edicao do pedido.
 - **Logo da empresa**: arquivo no Supabase Storage; `empresas.logo` guarda a
   URL publica.
+- **Impressao de cupom**: NAO E CUPOM FISCAL (sem NFC-e/SAT — precisaria de
+  certificado digital e integracao com a SEFAZ, projeto proprio). E
+  comprovante de producao/atendimento: comanda para a cozinha (sem precos)
+  e via para o cliente (com subtotal/desconto/acrescimo/total). O sistema
+  roda na nuvem e a impressora fica no restaurante — sem caminho de rede
+  entre os dois — entao quem imprime e sempre o navegador do caixa via
+  `window.print()`; impressora termica se instala no SO como impressora
+  comum. Codigo em `lib/cupom-dados.js` (mapeamento puro, testavel sem
+  navegador) + `components/cupom.jsx` (renderizacao + `window.print()`).
 
 ## 4.2 Tabelas (20 no Supabase)
 
@@ -455,17 +471,26 @@ Bugs reais encontrados **rodando** contra banco/servidor/navegador de verdade:
 20. **O shell come conteudo entre crases** ao editar arquivos via
     `node -e "..."` em heredoc. Para editar documentacao com trechos de
     codigo, usar a ferramenta de edicao, nao script de shell.
+21. **`window.print()` abre um dialogo NATIVO e bloqueante neste ambiente**
+    (confirmado testando — nao e um no-op simulado). Isso tem duas
+    consequencias: (a) automacao de navegador (Playwright) que clica num
+    botao cujo handler chama `print()` sincronamente pode travar esperando
+    o dialogo — testar via `Escape`/`handle_dialog` ou validar a logica de
+    dados separadamente de forma determinista, nao via clique real; (b) por
+    isso a impressao de cupom usa `createRoot` num container proprio no
+    `body` (`components/cupom.jsx`) em vez de portal na arvore do app — o
+    dialogo bloqueante nao pode depender de estado React que uma
+    re-renderizacao concorrente altere.
 
 ---
 
 # 11. Pendencias e proximos passos
 
-**Lacunas de produto** (levantadas hoje verificando o codigo — as tres
-primeiras travam a operacao diaria de um restaurante real):
+**Lacunas de produto** (levantadas verificando o codigo — as duas primeiras
+ainda travam a operacao diaria de um restaurante real):
 
-- [ ] **Impressao de pedido para a cozinha.** Nao existe **nada** de impressao
-      no sistema (zero ocorrencias na API). Todo restaurante imprime comanda
-      para a cozinha e cupom para o cliente. **A ausencia mais grave.**
+- [x] ~~Impressao de pedido para a cozinha~~ — **feito nesta sessao**
+      (§4.1). Falta so o `git push` para publicar (§0).
 - [ ] **Tela de cozinha (KDS).** O papel `COZINHA` existe mas nao tem tela
       propria — hoje ve o mesmo dashboard do gerente. O padrao e uma tela
       grande, tocavel, com pedidos em colunas por status e cronometro.
@@ -500,9 +525,11 @@ Flags tambem reservadas, sem urgencia: `crm`, `campanhas`, `fidelidade`,
 
 ---
 
-# 12. Commits recentes (todos no GitHub)
+# 12. Commits recentes
 
 ```
+4c80ae4 feat: impressao de cupom (comanda da cozinha e via do cliente)  <- LOCAL, nao enviado ainda
+ba04d7f docs: handoff completo — 3 melhorias no ar e lacunas de produto mapeadas
 8926206 docs: corrige secao 6.3 do HANDOFF (conteudo perdido por escape do shell)
 4ec0011 docs: registra no HANDOFF a armadilha do next-themes, valores e bucket
 6ebd061 feat: ajuste de valor em pedidos, upload de logo e correcao do tema
@@ -551,6 +578,8 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `lib/repositories/factory.js` — switch `DATABASE_PROVIDER`.
 - `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`,
   `storage.js`, `payments/`.
+- `lib/cupom-dados.js` — mapeamento puro Pedido/Comanda -> dados do cupom.
+- `components/cupom.jsx` — renderiza e imprime o cupom (`window.print()`).
 
 **Banco**
 - `supabase/migrations/0001`…`0015`, `triggers.sql`, `policies_rls.sql`,
