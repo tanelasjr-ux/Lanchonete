@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-11 (app publicado no EasyPanel e validado em producao)
+Ultima atualizacao: 2026-08-11 (3 melhorias no ar: tema, logo e ajuste de valor)
 
 ## Como usar este arquivo
 
@@ -17,31 +17,34 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-**O app esta NO AR**, publicado e validado de fora:
+**O app esta NO AR e em uso:**
 
 ```
 https://restaurante-app.ilmdzk.easypanel.host
 ```
 
 Rodando sobre **Supabase**, com HTTPS, no projeto `restaurante` do EasyPanel.
-Validado por requisicao real pela internet: cadastro, login, dashboard,
-leitura do seed e **criacao de pedido novo** (numeracao sequencial correta).
+O dono ja opera pela interface (empresa "Tanelas FooD").
 
-**Estado do codigo:** arvore limpa, **sincronizada com o GitHub**
-(`github.com/tanelasjr-ux/Lanchonete`, `main`, ultimo commit `f456a86`),
-nada pendente.
+**Estado do codigo:** arvore limpa e sincronizada com o GitHub
+(`github.com/tanelasjr-ux/Lanchonete`, `main`, commit `8926206`).
 
-**Isto e STAGING, nao producao.** Sem dominio proprio, sem usuario real, e o
-banco tem 91 empresas de teste. Ver §11 antes de tratar como producao.
+**O EasyPanel implanta sozinho ao receber push na `main`** — confirmado hoje.
+Nao e preciso clicar em Implantar; basta lembrar que **quem ja estava com o
+app aberto precisa de Ctrl+Shift+R** para largar o JS antigo do cache.
+
+**Entregue hoje (ja no ar e validado no navegador):**
+1. Correcao do tema que revertia sozinho depois de ~2s.
+2. Desconto e acrescimo em pedidos, com ajuste apos a criacao.
+3. Upload de logo por arquivo (antes so aceitava colar URL).
 
 **Para retomar:**
-1. Ambiente local (opcional — o servidor ja roda sozinho): Docker Desktop ->
+1. Ambiente local so e necessario para desenvolver: Docker Desktop ->
    `docker start ros-mongo-local` -> `yarn dev:no-reload`. Detalhes no §8.
-2. Conferir o servidor: `GET /api/health` no endereco acima. Se vier
-   `"status":"degraded"`, o campo `config_faltando` diz qual variavel falta.
-3. Proximas frentes no §11. As duas mais valiosas: **validar o frontend no
-   navegador** (nunca foi feito, e agora e facil com o app publicado) e
-   **limpar as 91 empresas de teste** do Supabase.
+2. Saude do servidor: `GET /api/health`. Se vier `"status":"degraded"`, o
+   campo `config_faltando` diz exatamente qual variavel esta faltando.
+3. Proximas frentes no §11 — a lista esta priorizada, e as tres primeiras
+   sao lacunas que travam a operacao de um restaurante real.
 
 ---
 
@@ -72,7 +75,8 @@ Tudo vive hoje em **um unico route handler catch-all**:
 `app/api/[[...path]]/route.js` (Next.js App Router). Ele concentra dispatch
 HTTP, autenticacao/autorizacao, regras de negocio e orquestracao. Nao e um
 acidente: o projeto nasceu assim e a migracao decidiu **nao** reescrever isso
-(evitar big-bang), so extrair a camada de dados.
+(evitar big-bang), so extrair a camada de dados. O frontend inteiro, na mesma
+linha, e um unico `app/page.js`.
 
 **Principios que nao podem ser quebrados:**
 
@@ -85,6 +89,8 @@ acidente: o projeto nasceu assim e a migracao decidiu **nao** reescrever isso
   o valor ja decidido pelo Service.
 - **Persistencia desacoplada por Repository Pattern**: o Service depende de
   contratos, nao de MongoDB nem de Supabase.
+- **Integracao externa nunca e mockada**: sem credencial, avisar/falhar,
+  jamais simular sucesso.
 
 ## 2.2 Contratos de dominio
 
@@ -141,6 +147,10 @@ Nunca confiar so em RLS, nem so na aplicacao. Ao criar qualquer entidade nova:
 incluir `empresa_id`, criar a policy RLS e escrever teste de isolamento
 cross-tenant.
 
+Isso vale tambem para **arquivos**: a logo e gravada em
+`{empresa_id}/logo.ext`, com o `empresa_id` vindo do token — nunca do corpo da
+requisicao.
+
 **Atencao (armadilha 13):** hoje o app usa a `service_role`, que **ignora RLS
 por completo**. O isolamento em runtime e 100% da camada de aplicacao — as
 policies sao defesa em profundidade que nunca e exercida.
@@ -164,12 +174,12 @@ policies sao defesa em profundidade que nunca e exercida.
   tenant (substituiu um `count()+1` com race condition).
 - **Valores de pedido** (migration 0015): mesma gramatica de `comandas` —
   `total = subtotal - desconto + acrescimo`, calculado no Service.
-  `desconto`/`acrescimo` sao ajuste manual do operador. Ajuste bloqueado
-  (409) apos concluir, porque nesse ponto o pedido ja virou receita em
-  `transacoes`; corrigir depois disso exige lancamento no financeiro.
-- **Logo da empresa**: arquivo no Supabase Storage, bucket `logos` (publico,
-  1 MB, so imagens), caminho `{empresa_id}/logo.ext`. `empresas.logo` guarda
-  a URL publica com cache-buster.
+  `desconto`/`acrescimo` sao ajuste manual do operador (cortesia,
+  arredondamento, acerto). **Ajuste bloqueado (409) apos concluir**, porque
+  nesse ponto o pedido ja virou receita em `transacoes`; corrigir depois disso
+  exige lancamento no financeiro, nao edicao do pedido.
+- **Logo da empresa**: arquivo no Supabase Storage; `empresas.logo` guarda a
+  URL publica.
 
 ## 4.2 Tabelas (20 no Supabase)
 
@@ -195,8 +205,12 @@ funcoes definidas em `triggers.sql`/`policies_rls.sql`:
 -> 0014_resync_contador_por_empresa -> 0015_pedidos_desconto_acrescimo
 ```
 
-Esta ordem foi testada de ponta a ponta contra Postgres real antes de ser
-documentada. Tambem esta no `README.md`.
+Esta ordem foi testada de ponta a ponta contra Postgres real. Tambem no
+`README.md`.
+
+**Cuidado ao mexer em pedidos:** `create_pedido_com_itens()` e
+`upsert_pedido_com_itens()` usam **lista de colunas explicita**. Coluna nova
+em `pedidos` exige reescrever as duas, senao o valor e descartado em silencio.
 
 ## 4.4 Switch de runtime (`DATABASE_PROVIDER`)
 
@@ -209,8 +223,8 @@ DATABASE_PROVIDER=supabase   # o que roda no servidor
 
 - Conferir o que esta ativo: `GET /api/health` -> campo `database`.
 - **Sem fallback silencioso**: `supabase` sem credenciais **falha**, em vez de
-  cair para o Mongo — um fallback silencioso gravaria dados no banco errado
-  sem ninguem perceber.
+  cair para o Mongo — um fallback silencioso gravaria no banco errado sem
+  ninguem perceber.
 - **Sem modo hibrido**: misturar backends na mesma requisicao daria leitura
   inconsistente e quebraria as FKs do Postgres.
 - Trocar exige reiniciar o processo.
@@ -223,13 +237,11 @@ DATABASE_PROVIDER=supabase   # o que roda no servidor
 | O que | Onde | Credencial | Sem configuracao |
 |---|---|---|---|
 | **Supabase** (banco atual) | Projeto hospedado | `.env` / variaveis do EasyPanel | App falha explicitamente |
+| **Supabase Storage** (logos) | Mesmo projeto | Mesmas do Supabase | Endpoint responde 503 |
 | **MongoDB** | Container local `ros-mongo-local` | `MONGO_URL`/`DB_NAME` | So usado com `DATABASE_PROVIDER=mongo` |
 | **Evolution API** (WhatsApp) | EasyPanel, projeto `restaurante` | Por empresa, tabela `integracoes` | Retorna "nao configurado" |
 | **n8n** | EasyPanel, projeto `restaurante` | Por empresa, tabela `integracoes` | Evento e ignorado |
 | **Mercado Pago** | Externo | Por empresa, tabela `integracoes` | Retorna "nao configurado" |
-
-**Nunca mockar integracao externa.** Sem credencial, o comportamento correto e
-falhar/avisar — jamais simular sucesso (`CLAUDE.md` §6 e §7).
 
 ## 5.1 Supabase — como conectar
 
@@ -247,17 +259,15 @@ falhar/avisar — jamais simular sucesso (`CLAUDE.md` §6 e §7).
 
 # 6. Deploy (EasyPanel / Hostinger — IP 187.77.226.88)
 
-**Projeto `restaurante`**, servico **`app`**, publicado em
+**Projeto `restaurante`**, servico **`app`**, em
 `https://restaurante-app.ilmdzk.easypanel.host` (HTTPS gerado pelo EasyPanel,
-sem dominio proprio).
-
-Ao lado dele, no mesmo projeto: `evolution-api`, `evolution-api-db`,
+sem dominio proprio). Ao lado: `evolution-api`, `evolution-api-db`,
 `evolution-api-redis`, `n8n`. **Essa proximidade e valiosa** — e o que torna o
-fluxo de WhatsApp testavel de ponta a ponta pela primeira vez.
+fluxo de WhatsApp testavel de ponta a ponta.
 
 Guia completo: `docs/operations/DEPLOY-EASYPANEL.md`.
 
-## 6.1 Configuracao que funciona (descoberta na marra)
+## 6.1 Configuracao que funciona
 
 | Campo | Valor |
 |---|---|
@@ -266,35 +276,35 @@ Guia completo: `docs/operations/DEPLOY-EASYPANEL.md`.
 | Dominios | porta do container **3000** (o default `80` da 502) |
 | Ambiente | 7 variaveis (ver §6.2) |
 
+**Implanta automaticamente ao receber push na `main`.**
+
 **Nao usar** o `docker-compose.yml` da raiz: ele sobe postgres, evolution-api
-e n8n juntos, duplicando servicos que ja existem no EasyPanel. Aquele arquivo
-serve para subir a stack inteira num VPS limpo.
+e n8n juntos, duplicando servicos que ja existem. Aquele arquivo serve para
+subir a stack inteira num VPS limpo.
 
 **Nao ligar** o botao "Criar arquivo .env" na aba Ambiente — as variaveis ja
 chegam como ambiente; ligar gravaria a service role key em arquivo dentro do
-container, sem necessidade.
+container.
 
-## 6.2 Variaveis obrigatorias no servico
+## 6.2 Variaveis obrigatorias
 
-`JWT_SECRET` (exclusivo do servidor, nao reusar o de dev),
-`DATABASE_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `CORS_ORIGINS`.
+`JWT_SECRET` (exclusivo do servidor), `DATABASE_PROVIDER=supabase`,
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `CORS_ORIGINS`.
 
 Sem `JWT_SECRET`, o app sobe mas responde `503 degraded` e recusa autenticar
-(falha fechada, de proposito). Variavel nova so vale **depois de reimplantar**.
+(falha fechada, de proposito). Variavel nova so vale **apos reimplantar**.
 
 ## 6.3 Supabase Storage
 
-Bucket `logos` (publico, limite 1 MB, apenas imagens PNG/JPG/WEBP/SVG), criado
-via Admin API do Supabase. Guarda a logo de cada empresa em
-`{empresa_id}/logo.{ext}` — caminho derivado do token, entao uma empresa nao
-consegue sobrescrever a de outra. Upload com `upsert` (trocar substitui em vez
-de acumular arquivo orfao) e cache-buster `?v=` na URL, sem o qual o browser
-continuaria exibindo a logo antiga.
+Bucket `logos` (publico, limite 1 MB, apenas PNG/JPG/WEBP/SVG), criado via
+Admin API. Guarda a logo em `{empresa_id}/logo.{ext}` — caminho derivado do
+token, entao uma empresa nao sobrescreve a de outra. Upload com `upsert`
+(trocar substitui em vez de acumular orfao) e cache-buster `?v=` na URL, sem
+o qual o browser continuaria exibindo a logo antiga.
 
-E o primeiro uso de Storage no projeto — antes so havia banco. Codigo isolado
-em `lib/integrations/storage.js`; sem credencial, o endpoint responde 503 em
-vez de fingir sucesso.
+Primeiro uso de Storage no projeto. Codigo isolado em
+`lib/integrations/storage.js`.
 
 ## 6.4 Imagem
 
@@ -305,29 +315,30 @@ embutidos na imagem.
 
 ---
 
-# 7. Estado de cada fase
+# 7. Estado de cada frente
 
-| Fase | Status |
+| Frente | Status |
 |---|---|
 | 1 — Auditoria da migracao | **Concluida** (`MONGO-TO-SUPABASE-AUDIT.md`) |
-| 2 — Contratos de dominio | **Concluida** (`packages/domain/src/index.ts`) |
-| 3 — Extrair Mongo do `route.js` | **Concluida** (16 repositories, 8 lotes) |
-| 3.5 — Remover triggers de negocio | **Concluida** (`PHASE-3.5-TRIGGER-CLEANUP.md`) |
-| 4 — Schema Supabase | **Concluida** (`PHASE-4-SUPABASE-SCHEMA.md`) |
-| 5 — `Supabase*Repository` | **Concluida** (`PHASE-5-SUPABASE-REPOSITORIES.md`) |
-| 6 — Ferramenta de migracao de dados | **Concluida** (`PHASE-6-DATA-MIGRATION.md`) |
-| 6B — Validacao contra Supabase real | **Concluida** (`PHASE-6B-SUPABASE-REAL.md`) |
-| 7 — Switch de runtime | **Concluida** (`PHASE-7-RUNTIME-SWITCH.md`) |
+| 2 — Contratos de dominio | **Concluida** |
+| 3 — Extrair Mongo do `route.js` | **Concluida** (16 repositories) |
+| 3.5 — Remover triggers de negocio | **Concluida** (`PHASE-3.5-...`) |
+| 4 — Schema Supabase | **Concluida** (`PHASE-4-...`) |
+| 5 — `Supabase*Repository` | **Concluida** (`PHASE-5-...`) |
+| 6 — Ferramenta de migracao de dados | **Concluida** (`PHASE-6-...`) |
+| 6B — Validacao contra Supabase real | **Concluida** (`PHASE-6B-...`) |
+| 7 — Switch de runtime | **Concluida** (`PHASE-7-...`) |
 | 8 — Auditoria de Auth | **Concluida** (`PHASE-8-AUTH-AUDIT.md`) |
-| **Deploy (staging)** | **Concluido e validado em producao** |
-| Supabase Auth (implementacao) | **NAO INICIADA** — auditoria recomenda faze-la depois do corte de banco |
-| Validacao do frontend | **NUNCA FEITA** |
-| Realtime / Storage | **NAO INICIADOS** |
+| Deploy | **No ar**, com deploy automatico por push |
+| Melhorias de produto (tema/logo/valor) | **No ar** |
+| Supabase Auth (implementacao) | **NAO INICIADA** |
+| Impressao, KDS, delivery completo | **NAO INICIADOS** (ver §11) |
+| Realtime / Storage alem de logo | **NAO INICIADOS** |
 
 ## 7.1 Baseline de testes
 
 Suite de backend (`backend_test.py`, `_v2`, `_v3`), **identica nos dois
-backends** e tambem contra a imagem de producao em container:
+backends** e tambem contra a imagem de producao:
 
 | Suite | Resultado |
 |---|---|
@@ -339,13 +350,18 @@ A unica falha do v3 e o **nao-bug conhecido**: o webhook do WhatsApp grava
 `tipo:'conversation'`, que e o `messageType` real da Evolution API para texto
 simples — o teste e que espera `'text'`. Documentado em `test_result.md`.
 
-**Cuidado ao rodar a suite contra o Supabase**: cada execucao registra tenants
-novos. Foi assim que o banco acumulou 91 empresas.
+**Cuidado:** cada execucao da suite registra tenants novos. Foi assim que o
+banco acumulou 92 empresas de teste.
 
-**Validacao do servidor publicado** (feita por requisicao real pela internet,
-nao pela suite): health `200`/`supabase`, cadastro, login, 11 produtos, 8
-mesas e 12 pedidos do seed, dashboard calculando, e criacao de pedido novo
-`201` com numeracao sequencial correta (nº 13 apos os 12 do seed).
+## 7.2 Validacao de frontend (Playwright)
+
+O plugin Playwright foi instalado e **usado pela primeira vez** hoje, cobrindo
+as tres melhorias: tema estavel por 6s apos a troca, upload real chegando ao
+Storage e servido publicamente, e ajuste de R$ 49,80 -> R$ 40,00 refletido no
+card do pedido.
+
+**O restante do frontend continua sem validacao sistematica** — a maior lacuna
+de teste do projeto. Agora e barato fechar isso.
 
 ---
 
@@ -355,14 +371,14 @@ Nao sobrevive a reboot. Para retomar:
 
 1. `.env` ja existe na raiz (nao versionado).
 2. Docker Desktop aberto, depois `docker start ros-mongo-local`.
-   Banco de dev: `restaurant_os_dev` (71 empresas de uso organico — nao apagar).
+   Banco de dev: `restaurant_os_dev` (71 empresas de uso organico).
 3. `corepack enable` (necessario nesta maquina para o `yarn` resolver).
 4. `yarn dev:no-reload` -> `localhost:3000`.
 5. Testes: `PYTHONIOENCODING=utf-8 python backend_test.py` (e `_v2`/`_v3`).
    `BASE_URL` e configuravel por variavel de ambiente.
 
 **Armadilha:** rodar `yarn build` com o dev server no ar corrompe o `.next`
-(erro `Cannot find module './chunks/vendor-chunks/next.js'`). Solucao: parar o
+(`Cannot find module './chunks/vendor-chunks/next.js'`). Solucao: parar o
 servidor, `rm -rf .next`, subir de novo. Se a porta 3000 ficar presa,
 `Get-NetTCPConnection -LocalPort 3000` + `Stop-Process` no PowerShell.
 
@@ -373,23 +389,24 @@ servidor, `rm -rf .next`, subir de novo. Se a porta 3000 ficar presa,
 1. **Itens de pedido/comanda**: tabelas relacionais com snapshot historico.
 2. **Regra de negocio so no Service.** Postgres cuida de integridade e de
    funcoes mecanicas que recebem o valor ja calculado.
-3. **Autenticacao migra para Supabase Auth** — auditada (Fase 8), a fazer
-   **depois** do corte de banco.
-4. **MongoDB e fonte de verdade** durante toda a migracao; migrar com base no
-   formato REAL dos documentos, nunca assumir que bate com `domain.ts`.
+3. **Autenticacao migra para Supabase Auth** — auditada, a fazer depois.
+4. **MongoDB foi a fonte de verdade** durante a migracao; migrar sempre com
+   base no formato REAL dos documentos, nunca assumindo `domain.ts`.
 5. **Um unico projeto Supabase** atende todas as empresas.
 6. **Nunca mockar integracao externa.**
+7. **Valor de pedido concluido nao se edita** — corrige-se por lancamento no
+   financeiro.
 
 ---
 
 # 10. Achados e armadilhas (para nao redescobrir)
 
-Bugs reais encontrados **rodando** contra banco/servidor de verdade:
+Bugs reais encontrados **rodando** contra banco/servidor/navegador de verdade:
 
 1. **`pedidos.comanda_id` nunca existiu como coluna** — pedidos gerados por
    fechamento de comanda sempre carregam esse campo no Mongo. Migration `0012`.
 2. **`pedidos_tipo_check` nao aceitava `'mesa'`** — 4o valor real de `tipo`.
-   Migration `0012`; `PedidoTipo` ampliado.
+   Migration `0012`.
 3. **Ordem de migracao**: apos criar a FK do item 1, `comandas` **tem que**
    migrar antes de `pedidos`.
 4. **`jsonb_populate_record()` zera campos ausentes com NULL** em vez de
@@ -399,87 +416,107 @@ Bugs reais encontrados **rodando** contra banco/servidor de verdade:
    mistura documentos com e sem um campo opcional, as linhas sem ele recebem
    `NULL` e violam `not null`.
 6. **`supabase-js` remove chaves `undefined`** do corpo JSON: RPC com
-   parametro obrigatorio sem default falha com `PGRST202` ("function not found
-   in schema cache") — erro confuso. Migration `0013`.
+   parametro obrigatorio sem default falha com `PGRST202` — erro confuso.
+   Migration `0013`.
 7. **Direct connection do Supabase e IPv6** — usar o Session Pooler.
 8. **`papeis`/`permissoes` existem no banco mas o app nao le** — RBAC e
    hardcoded.
 9. **`ON DELETE CASCADE` em `empresas`** limpa o tenant inteiro — util para
    teste, perigoso em producao.
 10. **O seed criava a mesa demo apontando para comanda inexistente**
-    (violava `mesas_comanda_id_fkey`). No Mongo passava — nao ha FK. Resolvido
-    com 2 passadas, igual a ferramenta de migracao.
+    (violava `mesas_comanda_id_fkey`). No Mongo passava — nao ha FK.
 11. **Bulk insert de pedidos nao avanca `pedido_contadores`** — o proximo
-    pedido colidia. Migration `0014`. **Regra geral: todo caminho de carga em
-    lote com numero explicito precisa realinhar o contador.**
+    pedido colidia. Migration `0014`. **Regra geral: toda carga em lote com
+    numero explicito precisa realinhar o contador.**
 12. **`usuarios.id` e IMUTAVEL.** 4 FKs apontam para ele e
-    `auditoria.usuario_id` guarda 78 ids **sem FK**. Trocar o id anularia as
-    colunas em silencio e orfanaria a auditoria. Nao precisa: a Admin API do
-    Supabase **aceita id customizado** (verificado).
+    `auditoria.usuario_id` guarda 78 ids **sem FK**. A Admin API do Supabase
+    **aceita id customizado** (verificado), entao nao ha motivo para trocar.
 13. **`service_role` IGNORA RLS** — ver §3.
-14. **O frontend nao tem refresh de token.** Hoje o token dura 7 dias; o do
-    Supabase Auth dura **1 hora**. Sem implementar refresh, todo usuario e
-    deslogado apos 1h — quebra que passa em teste de API e so aparece com
-    usuario real.
+14. **O frontend nao tem refresh de token.** Hoje dura 7 dias; o do Supabase
+    Auth dura **1 hora**. Sem refresh, todo usuario cai apos 1h — quebra que
+    passa em teste de API e so aparece com usuario real.
 15. **Validacao de env no nivel do modulo quebra `next build`.** O build
     avalia o modulo das rotas com `NODE_ENV=production` e sem variaveis de
-    runtime. Foi o que aconteceu com a exigencia de `JWT_SECRET` — resolvido
-    tornando a checagem lazy (no uso, nao no import).
-16. **EasyPanel v2.30.0: o campo "Caminho de Build" e obrigatorio e nao
-    aceita raiz.** Rejeita vazio, `/`, `.` e `./`; aceita `/algo`. Mas o
-    contexto do build **precisa** ser a raiz do repositorio (o Dockerfile faz
-    `COPY . .`). Usar `/app` faz o EasyPanel montar o contexto em `code/app` e
-    o build falha com `lstat .../app/docker: no such file or directory`. Foi
-    contornado no painel; se reaparecer, as alternativas sao a aba **Git** (em
-    vez de GitHub) ou o menu **Avancado**.
+    runtime. Foi o caso do `JWT_SECRET` — resolvido tornando a checagem lazy.
+16. **EasyPanel v2.30.0: "Caminho de Build" e obrigatorio e nao aceita raiz.**
+    Rejeita vazio, `/`, `.` e `./`; aceita `/algo`. Mas o contexto precisa ser
+    a raiz. Usar `/app` faz o contexto virar `code/app` e o build falha com
+    `lstat .../app/docker: no such file or directory`.
 17. **next-themes: `setTheme` MUDA DE IDENTIDADE a cada troca de tema.**
     Colocar `setTheme` na dependencia de um `useCallback` que alimenta um
     `useEffect` cria um loop: trocar o tema redispara o efeito. Foi assim que
-    o tema claro revertia sozinho para escuro apos ~2s (o efeito refazia
-    `/auth/me` e reaplicava o tema da empresa). Tema da empresa e PADRAO
-    INICIAL, aplicado uma vez via ref — nunca reimposto a cada carga.
-18. **Variavel de ambiente nova so vale apos reimplantar** — salvar na aba
-    Ambiente nao reinicia o container sozinho.
+    o tema claro revertia sozinho apos ~2s (o efeito refazia `/auth/me` e
+    reaplicava o tema da empresa). Tema da empresa e **padrao inicial**,
+    aplicado uma vez via ref — nunca reimposto a cada carga.
+18. **Variavel de ambiente nova so vale apos reimplantar.**
+19. **Deploy novo exige Ctrl+Shift+R em quem ja estava com o app aberto.** O
+    JS antigo fica em cache e a mudanca "nao aparece". Antes de investigar um
+    bug pos-deploy, descartar isso — hoje custou uma investigacao inteira.
+20. **O shell come conteudo entre crases** ao editar arquivos via
+    `node -e "..."` em heredoc. Para editar documentacao com trechos de
+    codigo, usar a ferramenta de edicao, nao script de shell.
 
 ---
 
 # 11. Pendencias e proximos passos
 
-- [ ] **Validar o frontend no navegador.** Maior lacuna do projeto: a suite
-      cobre API, a interface nunca foi testada (`test_result.md`). Com o app
-      publicado e o Playwright instalado, da para percorrer login -> cliente
-      -> pedido -> mesa/comanda -> fechamento -> financeiro de verdade.
-- [ ] **Limpar as 91 empresas de teste** do Supabase (migracoes + rodadas da
-      suite). Nenhum dado real de cliente. `delete from empresas` limpa tudo em
-      cascata. **Decisao do dono.**
-- [ ] **Implementar Supabase Auth** — auditoria pronta
-      (`PHASE-8-AUTH-AUDIT.md`), recomenda faze-la depois do corte de banco.
-      Inclui refresh de token no frontend (armadilha 14).
-- [ ] **Testar o fluxo real de WhatsApp** — agora possivel, com o app ao lado
-      da Evolution API no mesmo projeto EasyPanel.
-- [ ] **Tornar o repositorio privado** no GitHub (produto comercial). Hoje
-      publico. Ao fazer, o EasyPanel vai precisar de autorizacao para clonar.
-- [ ] **Fase separada: fazer o RLS valer** (trocar `service_role` por token de
-      usuario). Nao juntar com a migracao de Auth.
-- [ ] **Dominio proprio** para o staging/producao.
+**Lacunas de produto** (levantadas hoje verificando o codigo — as tres
+primeiras travam a operacao diaria de um restaurante real):
+
+- [ ] **Impressao de pedido para a cozinha.** Nao existe **nada** de impressao
+      no sistema (zero ocorrencias na API). Todo restaurante imprime comanda
+      para a cozinha e cupom para o cliente. **A ausencia mais grave.**
+- [ ] **Tela de cozinha (KDS).** O papel `COZINHA` existe mas nao tem tela
+      propria — hoje ve o mesmo dashboard do gerente. O padrao e uma tela
+      grande, tocavel, com pedidos em colunas por status e cronometro.
+- [ ] **Delivery completo.** `tipo: 'delivery'` existe, mas **nao ha endereco
+      de entrega, taxa, tempo estimado nem entregador** (verificado: zero
+      ocorrencias). Na pratica um delivery e igual a um balcao, so com rotulo
+      diferente.
+- [ ] **Fechamento de caixa** (flag `caixa` ja reservada): abrir/fechar,
+      sangria, conferencia.
+- [ ] **Estoque** (flag `estoque` ja reservada): baixa automatica na venda.
+- [ ] **Cardapio digital + QR na mesa**: encaixa no modelo de mesas/comandas
+      que ja existe, e e o tipo de recurso que **vende** o SaaS.
+
+Flags tambem reservadas, sem urgencia: `crm`, `campanhas`, `fidelidade`,
+`cashback`, `billing`, `multiunidade`.
+
+**Tecnico:**
+
+- [ ] **Validar o frontend tela por tela** com Playwright — o restante do
+      sistema nunca passou por isso.
+- [ ] **Limpar as 92 empresas de teste** do Supabase (migracoes + rodadas da
+      suite). Nenhum dado real de cliente. **Decisao do dono.**
+- [ ] **Implementar Supabase Auth** (`PHASE-8-AUTH-AUDIT.md`), incluindo
+      refresh de token no frontend (armadilha 14).
+- [ ] **Testar o fluxo real de WhatsApp** — possivel agora, com o app ao lado
+      da Evolution API.
+- [ ] **Tornar o repositorio privado** (produto comercial). Hoje publico. Ao
+      fazer, o EasyPanel precisara de autorizacao para clonar.
+- [ ] **Fazer o RLS valer** (trocar `service_role` por token de usuario). Fase
+      separada, nao juntar com Auth.
+- [ ] **Dominio proprio.**
 
 ---
 
-# 12. Commits (mais recentes primeiro — todos no GitHub)
+# 12. Commits recentes (todos no GitHub)
 
 ```
+8926206 docs: corrige secao 6.3 do HANDOFF (conteudo perdido por escape do shell)
+4ec0011 docs: registra no HANDOFF a armadilha do next-themes, valores e bucket
+6ebd061 feat: ajuste de valor em pedidos, upload de logo e correcao do tema
+d44aa48 docs: handoff completo — app publicado e validado em producao
 f456a86 docs: HANDOFF.md — repositorio sincronizado com o GitHub + guia de deploy
 ca4c404 build(deploy): prepara imagem de producao para o EasyPanel
 5e5b02a docs: ponto de retomada e lista de commits atualizados (Fase 8)
-bb2b304 docs: atualiza HANDOFF.md com a Fase 8 (auditoria de Auth)
 c7ac605 security(auth): corrige 3 vulnerabilidades no JWT + auditoria da Fase 8
-48a871f docs: atualiza HANDOFF.md com a Fase 7 (switch de runtime)
 537ab77 feat(fase7): paridade completa de runtime MongoDB <-> Supabase
 2ccf90d refactor(fase7): factory de repositories com switch DATABASE_PROVIDER
 87afa2a feat(supabase): valida schema, repositories e migracao contra Supabase real
 7bd641a feat(migration): ferramenta de migracao de dados MongoDB -> Supabase
 5e082a2 feat(supabase): idempotent migration upserts + fix pedidos.comanda_id
-9f45f80 fix(supabase): atomic create for pedido+itens and comanda+itens (RPC)
+9f45f80 fix(supabase): atomic create for pedido+itens e comanda+itens (RPC)
 d29f4d3 feat(supabase): implement Supabase repositories (Fase 5)
 305c350 feat(supabase): complete Fase 4 schema
 8e15454 fix(supabase): remove business-logic triggers
@@ -512,7 +549,8 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `lib/repositories/mongo/` — 16 repositories.
 - `lib/repositories/supabase/` — 15 repositories.
 - `lib/repositories/factory.js` — switch `DATABASE_PROVIDER`.
-- `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`, `storage.js`, `payments/`.
+- `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`,
+  `storage.js`, `payments/`.
 
 **Banco**
 - `supabase/migrations/0001`…`0015`, `triggers.sql`, `policies_rls.sql`,
@@ -524,8 +562,7 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
   EasyPanel).
 
 **Ferramentas**
-- `scripts/migrate-mongo-to-supabase.mjs` — migracao de dados (idempotente;
-  `--dry-run`, `--empresa`, `--checkpoint`, `--log`).
+- `scripts/migrate-mongo-to-supabase.mjs` — migracao de dados (idempotente).
 - `scripts/validate-migration.mjs` — validacao pos-migracao (so leitura).
 
 **Documentacao**
