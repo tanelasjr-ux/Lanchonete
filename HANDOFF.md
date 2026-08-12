@@ -162,6 +162,14 @@ policies sao defesa em profundidade que nunca e exercida.
   para preservar o contrato que `computeComanda()` ja espera.
 - **Numeracao de pedido**: tabela `pedido_contadores` + funcao atomica por
   tenant (substituiu um `count()+1` com race condition).
+- **Valores de pedido** (migration 0015): mesma gramatica de `comandas` —
+  `total = subtotal - desconto + acrescimo`, calculado no Service.
+  `desconto`/`acrescimo` sao ajuste manual do operador. Ajuste bloqueado
+  (409) apos concluir, porque nesse ponto o pedido ja virou receita em
+  `transacoes`; corrigir depois disso exige lancamento no financeiro.
+- **Logo da empresa**: arquivo no Supabase Storage, bucket `logos` (publico,
+  1 MB, so imagens), caminho `{empresa_id}/logo.ext`. `empresas.logo` guarda
+  a URL publica com cache-buster.
 
 ## 4.2 Tabelas (20 no Supabase)
 
@@ -173,7 +181,7 @@ Raiz do tenant: `empresas`. Catalogos globais: `papeis`, `permissoes`.
 
 ## 4.3 Migrations e ORDEM DE EXECUCAO (nao obvia)
 
-`supabase/migrations/0001` a `0014`, mais `triggers.sql`, `policies_rls.sql`,
+`supabase/migrations/0001` a `0015`, mais `triggers.sql`, `policies_rls.sql`,
 `seed.sql`. **A ordem correta nao e so numerica** — `0002+` dependem de
 funcoes definidas em `triggers.sql`/`policies_rls.sql`:
 
@@ -184,7 +192,7 @@ funcoes definidas em `triggers.sql`/`policies_rls.sql`:
 -> 0008_conversas_mensagens -> 0009_repository_support_functions
 -> 0010_atomic_create_functions -> 0011_migration_upsert_functions
 -> 0012_pedidos_comanda_id -> 0013_increment_conversa_patch_parcial
--> 0014_resync_contador_por_empresa
+-> 0014_resync_contador_por_empresa -> 0015_pedidos_desconto_acrescimo
 ```
 
 Esta ordem foi testada de ponta a ponta contra Postgres real antes de ser
@@ -275,7 +283,13 @@ container, sem necessidade.
 Sem `JWT_SECRET`, o app sobe mas responde `503 degraded` e recusa autenticar
 (falha fechada, de proposito). Variavel nova so vale **depois de reimplantar**.
 
-## 6.3 Imagem
+## 6.3 Supabase Storage
+
+Bucket  (publico, limite 1 MB, apenas imagens) criado via Admin API.
+Guarda a logo de cada empresa em . E o primeiro uso de
+Storage no projeto — antes so havia banco.
+
+## 6.4 Imagem
 
 `docker/Dockerfile` multi-stage, saida `standalone`, **291 MB**, com
 `HEALTHCHECK` apontando para `/api/health`. O `.dockerignore` exclui `.env` e
@@ -411,7 +425,13 @@ Bugs reais encontrados **rodando** contra banco/servidor de verdade:
     o build falha com `lstat .../app/docker: no such file or directory`. Foi
     contornado no painel; se reaparecer, as alternativas sao a aba **Git** (em
     vez de GitHub) ou o menu **Avancado**.
-17. **Variavel de ambiente nova so vale apos reimplantar** — salvar na aba
+17. **next-themes: `setTheme` MUDA DE IDENTIDADE a cada troca de tema.**
+    Colocar `setTheme` na dependencia de um `useCallback` que alimenta um
+    `useEffect` cria um loop: trocar o tema redispara o efeito. Foi assim que
+    o tema claro revertia sozinho para escuro apos ~2s (o efeito refazia
+    `/auth/me` e reaplicava o tema da empresa). Tema da empresa e PADRAO
+    INICIAL, aplicado uma vez via ref — nunca reimposto a cada carga.
+18. **Variavel de ambiente nova so vale apos reimplantar** — salvar na aba
     Ambiente nao reinicia o container sozinho.
 
 ---
@@ -485,10 +505,10 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `lib/repositories/mongo/` — 16 repositories.
 - `lib/repositories/supabase/` — 15 repositories.
 - `lib/repositories/factory.js` — switch `DATABASE_PROVIDER`.
-- `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`, `payments/`.
+- `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`, `storage.js`, `payments/`.
 
 **Banco**
-- `supabase/migrations/0001`…`0014`, `triggers.sql`, `policies_rls.sql`,
+- `supabase/migrations/0001`…`0015`, `triggers.sql`, `policies_rls.sql`,
   `seed.sql`. Ordem real de execucao no §4.3 e no `README.md`.
 
 **Deploy**
