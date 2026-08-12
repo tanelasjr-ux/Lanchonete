@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-12 (impressao de cupom implementada — aguardando push)
+Ultima atualizacao: 2026-08-12 (impressao de cupom publicada + bug de pagina em branco corrigido)
 
 ## Como usar este arquivo
 
@@ -26,26 +26,22 @@ https://restaurante-app.ilmdzk.easypanel.host
 Rodando sobre **Supabase**, com HTTPS, no projeto `restaurante` do EasyPanel.
 O dono ja opera pela interface (empresa "Tanelas FooD").
 
-**Estado do codigo:** commitado localmente (`4c80ae4`), **1 commit a frente
-do GitHub** — nao enviado ainda. O EasyPanel implanta sozinho ao receber
-push na `main`, e o dono estava fora da maquina quando a tarefa terminou;
-por seguranca (§13 do `CLAUDE.md`: push exige confirmacao), o push ficou
-para a proxima sessao em vez de publicar sem ele por perto.
+**Estado do codigo:** **sincronizado com GitHub** (`main` em dia). Todas as
+melhorias publicadas. EasyPanel implanta automaticamente ao receber push.
 
-**Entregue nesta sessao (commitado, AINDA NAO publicado):**
-4. **Impressao de cupom** — comanda da cozinha (sem precos) e via do
-   cliente (com valores), para qualquer pedido ou fechamento de comanda.
-   Ver §4.1 (decisao estrutural) e §10 armadilha 21.
-
-**Entregue na sessao anterior (ja no ar e validado no navegador):**
+**Entregue e PUBLICADO:**
 1. Correcao do tema que revertia sozinho depois de ~2s.
 2. Desconto e acrescimo em pedidos, com ajuste apos a criacao.
 3. Upload de logo por arquivo (antes so aceitava colar URL).
+4. **Impressao de cupom** — comanda da cozinha (sem precos) e via do
+   cliente (com valores), para qualquer pedido ou fechamento de comanda.
+   Ver §4.1 (decisao estrutural) e §10 armadilha 21.
+5. **Correcao do bug de impressao** (container id no body, nao no JSX) —
+   imprimia pagina em branco em producao; achado testando ao vivo.
 
 **Para retomar:**
-1. `git push origin main` — so isso ja publica a impressao de cupom (o
-   EasyPanel implanta sozinho). Lembrar do Ctrl+Shift+R em quem ja estiver
-   com o app aberto.
+1. Usuarios com o app aberto precisam de Ctrl+Shift+R para limpar cache
+   (navegador continua servindo JS antigo sem refresh hard).
 2. Ambiente local so e necessario para desenvolver: Docker Desktop ->
    `docker start ros-mongo-local` -> `yarn dev:no-reload`. Detalhes no §8.
 3. Saude do servidor: `GET /api/health`. Se vier `"status":"degraded"`, o
@@ -528,7 +524,9 @@ Flags tambem reservadas, sem urgencia: `crm`, `campanhas`, `fidelidade`,
 # 12. Commits recentes
 
 ```
-4c80ae4 feat: impressao de cupom (comanda da cozinha e via do cliente)  <- LOCAL, nao enviado ainda
+2cab4b6 fix: id area-impressao move para o container no body, nao no JSX  <- corrigiu bug de pagina em branco
+7cb5392 docs: registra a impressao de cupom no HANDOFF (aguardando push)
+4c80ae4 feat: impressao de cupom (comanda da cozinha e via do cliente)
 ba04d7f docs: handoff completo — 3 melhorias no ar e lacunas de produto mapeadas
 8926206 docs: corrige secao 6.3 do HANDOFF (conteudo perdido por escape do shell)
 4ec0011 docs: registra no HANDOFF a armadilha do next-themes, valores e bucket
