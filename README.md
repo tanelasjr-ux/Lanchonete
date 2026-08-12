@@ -52,7 +52,9 @@ O cadastro cria a empresa (tenant) e ja popula **dados de demonstracao**
    `0005_comandas.sql` -> `0006_pagamentos.sql` -> `0007_webhook_events.sql`
    -> `0008_conversas_mensagens.sql` -> `0009_repository_support_functions.sql`
    -> `0010_atomic_create_functions.sql` -> `0011_migration_upsert_functions.sql`
-   -> `0012_pedidos_comanda_id.sql` -> `0013_increment_conversa_patch_parcial.sql`.
+   -> `0012_pedidos_comanda_id.sql` -> `0013_increment_conversa_patch_parcial.sql`
+   -> `0014_resync_contador_por_empresa.sql` -> `0015_pedidos_desconto_acrescimo.sql`
+   -> `0016_kds.sql`.
    As migrations `0002`+ dependem das
    funções `set_updated_at()`/`current_empresa_id()` definidas em
    `triggers.sql`/`policies_rls.sql`, por isso essas duas rodam antes delas
