@@ -8,7 +8,7 @@ import {
   ChefHat, TrendingUp, TrendingDown, DollarSign, Package, ArrowUpRight,
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
-  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings,
+  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -30,6 +30,8 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'sonner'
+import { imprimirCupom } from '@/components/cupom'
+import { dadosCupomPedido, dadosCupomComanda } from '@/lib/cupom-dados'
 
 /* ============================ API CLIENT ============================ */
 const TOKEN_KEY = 'ros_token'
@@ -46,6 +48,25 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 const brl = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v || 0))
 const fmtDate = (d) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+/**
+ * Busca os dados da empresa sob demanda para o cupom. `Pedidos`/`Mesas` nao
+ * recebem `me.empresa` como prop (cada tela busca so o que usa) — chamar
+ * `/empresa` aqui e mais simples do que reestruturar o fluxo de estado do
+ * app inteiro so para uma acao pontual de impressao.
+ */
+async function empresaParaCupom() {
+  const e = await api('/empresa')
+  return { nome: e.nome_comercial || e.nome, endereco: e.endereco, telefone: e.whatsapp || e.telefone, logo: e.logo }
+}
+async function imprimirPedido(pedido, via) {
+  try { imprimirCupom(dadosCupomPedido(pedido, await empresaParaCupom(), via)) }
+  catch (e) { toast.error('Nao foi possivel preparar a impressao: ' + e.message) }
+}
+async function imprimirComanda(comanda, via) {
+  try { imprimirCupom(dadosCupomComanda(comanda, await empresaParaCupom(), via)) }
+  catch (e) { toast.error('Nao foi possivel preparar a impressao: ' + e.message) }
+}
 
 const STATUS = {
   recebido: { label: 'Recebido', cls: 'bg-blue-500/15 text-blue-500 border-blue-500/20' },
@@ -525,6 +546,17 @@ function Pedidos() {
                               <Percent className="h-3.5 w-3.5" />
                             </Button>
                           )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="sm" variant="outline" className="h-8" title="Imprimir">
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => imprimirPedido(p, 'cozinha')}>Via cozinha</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => imprimirPedido(p, 'cliente')}>Via cliente</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                           {p.status !== 'cancelado' && p.status !== 'concluido' && <Button size="sm" variant="outline" className="h-8 text-destructive" onClick={() => move(p, 'cancelado')}><X className="h-3.5 w-3.5" /></Button>}
                         </div>
                       </CardContent>
@@ -1392,8 +1424,17 @@ function ComandaDialog({ comandaId, onClose }) {
               {(c.pagamentos || []).length > 0 && <div className="space-y-1 pt-1">{c.pagamentos.map((p) => <div key={p.id} className="flex justify-between text-xs"><span className="text-muted-foreground capitalize">{p.metodo.replace('_', ' ')}</span><span className="text-emerald-500">{brl(p.valor)}</span></div>)}</div>}
             </CardContent></Card>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <Button variant="outline" onClick={() => setTransferOpen(!transferOpen)}><ArrowRightLeft className="h-4 w-4 mr-1" />Transferir</Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline"><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => imprimirComanda(c, 'cozinha')}>Via cozinha</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => imprimirComanda(c, 'cliente')}>Via cliente (conta)</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button onClick={fechar}><CheckCircle2 className="h-4 w-4 mr-1" />Fechar conta</Button>
             </div>
             {transferOpen && (

@@ -93,3 +93,55 @@
   .ros-scroll::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; }
   .ros-scroll::-webkit-scrollbar-track { background: transparent; }
 }
+
+/* ============================================================================
+ * IMPRESSAO DE CUPOM (comanda da cozinha / via do cliente)
+ * ----------------------------------------------------------------------------
+ * O sistema roda na nuvem e a impressora esta no restaurante, entao quem
+ * imprime e o navegador do caixa. Impressora termica se instala no SO como
+ * impressora comum — nao ha nada de especial a fazer aqui alem do layout.
+ *
+ * Tudo abaixo e ESCOPADO em `body.imprimindo-cupom`, ligado so durante a
+ * impressao de um cupom. Sem esse escopo, as regras quebrariam o botao "PDF"
+ * da tela de Relatorios, que usa o mesmo `window.print()` e precisa imprimir
+ * a pagina inteira em A4.
+ * ========================================================================== */
+
+/* Fora da impressao o cupom nunca aparece na tela. */
+#area-impressao { display: none; }
+
+/* Pagina propria para o cupom: bobina de 80mm, altura conforme o conteudo.
+ * Nomeada para nao afetar a impressao A4 dos relatorios. Navegadores sem
+ * suporte a `page:` apenas usam o tamanho padrao — o cupom ainda sai. */
+@page cupom {
+  size: 80mm auto;
+  margin: 3mm;
+}
+
+@media print {
+  body.imprimindo-cupom #area-impressao {
+    display: block;
+    page: cupom;
+    /* Termica e monocromatica: forcar preto no branco evita cinza ilegivel
+     * quando o app esta no tema escuro. */
+    color: #000;
+    background: #fff;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    width: 74mm;
+  }
+
+  /* Esconde a aplicacao inteira, deixando so o cupom. `visibility` em vez de
+   * `display:none` para nao recalcular o layout do app durante a impressao. */
+  body.imprimindo-cupom > *:not(#area-impressao) { display: none !important; }
+
+  body.imprimindo-cupom {
+    background: #fff !important;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Nao quebrar um item de pedido no meio ao virar a pagina. */
+  .cupom-item { break-inside: avoid; }
+}
