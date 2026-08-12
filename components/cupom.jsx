@@ -52,7 +52,7 @@ function CupomConteudo({ dados }) {
   const ehCliente = via === 'cliente'
 
   return (
-    <div id="area-impressao">
+    <>
       <div style={{ textAlign: 'center', marginBottom: 8 }}>
         {ehCliente && empresa?.logo && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -107,7 +107,7 @@ function CupomConteudo({ dados }) {
           Comprovante sem valor fiscal
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -115,9 +115,19 @@ function CupomConteudo({ dados }) {
  * Imprime um cupom. Cria um container isolado no fim do `body`, renderiza o
  * conteudo, aciona `window.print()` e desmonta ao terminar — nao deixa
  * residuo na arvore do React nem no DOM depois de impresso/cancelado.
+ *
+ * O id `area-impressao` fica no CONTAINER (filho direto de `body`), nao num
+ * elemento dentro do JSX renderizado — o CSS de impressao
+ * (`body.imprimindo-cupom > *:not(#area-impressao)`) so consegue distinguir
+ * "isto e o cupom" de "isto e o resto do app" olhando filhos diretos do
+ * body. Um id equivalente um nivel mais fundo (dentro do container) faz o
+ * proprio container cair no `:not(#area-impressao)` e ser escondido junto
+ * com o cupom — foi exatamente o bug que produzia pagina em branco ao
+ * imprimir (achado testando em producao, nao no dev local).
  */
 export function imprimirCupom(dados) {
   const container = document.createElement('div')
+  container.id = 'area-impressao'
   document.body.appendChild(container)
   const root = createRoot(container)
   root.render(<CupomConteudo dados={dados} />)
