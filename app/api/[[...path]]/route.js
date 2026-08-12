@@ -126,6 +126,22 @@ function can(papel, modulo) {
   return perms.includes('*') || perms.includes(modulo)
 }
 
+/**
+ * Normaliza o vocabulario duplo de pedidos.status (minusculo original +
+ * MAIUSCULO do fluxo de atendimento/delivery v3 - ver migration 0002).
+ * Em escopo de modulo (nao dentro de handler()) porque tanto rotas
+ * autenticadas quanto o endpoint publico /kds/pendentes precisam dela.
+ */
+function normPedidoStatus(s) {
+  if (['recebido', 'NOVO', 'CONFIRMADO'].includes(s)) return 'novo'
+  if (['em_preparo', 'EM_PREPARACAO'].includes(s)) return 'em_preparacao'
+  if (['pronto', 'PRONTO'].includes(s)) return 'pronto'
+  if (['SAIU_PARA_ENTREGA'].includes(s)) return 'saiu'
+  if (['concluido', 'ENTREGUE'].includes(s)) return 'entregue'
+  if (['cancelado', 'CANCELADO'].includes(s)) return 'cancelado'
+  return 'novo'
+}
+
 /* ============================ HTTP HELPERS ============================= */
 function cors(res) {
   res.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*')
@@ -1353,15 +1369,6 @@ async function handler(request, { params }) {
     }
 
     /* ==================== ATENDIMENTO / CONVERSAS ==================== */
-    const normPedidoStatus = (s) => {
-      if (['recebido', 'NOVO', 'CONFIRMADO'].includes(s)) return 'novo'
-      if (['em_preparo', 'EM_PREPARACAO'].includes(s)) return 'em_preparacao'
-      if (['pronto', 'PRONTO'].includes(s)) return 'pronto'
-      if (['SAIU_PARA_ENTREGA'].includes(s)) return 'saiu'
-      if (['concluido', 'ENTREGUE'].includes(s)) return 'entregue'
-      if (['cancelado', 'CANCELADO'].includes(s)) return 'cancelado'
-      return 'novo'
-    }
     const pedidoAtivoDoCliente = (pedidos, cliente_id) => {
       const doCliente = pedidos.filter((p) => p.cliente_id === cliente_id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       if (!doCliente.length) return { has: false, pedido: null }
