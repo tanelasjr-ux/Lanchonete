@@ -30,6 +30,8 @@ export type MensagemDirecao = 'in' | 'out';
 /** 'conversation' e o messageType bruto da Evolution API para texto simples (nao e bug). */
 export type MensagemTipo = 'text' | 'image' | 'audio' | 'document' | 'conversation';
 export type PagamentoProvider = 'manual' | 'mercadopago';
+export type CaixaStatus = 'aberto' | 'fechado';
+export type CaixaMovimentoTipo = 'sangria' | 'suprimento';
 
 /** Marcador de multitenancy: toda entidade de dominio carrega empresa_id. */
 export interface TenantScoped {
@@ -156,6 +158,55 @@ export interface Pedido extends TenantScoped {
 export interface Transacao extends TenantScoped {
   id: UUID; tipo: TransacaoTipo; categoria: string; descricao: string;
   valor: number; pedido_id: UUID | null; comanda_id: UUID | null; data: string;
+  /**
+   * Metodo desta transacao ('pix' | 'cartao' | 'dinheiro'). Transacoes
+   * anteriores a migration 0018 tem string vazia — nao ha dado de onde
+   * inferir o metodo, e inventar um falsearia a auditoria.
+   */
+  forma_pagamento: string;
+  /** Caixa em que a venda entrou. Nulo quando nao havia caixa aberto. */
+  caixa_id: UUID | null;
+}
+
+/**
+ * Sessao de caixa. Um caixa aberto por empresa por vez — garantido por
+ * indice unico parcial no Postgres, nao so pela checagem na aplicacao.
+ */
+export interface Caixa extends TenantScoped {
+  id: UUID;
+  status: CaixaStatus;
+  aberto_por: UUID | null;
+  aberto_por_nome: string;
+  aberto_em: string;
+  /** Fundo de troco colocado na gaveta na abertura. */
+  valor_abertura: number;
+  fechado_por: UUID | null;
+  fechado_por_nome: string;
+  fechado_em: string | null;
+  /** O que foi contado fisicamente na gaveta. Nulo enquanto aberto. */
+  valor_contado: number | null;
+  /** O que o Service calculou. Nulo enquanto aberto. */
+  valor_esperado: number | null;
+  /** `valor_contado - valor_esperado`. Positivo e sobra, negativo e falta. */
+  diferenca: number | null;
+  observacoes: string;
+  created_at: string;
+}
+
+/**
+ * Movimento de gaveta que NAO e venda. Sangria leva dinheiro ao cofre,
+ * suprimento traz troco. Nenhum dos dois e receita ou despesa — por isso
+ * vivem aqui e nunca em `transacoes`.
+ */
+export interface CaixaMovimento extends TenantScoped {
+  id: UUID;
+  caixa_id: UUID;
+  tipo: CaixaMovimentoTipo;
+  valor: number;
+  motivo: string;
+  usuario_id: UUID | null;
+  usuario_nome: string;
+  created_at: string;
 }
 
 /** Trilha de auditoria: somente-leitura + append, nunca update/delete. */
@@ -295,6 +346,17 @@ export interface PedidoRepository extends Repository<Pedido>, BulkCreatable<Pedi
 export interface TransacaoRepository extends Repository<Transacao>, BulkCreatable<Transacao> {
   /** GET /financeiro/transacoes: mais recentes primeiro, com limite. */
   listRecentes(empresaId: UUID, limit: number): Promise<Transacao[]>;
+  findByCaixa(empresaId: UUID, caixaId: UUID): Promise<Transacao[]>;
+  findByPedido(empresaId: UUID, pedidoId: UUID): Promise<Transacao[]>;
+}
+
+export interface CaixaRepository extends Repository<Caixa> {
+  findAberto(empresaId: UUID): Promise<Caixa | null>;
+  listarFechados(empresaId: UUID, limite?: number): Promise<Caixa[]>;
+}
+
+export interface CaixaMovimentoRepository extends Repository<CaixaMovimento> {
+  listByCaixa(empresaId: UUID, caixaId: UUID): Promise<CaixaMovimento[]>;
 }
 
 /** Empresa e a raiz do tenant: nao tem empresa_id proprio, nao usa Repository<T>. */
