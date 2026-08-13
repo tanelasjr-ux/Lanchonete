@@ -1341,6 +1341,7 @@ function Mesas() {
   const [cfg, setCfg] = useState(false)
   const [abrir, setAbrir] = useState(null) // mesa livre
   const [comandaId, setComandaId] = useState(null)
+  const [editar, setEditar] = useState(null) // mesa sendo renomeada
   const load = useCallback(() => api('/mesas').then(setMesas).catch((e) => toast.error(e.message)), [])
   useEffect(() => { load() }, [load])
   const onClickMesa = (m) => { if (m.status === 'livre') setAbrir(m); else if (m.comanda_id) setComandaId(m.comanda_id) }
@@ -1357,10 +1358,16 @@ function Mesas() {
         {mesas.map((m) => {
           const st = MESA_STATUS[m.status] || MESA_STATUS.livre
           return (
-            <button key={m.id} onClick={() => onClickMesa(m)} className={`text-left rounded-xl border-2 p-4 transition-all hover:shadow-md ${st.cls}`}>
-              <div className="flex items-center justify-between">
-                <span className="font-bold">{m.nome}</span>
-                <span className={`h-2.5 w-2.5 rounded-full ${st.dot}`} />
+            <button key={m.id} onClick={() => onClickMesa(m)} className={`relative text-left rounded-xl border-2 p-4 transition-all hover:shadow-md ${st.cls}`}>
+              <button
+                type="button"
+                title="Renomear mesa"
+                onClick={(e) => { e.stopPropagation(); setEditar(m) }}
+                className="absolute top-2 right-2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-black/5"
+              ><Pencil className="h-3 w-3" /></button>
+              <div className="flex items-center justify-between pr-5">
+                <span className="font-bold truncate">{m.nome || `Mesa ${String(m.numero).padStart(2, '0')}`}</span>
+                <span className={`h-2.5 w-2.5 rounded-full ${st.dot} shrink-0`} />
               </div>
               <div className={`text-xs mt-1 ${st.text}`}>{st.label}</div>
               <div className="mt-3 min-h-[2.5rem]">
@@ -1391,7 +1398,41 @@ function Mesas() {
       {cfg && <ConfigurarMesasDialog atual={mesas.length} onClose={() => setCfg(false)} onSaved={() => { setCfg(false); load() }} />}
       {abrir && <AbrirComandaDialog mesa={abrir} onClose={() => setAbrir(null)} onOpened={(cid) => { setAbrir(null); load(); setComandaId(cid) }} />}
       {comandaId && <ComandaDialog comandaId={comandaId} onClose={() => { setComandaId(null); load() }} />}
+      {editar && <EditarMesaDialog mesa={editar} onClose={() => setEditar(null)} onSaved={() => { setEditar(null); load() }} />}
     </div>
+  )
+}
+/**
+ * Renomeia uma mesa (Feature: nomes customizados - "Mesa 01" -> "Cantinho da
+ * Janela", etc). O backend (PUT /mesas/:id) ja aceitava `nome` desde a Fase 4
+ * (coluna `mesas.nome text not null`, sempre populada como "Mesa NN" na
+ * criacao); so faltava esta UI para o operador customizar. Campo vazio volta
+ * ao nome padrao "Mesa NN" (nome nunca fica null no banco).
+ */
+function EditarMesaDialog({ mesa, onClose, onSaved }) {
+  const [nome, setNome] = useState(mesa.nome || '')
+  const [saving, setSaving] = useState(false)
+  const padrao = `Mesa ${String(mesa.numero).padStart(2, '0')}`
+  const save = async () => {
+    setSaving(true)
+    try {
+      const novoNome = nome.trim() || padrao
+      await api(`/mesas/${mesa.id}`, { method: 'PUT', body: { nome: novoNome } })
+      toast.success('Mesa atualizada')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Renomear mesa</DialogTitle><DialogDescription>De um nome customizado a mesa (ex: "Janela", "Varanda"). Deixe em branco para usar "{padrao}".</DialogDescription></DialogHeader>
+        <div className="space-y-2">
+          <Label>Nome da mesa</Label>
+          <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder={padrao} maxLength={50} autoFocus />
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Salvar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 function ConfigurarMesasDialog({ atual, onClose, onSaved }) {
