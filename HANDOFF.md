@@ -66,18 +66,22 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 
 ---
 
-# 12. FEEDBACK DE UX — PROXIMA SESSAO
+# 12. UX FEEDBACK — COMPLETO ✅
 
-Identificado pelo dono em 2026-08-12. Prioridade: proxima sessao.
+Implementado em 2026-08-13 (mesma sessao de conclusao do KDS).
 
-| # | Tipo | Descricao | Esforço | Impacto | Status |
-|---|------|-----------|---------|---------|--------|
-| 1 | 🔴 BUG | Botoes fora do enquadramento quando ha pedidos em todas as etapas (Pedidos) | 1-2h | Alto | Fazer logo |
-| 2 | 🟠 FEATURE | Nomear mesas customizado (cores, nomes) — `mesas.nome` + UI edit | 4-6h | Medio | Planejado |
-| 3 | 🟠 FEATURE | Status "Em Falta" no cardapio, linkado com menu digital QR | 6-8h | Alto | Planejado |
-| 4 | 🟠 FEATURE | Status pedido na tela de Mesas (sumario: "2 prontos, 1 preparo") | 4-6h | Alto (parity com Delivery) | Planejado |
+| # | Tipo | Descricao | Esforço | Status | Commit |
+|---|------|-----------|---------|--------|--------|
+| 1 | 🔴 BUG | Botoes overflow em Pedidos (todas as etapas) | 1-2h | ✅ DONE | 1051b77 |
+| 2 | 🟠 FEATURE | Nomes customizados para mesas | 4-6h | ✅ DONE | 1508270 |
+| 3 | 🟠 FEATURE | Status "Em Falta" no cardapio (menu digital aware) | 6-8h | ✅ DONE | c5f4a09 |
+| 4 | 🟠 FEATURE | Status pedido em Mesas (sumario em preparo/entregue) | 4-6h | ✅ DONE | fcb73ed |
 
-**Ordem recomendada:** 1 (bug urgente) → 4 (parity) → 2+3 (features conectadas).
+**Notas de implementacao:**
+- Item 1: CSS flex reflow — botoes agora em 2 linhas (status primario full-width, icons wrap)
+- Item 2: UI adicionada (schema/backend ja existiam) — pencil icon para renomear mesas inline
+- Item 3: UI adicionada (schema/backend/API ja existiam) — toggle "Em Falta" no cardapio + filtro em order builders
+- Item 4: Descoberto que modelo de dados usa `entregue` flag (nao pedidos.comanda_id) — implementado com sumario real (Em preparo / Entregue)
 
 **Para retomar:**
 1. Usuarios com o app aberto precisam de Ctrl+Shift+R para limpar cache
