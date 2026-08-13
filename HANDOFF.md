@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-12 (KDS backend 80% completo — 7/11 tasks, 1 em fix, 3 frontend pendentes)
+Ultima atualizacao: 2026-08-12 (KDS 73% completo — 8/11 tasks, 3 pendentes: Tasks 9-11 integração)
 
 ## Como usar este arquivo
 
@@ -39,25 +39,39 @@ melhorias publicadas. EasyPanel implanta automaticamente ao receber push.
 5. **Correcao do bug de impressao** (container id no body, nao no JSX) —
    imprimia pagina em branco em producao; achado testando ao vivo.
 
-**EM PROGRESSO — Kitchen Display System (KDS):**
+**KITCHEN DISPLAY SYSTEM (KDS) — 8/11 TASKS COMPLETAS**
 Implementacao via subagent-driven-development com 11-task plan (`docs/plans/KDS-IMPLEMENTATION-PLAN.md`).
 
 **Status:**
-- ✅ Task 1-5, 7: COMPLETAS (migration 0016 + indices, domain + repo, kdsTokenRepository, dual-auth endpoints GET/kds/pendentes + POST/kds/concluir, token mgmt endpoints, campo observacao UI)
-- ⏳ Task 6: FIX ROUND 1 (background) — encontrados 2 important findings plan-mandated: GET /kds/tokens precisa filtrar revogado_em server-side; testes precisam cobrir GET listing + 403 permission denial
-- ⏳ Task 8-11: PENDENTES (components KDS, ligar App(), config screen TV, validacao final)
+- ✅ Task 1-8: COMPLETAS
+  - Task 1: migration 0016 (comanda_itens.entregue + kds_tokens)
+  - Task 2: domain contracts + Mongo repo
+  - Task 3: kdsTokenRepository (Mongo + Supabase) + factory
+  - Task 4: normPedidoStatus moved to module scope
+  - Task 5: GET /kds/pendentes + POST /kds/concluir (dual auth)
+  - Task 6: GET/POST/DELETE /kds/tokens (token lifecycle) + fix de filtering/tests
+  - Task 7: observacao field UI (PedidoDialog + Comanda)
+  - Task 8: componentes KDS (KDSPainel, KDSTv, CozinhaPendentes)
+  
+- ⏳ Task 9-11: PENDENTES (integração no App, config screen, validação final)
+  - Task 9: ligar KDS no App() (TV via query param, papel COZINHA nav)
+  - Task 10: config screen (gerar/revogar links TV)
+  - Task 11: validação final + testes
 
 **Ledger completo:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/progress.md`
 **Briefs por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-brief.md`
 **Reports por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-report.md` (Task 6 em progresso)
 
-**Proximos passos apos retomar:**
-1. Aguardar notificacao de Task 6 fix round 1 completar
-2. Revisar fix de Task 6 (deve filtrar revogado_em, adicionar testes)
-3. Despachar Task 8 (componentes KDS — KDSPainel, KDSTv, CozinhaPendentes)
-4. Despachar Task 9 (integrar KDS no App() — nav, query param kds_tv, papel COZINHA)
-5. Despachar Task 10 (config screen — gerar link TV)
-6. Despachar Task 11 (validacao final + testes)
+**Deferred findings (nao bloqueadores, corrigir amanha):**
+1. Task 3: kds_tokens sem indices no Mongo (Postgres ok via migration) — adicionar a ensureMongoIndexes()
+2. Task 5: POST /kds/concluir mesa branch silent ok:true se comanda_id inexistente (pedido branch retorna 404)
+3. Task 8: KDSTv modo fica travado read-only se falha transiente no init — fix: ter KDSPainel surface modo de todo poll em vez de um-shot probe
+
+**Proximos passos AMANHA:**
+1. Despachar Task 9 (integrar KDS no App() — renderizar KDSTv via query param, nav do papel COZINHA)
+2. Despachar Task 10 (config screen — UI para gerar/revogar links TV)
+3. Despachar Task 11 (validacao final + regressao)
+4. Corrigir os 3 deferred findings antes de merge final
 
 ---
 
