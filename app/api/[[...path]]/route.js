@@ -452,7 +452,7 @@ async function handler(request, { params }) {
       categoriaRepo, produtoRepo, clienteRepo, usuarioRepo, transacaoRepo,
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
-      kdsTokenRepo, entregadorRepo,
+      kdsTokenRepo, entregadorRepo, caixaRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -1168,6 +1168,7 @@ async function handler(request, { params }) {
       // lancaria a receita com o valor antigo.
       const totalFinal = upd.total !== undefined ? upd.total : pedido.total
       if (finais.includes(b.status) && !finais.includes(pedido.status)) {
+        const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
         await transacaoRepo.create({
           id: uuidv4(),
           empresa_id: ctx.empresa_id,
@@ -1176,6 +1177,8 @@ async function handler(request, { params }) {
           descricao: `Pedido #${pedido.numero}`,
           valor: totalFinal,
           pedido_id: pedido.id,
+          forma_pagamento: pedido.pagamento || 'dinheiro',
+          caixa_id: caixaAberto ? caixaAberto.id : null,
           data: new Date(),
           created_at: new Date(),
         })
@@ -1637,11 +1640,48 @@ async function handler(request, { params }) {
         created_at: new Date(), updated_at: new Date(),
       }
       await pedidoRepo.create(pedido)
-      await transacaoRepo.create({
-        id: uuidv4(), empresa_id: ctx.empresa_id, tipo: 'receita', categoria: 'Vendas',
-        descricao: `Comanda ${comanda.mesa_nome} (Pedido #${numero})`, valor: totals.total, pedido_id: pedido.id, comanda_id: comanda.id,
-        data: new Date(), created_at: new Date(),
-      })
+      // Uma transacao por metodo de pagamento. Comanda com conta dividida
+      // (metade cartao, metade dinheiro) precisa das duas linhas: sem isso a
+      // conferencia da gaveta nunca fecha e o relatorio por forma de pagamento
+      // fica errado.
+      const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
+      const pagamentos = comanda.pagamentos || []
+
+      if (pagamentos.length > 0) {
+        for (const pg of pagamentos) {
+          await transacaoRepo.create({
+            id: uuidv4(),
+            empresa_id: ctx.empresa_id,
+            tipo: 'receita',
+            categoria: 'Vendas',
+            descricao: `Comanda ${comanda.mesa_nome} (Pedido #${numero}) - ${pg.metodo}`,
+            valor: pg.valor,
+            pedido_id: pedido.id,
+            comanda_id: comanda.id,
+            forma_pagamento: pg.metodo,
+            caixa_id: caixaAberto ? caixaAberto.id : null,
+            data: new Date(),
+            created_at: new Date(),
+          })
+        }
+      } else {
+        // Comanda fechada sem registro de pagamento (fluxo antigo): mantem o
+        // comportamento atual, uma transacao unica, assumindo dinheiro.
+        await transacaoRepo.create({
+          id: uuidv4(),
+          empresa_id: ctx.empresa_id,
+          tipo: 'receita',
+          categoria: 'Vendas',
+          descricao: `Comanda ${comanda.mesa_nome} (Pedido #${numero})`,
+          valor: totals.total,
+          pedido_id: pedido.id,
+          comanda_id: comanda.id,
+          forma_pagamento: 'dinheiro',
+          caixa_id: caixaAberto ? caixaAberto.id : null,
+          data: new Date(),
+          created_at: new Date(),
+        })
+      }
       if (comanda.cliente_id) await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, comanda.cliente_id, totals.total)
       await comandaRepo.update(ctx.empresa_id, comanda.id, { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() })
       if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
