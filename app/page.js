@@ -8,7 +8,7 @@ import {
   ChefHat, TrendingUp, TrendingDown, DollarSign, Package, ArrowUpRight,
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
-  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer,
+  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -358,6 +358,14 @@ function Cardapio() {
     } catch (e) { toast.error(e.message) }
   }
   const delProd = async (id) => { try { await api(`/produtos/${id}`, { method: 'DELETE' }); toast.success('Produto removido'); load() } catch (e) { toast.error(e.message) } }
+  const toggleDisponivel = async (p) => {
+    try {
+      const disponivel = !(p.disponivel !== false)
+      await api(`/produtos/${p.id}`, { method: 'PUT', body: { disponivel } })
+      toast.success(disponivel ? 'Produto marcado como disponível' : 'Produto marcado como em falta')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
   const addCat = async () => { if (!catName) return; try { await api('/categorias', { method: 'POST', body: { nome: catName } }); setCatName(''); setCatDlg(false); toast.success('Categoria criada'); load() } catch (e) { toast.error(e.message) } }
   const catName_ = (id) => cats.find((c) => c.id === id)?.nome || '—'
   const filtered = tab === 'all' ? prods : prods.filter((p) => p.categoria_id === tab)
@@ -380,6 +388,7 @@ function Cardapio() {
                   <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7 opacity-60 group-hover:opacity-100"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => setDlg(p)}><Pencil className="h-4 w-4 mr-2" />Editar</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => toggleDisponivel(p)}><PackageX className="h-4 w-4 mr-2" />{p.disponivel !== false ? 'Marcar como em falta' : 'Marcar como disponível'}</DropdownMenuItem>
                     <DropdownMenuItem className="text-destructive" onClick={() => delProd(p.id)}><Trash2 className="h-4 w-4 mr-2" />Remover</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -387,7 +396,7 @@ function Cardapio() {
               {p.descricao && <p className="text-sm text-muted-foreground line-clamp-2">{p.descricao}</p>}
               <div className="flex items-center justify-between pt-1">
                 <span className="font-bold text-lg">{brl(p.preco)}</span>
-                <Badge variant="outline" className={p.disponivel ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{p.disponivel ? 'Disponível' : 'Indisponível'}</Badge>
+                <Badge variant="outline" className={p.disponivel !== false ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10'}>{p.disponivel !== false ? 'Disponível' : 'Em falta'}</Badge>
               </div>
             </CardContent>
           </Card>
@@ -696,7 +705,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
           <div className="space-y-2">
             <Label>Produtos</Label>
             <div className="border rounded-lg divide-y max-h-72 overflow-auto ros-scroll">
-              {prods.map((p) => (
+              {prods.filter((p) => p.disponivel !== false).map((p) => (
                 <button key={p.id} onClick={() => add(p)} className="w-full flex items-center justify-between p-3 hover:bg-accent text-left text-sm">
                   <span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span>
                 </button>
@@ -1504,7 +1513,7 @@ function ComandaDialog({ comandaId, onClose }) {
               <div className="space-y-2">
                 <Input placeholder="Observacao (opcional) — ex: sem cebola" className="h-8 text-xs" value={obsPendente} onChange={(e) => setObsPendente(e.target.value)} />
                 <div className="border rounded-lg divide-y max-h-40 overflow-auto ros-scroll">
-                  {prods.map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
+                  {prods.filter((p) => p.disponivel !== false).map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
                 </div>
               </div>
             )}
