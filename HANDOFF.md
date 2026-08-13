@@ -101,10 +101,59 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 
 ---
 
+**CAIXA — EM EXECUÇÃO (6/14 TASKS COMPLETAS)**
+
+**Status:** Implementacao via subagent-driven-development, plano iniciado mas **INTERROMPIDO** por usuario (2026-08-13 ~18:50, token usage approach 85%).
+
+✅ **COMPLETAS E REVISADAS:**
+- Task 1 (c85abbe): Schema 0018_caixa.sql + domain contracts (Caixa, CaixaMovimento, tipos)
+  - Spec ✅, Quality ✅
+- Task 2 (5008a5b): Módulo puro lib/caixa.js com 10 testes, computeCaixaEsperado()
+  - Spec ✅, Quality ✅
+- Task 6 (5e7eaf4 + ff7bc14): Forma de pagamento na origem (comanda + pedido direto)
+  - Uma transacao por metodo de pagamento na comanda
+  - Especifica forma_pagamento e caixa_id em toda transacao de receita
+  - Spec ✅, Quality ✅
+
+🟡 **COMPLETAS, PARKED FINDINGS (arquivos pre-existentes de T6):**
+- Task 3 (c85abbe): Supabase repos caixaRepository + caixaMovimentoRepository
+  - Nota: caixaRepository ja existia de T6; T3 criou caixaMovimentoRepository
+  - Spec notation issue (arquivo nao foi criado T3, mas funcional requirement atendido)
+- Task 4 (907da9a): Mongo repos + 3 indices + factory registration
+  - Nota: mongo/caixaRepository ja existia de T6; T4 criou caixaMovimentoRepository
+  - Indices criados corretamente, factory wire completo
+- Task 5 (c3195ef): Query methods findByCaixa + findByPedido em ambos backends
+  - Spec ✅, Quality ✅
+
+⏸️ **BLOQUEADO (HALTED POR USUARIO):**
+- Task 7 (affed465fe21633e5): Endpoints /caixa/atual, /caixa/abrir, /caixa/historico + resumoDoCaixa helper
+  - Status: **KILLED mid-exec** (sem output)
+- Task 8 (a580d617ef82e2bcd): Endpoints /caixa/fechar, /caixa/movimento
+  - Status: **COMPLETED but anomalous output** (verificar report)
+- Task 9 (a5752f6882772a860): Endpoint /pedidos/:id/estorno
+  - Status: **KILLED mid-exec** (sem output)
+
+📋 **PENDENTE (NAO INICIADO):**
+- Task 10-12: UI (barra status, dialogos, historico)
+- Task 13: Testes (backend_test_caixa.py)
+- Task 14: Docs (HANDOFF + ROADMAP)
+
+**Ledger SDD completo:** `.superpowers/sdd/2026-08-13-caixa-implementation/progress.md`
+**Spec e plan:** `docs/superpowers/specs/2026-08-13-caixa-design.md` + `docs/superpowers/plans/2026-08-13-caixa-implementation.md`
+
+**PARA RETOMAR:**
+1. Verificar output de T8 (completou com msg anomala — pode estar correto)
+2. Redespachar T7 e T9 (foram kiladas) com modelo mais robusto
+3. Revisar T7-9 quando completarem
+4. Despachar T10-14 (UI, testes, docs)
+
+---
+
 **Proximos passos (quando houver novos issues):**
 1. Corrigir os 2 deferred findings KDS (se necessário)
 2. Monitorar em produção para outros issues
-3. Iniciar próxima feature (ver §11)
+3. **RETOMAR CAIXA** (T7-14)
+4. Iniciar próxima feature (ver §11)
 
 ---
 
