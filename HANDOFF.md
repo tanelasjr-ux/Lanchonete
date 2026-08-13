@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-13 (KDS 100% COMPLETO — 11/11 tasks, pronto para merge/deploy)
+Ultima atualizacao: 2026-08-13 (KDS 100% COMPLETO + DELIVERY 100% COMPLETO — 12/12 tasks, pronto para merge/deploy)
 
 ## Como usar este arquivo
 
@@ -71,9 +71,40 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 - Task 3: índices Mongo para kds_tokens
 - Task 5: 404 handling em POST /kds/concluir mesa branch
 
+---
+
+**DELIVERY COMPLETO — 12/12 TASKS COMPLETAS ✅**
+Implementacao via subagent-driven-development, plano executado completamente (`docs/plans/2026-08-13-delivery-completo-implementation.md`).
+
+**Status: 100% PRONTO PARA MERGE E DEPLOY**
+
+✅ **Backend (Tasks 1-8):** 
+- Migration 0017_delivery.sql: 6 colunas em `pedidos` (entrega_endereco, entrega_taxa, entrega_tempo_estimado_min, entregador_id, entregador_nome, saiu_para_entrega_em)
+- Tabela `entregadores` com RLS por empresa_id
+- Domain contracts: Entregador, EmpresaDeliveryConfig, PedidoStatus += 'saiu_para_entrega'
+- Repositories: Supabase + MongoDB com interface idêntica
+- API CRUD entregadores: GET, POST, PUT, DELETE (soft-delete)
+- Endpoints pedidos: POST/PUT com defaults de config, PATCH /status com saiu_para_entrega + snapshot entregador
+- Endpoint empresa: PUT /empresa aceita config.delivery (taxa_padrao, tempo_estimado_min)
+- Cálculo: total = subtotal - desconto + acrescimo + entrega_taxa
+
+✅ **Frontend (Tasks 9-12):**
+- Empresa config screen: bloco Delivery com taxa/tempo + CRUD entregadores inline
+- Pedido dialog: campos endereço/taxa/tempo (pré-preenchidos de cliente + config), resumo de valores com linha de taxa
+- Pedidos list: filtro por tipo, cards delivery com endereço/taxa/entregador/tempo elapsed, destaque atrasados, modal seletor de entregador
+- Cupom: linha "Taxa de Entrega" em valores, endereço no rodapé
+
+**Ledger completo:** `.superpowers/sdd/2026-08-13-delivery-completo-implementation/progress.md`
+**Spec e plan:** `docs/superpowers/specs/2026-08-13-delivery-completo-design.md` + `docs/superpowers/plans/2026-08-13-delivery-completo-implementation.md`
+
+**Status de commits:** Todos 12 tasks commitados e pushed para GitHub. EasyPanel auto-deploy iniciado.
+
+---
+
 **Proximos passos (quando houver novos issues):**
 1. Corrigir os 2 deferred findings KDS (se necessário)
 2. Monitorar em produção para outros issues
+3. Iniciar próxima feature (ver §11)
 
 ---
 
@@ -101,8 +132,8 @@ Implementado em 2026-08-13 (mesma sessao de conclusao do KDS).
    `docker start ros-mongo-local` -> `yarn dev:no-reload`. Detalhes no §8.
 3. Saude do servidor: `GET /api/health`. Se vier `"status":"degraded"`, o
    campo `config_faltando` diz exatamente qual variavel esta faltando.
-4. Proximas frentes no §11 — a impressao (item 1 da lista) sai da pendencia;
-   os proximos dois itens priorizados sao KDS e delivery completo.
+4. Proximas frentes no §11 — os primeiros 3 itens da lista foram completos:
+   impressao, KDS e delivery. Proximo: fechamento de caixa ou estoque.
 
 ---
 
@@ -542,13 +573,10 @@ ainda travam a operacao diaria de um restaurante real):
 
 - [x] ~~Impressao de pedido para a cozinha~~ — **feito nesta sessao**
       (§4.1). Falta so o `git push` para publicar (§0).
-- [ ] **Tela de cozinha (KDS).** O papel `COZINHA` existe mas nao tem tela
-      propria — hoje ve o mesmo dashboard do gerente. O padrao e uma tela
-      grande, tocavel, com pedidos em colunas por status e cronometro.
-- [ ] **Delivery completo.** `tipo: 'delivery'` existe, mas **nao ha endereco
-      de entrega, taxa, tempo estimado nem entregador** (verificado: zero
-      ocorrencias). Na pratica um delivery e igual a um balcao, so com rotulo
-      diferente.
+- [x] ~~Tela de cozinha (KDS)~~ — **implementado em 2026-08-13**
+      (11 tasks, subagent-driven, pronto para produção).
+- [x] ~~Delivery completo~~ — **implementado em 2026-08-13**
+      (12 tasks, endereço + taxa + tempo estimado + entregador + status, pronto para produção).
 - [ ] **Fechamento de caixa** (flag `caixa` ja reservada): abrir/fechar,
       sangria, conferencia.
 - [ ] **Estoque** (flag `estoque` ja reservada): baixa automatica na venda.
