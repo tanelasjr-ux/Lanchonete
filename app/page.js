@@ -1036,6 +1036,21 @@ function UsuarioDialog({ data, roles, onClose, onSave }) {
 function Empresa({ reload }) {
   const [f, setF] = useState(null)
   useEffect(() => { api('/empresa').then(setF).catch((e) => toast.error(e.message)) }, [])
+  /* --- KDS: links tokenizados para a TV/tablet da cozinha --- */
+  const [tokens, setTokens] = useState([])
+  const carregarTokens = () => api('/kds/tokens').then(setTokens).catch((e) => toast.error(e.message))
+  useEffect(() => { carregarTokens() }, [])
+  const gerarToken = async (modo) => {
+    try {
+      const t = await api('/kds/tokens', { method: 'POST', body: { modo } })
+      setTokens((s) => [t, ...s])
+      toast.success('Link gerado')
+    } catch (e) { toast.error(e.message) }
+  }
+  const revogarToken = async (id) => {
+    try { await api(`/kds/tokens/${id}`, { method: 'DELETE' }); carregarTokens(); toast.success('Link revogado') } catch (e) { toast.error(e.message) }
+  }
+  const linkDoToken = (token) => `${window.location.origin}/?kds_tv=${token}`
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
   const setAp = (k, v) => setF((s) => ({ ...s, config: { ...s.config, appearance: { ...(s.config?.appearance || {}), [k]: v } } }))
   const setMet = (k, v) => setF((s) => ({ ...s, config: { ...s.config, pagamentos: { ...(s.config?.pagamentos || {}), metodos: { ...(s.config?.pagamentos?.metodos || {}), [k]: v } } } }))
@@ -1090,7 +1105,7 @@ function Empresa({ reload }) {
     <div className="space-y-6 max-w-3xl">
       <PageHeader title="Configuracoes" description="Personalize os dados, a identidade visual e as formas de pagamento." />
       <Tabs defaultValue="dados">
-        <TabsList><TabsTrigger value="dados">Empresa</TabsTrigger><TabsTrigger value="aparencia">Aparencia</TabsTrigger><TabsTrigger value="pagamentos">Pagamentos</TabsTrigger><TabsTrigger value="modulos">Modulos</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="dados">Empresa</TabsTrigger><TabsTrigger value="aparencia">Aparencia</TabsTrigger><TabsTrigger value="pagamentos">Pagamentos</TabsTrigger><TabsTrigger value="modulos">Modulos</TabsTrigger><TabsTrigger value="kds">Cozinha (KDS)</TabsTrigger></TabsList>
 
         <TabsContent value="dados" className="mt-4">
           <Card><CardHeader><CardTitle className="text-base">Dados da empresa</CardTitle></CardHeader><CardContent className="space-y-4">
@@ -1175,6 +1190,38 @@ function Empresa({ reload }) {
               <div key={n} className="flex items-center justify-between rounded-lg border p-3"><span className="text-sm">{n}</span><Badge variant="outline" className={flags[key] ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{flags[key] ? 'Ativo' : 'Em breve'}</Badge></div>
             ))}
           </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="kds" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Tela de cozinha (KDS)</CardTitle>
+              <CardDescription>
+                Links para a TV/tablet da cozinha ver os pedidos pendentes. Somente
+                leitura roda numa TV comum; com toque precisa de tela sensivel ao
+                toque para o cozinheiro marcar como pronto.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => gerarToken('leitura')}>Gerar link — somente leitura</Button>
+                <Button variant="outline" onClick={() => gerarToken('toque')}>Gerar link — com toque</Button>
+              </div>
+              <div className="space-y-2">
+                {tokens.length === 0 && <p className="text-sm text-muted-foreground">Nenhum link gerado ainda.</p>}
+                {tokens.filter((t) => !t.revogado_em).map((t) => (
+                  <div key={t.id} className="flex items-center justify-between gap-3 border rounded-lg p-3 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2"><Badge variant="secondary">{t.modo === 'toque' ? 'Com toque' : 'Somente leitura'}</Badge></div>
+                      <div className="truncate text-xs text-muted-foreground mt-1">{linkDoToken(t.token)}</div>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(linkDoToken(t.token)); toast.success('Link copiado') }}>Copiar</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => revogarToken(t.id)}>Revogar</Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
@@ -1645,7 +1692,7 @@ const NAV = [
   { key: 'empresa', label: 'Empresa', icon: Building2, perm: 'empresa' },
   { key: 'integracoes', label: 'Integrações', icon: Plug, perm: 'integracoes' },
   { key: 'auditoria', label: 'Auditoria', icon: ScrollText, perm: 'auditoria' },
-  { key: 'kds_concluir', label: 'Cozinha (KDS)', icon: ChefHat, perm: 'pedidos' },
+  { key: 'kds_concluir', label: 'Cozinha', icon: ChefHat, perm: 'pedidos' },
 ]
 
 function App() {
