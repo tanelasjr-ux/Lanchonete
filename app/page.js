@@ -654,8 +654,14 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
     api('/produtos').then(setProds).catch(() => {})
     api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {})
   }, [])
-  const add = (p) => setItens((s) => { const ex = s.find((i) => i.produto_id === p.id); if (ex) return s.map((i) => i.produto_id === p.id ? { ...i, quantidade: i.quantidade + 1 } : i); return [...s, { produto_id: p.id, nome: p.nome, preco: p.preco, quantidade: 1 }] })
-  const dec = (id) => setItens((s) => s.map((i) => i.produto_id === id ? { ...i, quantidade: Math.max(0, i.quantidade - 1) } : i).filter((i) => i.quantidade > 0))
+  const add = (p, observacao = '') => setItens((s) => {
+    const ex = s.find((i) => i.produto_id === p.id && (i.observacao || '') === observacao)
+    if (ex) return s.map((i) => i === ex ? { ...i, quantidade: i.quantidade + 1 } : i)
+    return [...s, { produto_id: p.id, nome: p.nome, preco: p.preco, quantidade: 1, observacao }]
+  })
+  const dec = (id, observacao = '') => setItens((s) => s
+    .map((i) => (i.produto_id === id && (i.observacao || '') === observacao) ? { ...i, quantidade: Math.max(0, i.quantidade - 1) } : i)
+    .filter((i) => i.quantidade > 0))
   const subtotal = itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
   const descontoNum = Math.max(0, Number(desconto) || 0)
   const acrescimoNum = Math.max(0, Number(acrescimo) || 0)
@@ -670,7 +676,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
       if (tipo === 'mesa') {
         if (!mesa_id) { setSaving(false); return toast.error('Selecione a mesa') }
         const comanda = await api(`/mesas/${mesa_id}/abrir`, { method: 'POST', body: { cliente_id, pessoas } })
-        for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade } })
+        for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade, observacao: it.observacao || '' } })
         toast.success('Comanda aberta na mesa')
       } else {
         await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento, desconto: descontoNum, acrescimo: acrescimoNum } })
@@ -714,11 +720,19 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
             <Separator />
             <div className="space-y-2 max-h-40 overflow-auto ros-scroll">
               {itens.length === 0 && <p className="text-sm text-muted-foreground">Nenhum item adicionado.</p>}
-              {itens.map((i) => (
-                <div key={i.produto_id} className="flex items-center justify-between text-sm">
-                  <span className="flex-1">{i.nome}</span>
-                  <div className="flex items-center gap-2"><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => dec(i.produto_id)}><Minus className="h-3 w-3" /></Button><span className="w-5 text-center">{i.quantidade}</span><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => add({ id: i.produto_id, nome: i.nome, preco: i.preco })}><Plus className="h-3 w-3" /></Button></div>
-                  <span className="w-20 text-right font-medium">{brl(i.preco * i.quantidade)}</span>
+              {itens.map((i, idx) => (
+                <div key={`${i.produto_id}-${i.observacao || ''}`} className="space-y-1 text-sm border-b pb-2 last:border-0">
+                  <div className="flex items-center justify-between">
+                    <span className="flex-1">{i.nome}</span>
+                    <div className="flex items-center gap-2"><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => dec(i.produto_id, i.observacao)}><Minus className="h-3 w-3" /></Button><span className="w-5 text-center">{i.quantidade}</span><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => add({ id: i.produto_id, nome: i.nome, preco: i.preco }, i.observacao)}><Plus className="h-3 w-3" /></Button></div>
+                    <span className="w-20 text-right font-medium">{brl(i.preco * i.quantidade)}</span>
+                  </div>
+                  <Input
+                    placeholder="Observacao (opcional) — ex: sem cebola"
+                    className="h-7 text-xs"
+                    value={i.observacao || ''}
+                    onChange={(e) => setItens((s) => s.map((it, ix) => ix === idx ? { ...it, observacao: e.target.value } : it))}
+                  />
                 </div>
               ))}
             </div>
@@ -1346,13 +1360,14 @@ function ComandaDialog({ comandaId, onClose }) {
   const [prods, setProds] = useState([])
   const [mesasLivres, setMesasLivres] = useState([])
   const [addOpen, setAddOpen] = useState(false)
+  const [obsPendente, setObsPendente] = useState('')
   const [pay, setPay] = useState({ metodo: 'dinheiro', valor: '' })
   const [pix, setPix] = useState(null)
   const [transferOpen, setTransferOpen] = useState(false)
   const load = useCallback(async () => { const d = await api(`/comandas/${comandaId}`); setC(d) }, [comandaId])
   useEffect(() => { load().catch((e) => toast.error(e.message)); api('/produtos').then(setProds).catch(() => {}); api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {}) }, [load])
   if (!c) return <Dialog open onOpenChange={onClose}><DialogContent><Empty>Carregando comanda…</Empty></DialogContent></Dialog>
-  const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1 } }); setC(d) } catch (e) { toast.error(e.message) } }
+  const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1, observacao: obsPendente } }); setC(d); setObsPendente('') } catch (e) { toast.error(e.message) } }
   const setQty = async (item, q) => { if (q <= 0) { const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'DELETE' }); setC(d); return } const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'PUT', body: { quantidade: q } }); setC(d) }
   const updateComanda = async (patch) => { try { const d = await api(`/comandas/${comandaId}`, { method: 'PUT', body: patch }); setC(d) } catch (e) { toast.error(e.message) } }
   const addPay = async () => { if (!pay.valor) return toast.error('Informe o valor'); try { const d = await api(`/comandas/${comandaId}/pagamentos`, { method: 'POST', body: { metodo: pay.metodo, valor: Number(pay.valor) } }); setC(d); setPay({ metodo: 'dinheiro', valor: '' }); toast.success('Pagamento registrado') } catch (e) { toast.error(e.message) } }
@@ -1372,8 +1387,11 @@ function ComandaDialog({ comandaId, onClose }) {
           <div className="md:col-span-3 space-y-3">
             <div className="flex items-center justify-between"><Label>Itens da comanda</Label><Button size="sm" variant="outline" onClick={() => setAddOpen(!addOpen)}><Plus className="h-4 w-4 mr-1" />Adicionar item</Button></div>
             {addOpen && (
-              <div className="border rounded-lg divide-y max-h-40 overflow-auto ros-scroll">
-                {prods.map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
+              <div className="space-y-2">
+                <Input placeholder="Observacao (opcional) — ex: sem cebola" className="h-8 text-xs" value={obsPendente} onChange={(e) => setObsPendente(e.target.value)} />
+                <div className="border rounded-lg divide-y max-h-40 overflow-auto ros-scroll">
+                  {prods.map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
+                </div>
               </div>
             )}
             <div className="border rounded-lg divide-y">
