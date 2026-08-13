@@ -15,7 +15,7 @@ export type Papel = 'OWNER' | 'ADMIN' | 'GERENTE' | 'ATENDENTE' | 'COZINHA';
  * ('NOVO'..'CANCELADO'). PUT /pedidos aceita ambos sem conversao.
  */
 export type PedidoStatus =
-  | 'recebido' | 'em_preparo' | 'pronto' | 'concluido' | 'cancelado'
+  | 'recebido' | 'em_preparo' | 'pronto' | 'concluido' | 'cancelado' | 'saiu_para_entrega'
   | 'NOVO' | 'CONFIRMADO' | 'EM_PREPARACAO' | 'PRONTO' | 'SAIU_PARA_ENTREGA' | 'ENTREGUE' | 'CANCELADO';
 export type PedidoTipo = 'balcao' | 'delivery' | 'retirada' | 'mesa';
 export type Pagamento = 'pix' | 'cartao' | 'dinheiro';
@@ -52,10 +52,16 @@ export interface EmpresaPagamentosConfig {
   taxa_servico_padrao: number;
 }
 
+export interface EmpresaDeliveryConfig {
+  taxa_padrao: number;
+  tempo_estimado_min: number | null;
+}
+
 export interface EmpresaConfig {
   feature_flags: EmpresaFeatureFlags;
   appearance: EmpresaAppearance;
   pagamentos: EmpresaPagamentosConfig;
+  delivery?: EmpresaDeliveryConfig;
 }
 
 export interface Empresa {
@@ -100,6 +106,10 @@ export interface Cliente extends TenantScoped {
   observacoes: string; total_pedidos: number; total_gasto: number;
 }
 
+export interface Entregador extends TenantScoped {
+  id: UUID; nome: string; telefone: string; ativo: boolean; created_at: string;
+}
+
 /**
  * `preco` e `nome` sao um snapshot no momento da venda — nunca recalculados a
  * partir do produto atual. Se o produto mudar de preco depois, pedidos e
@@ -137,6 +147,9 @@ export interface Pedido extends TenantScoped {
   subtotal: number; desconto: number; acrescimo: number; total: number;
   /** Preenchido quando o pedido nasce do fechamento de uma comanda. */
   comanda_id?: UUID | null;
+  /** Campos de delivery (migration 0017). */
+  entrega_endereco: string; entrega_taxa: number; entrega_tempo_estimado_min: number | null;
+  entregador_id: UUID | null; entregador_nome: string; saiu_para_entrega_em: string | null;
   created_at: string; updated_at: string;
 }
 
@@ -270,6 +283,7 @@ export interface ClienteRepository extends Repository<Cliente>, BulkCreatable<Cl
   /** Usado no dashboard (totalClientes) sem precisar carregar a lista inteira. */
   count(empresaId: UUID): Promise<number>;
 }
+export interface EntregadorRepository extends Repository<Entregador>, BulkCreatable<Entregador> {}
 export interface PedidoRepository extends Repository<Pedido>, BulkCreatable<Pedido> {
   /** numero sequencial por empresa; nao atomico hoje (count+1), ver auditoria. */
   nextNumero(empresaId: UUID): Promise<number>;
