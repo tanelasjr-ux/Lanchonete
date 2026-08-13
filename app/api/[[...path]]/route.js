@@ -995,24 +995,46 @@ async function handler(request, { params }) {
       for (const k of ['status', 'tipo', 'pagamento', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
 
       const finais = ['concluido', 'ENTREGUE']
+      const travados = [...finais, 'cancelado', 'CANCELADO']
+
+      /**
+       * Edicao dos itens de um pedido ja criado (Fix: operador precisava
+       * poder corrigir um pedido "Recebido" — trocar itens, nao so status).
+       * Bloqueada junto com desconto/acrescimo pelo mesmo motivo: depois de
+       * concluido/cancelado o pedido ja virou (ou nao vira mais) receita, e
+       * mudar os itens por baixo deixaria o financeiro divergente em silencio.
+       */
+      let itensChanged = false
+      if (b.itens !== undefined) {
+        if (travados.includes(pedido.status)) {
+          return err('Nao e possivel alterar os itens de um pedido ja concluido ou cancelado.', 409)
+        }
+        const itens = Array.isArray(b.itens) ? b.itens : []
+        if (!itens.length) return err('Pedido precisa de ao menos 1 item')
+        upd.itens = itens
+        itensChanged = true
+      }
 
       /**
        * Ajuste manual de valor (desconto/acrescimo). Recalcula o total a partir
-       * do subtotal JA GRAVADO — nunca a partir do que o cliente enviar — para
-       * que ninguem consiga alterar o valor dos itens por esta rota.
+       * do subtotal JA GRAVADO (ou, se os itens tambem mudaram nesta mesma
+       * requisicao, do novo subtotal dos itens) — nunca a partir do que o
+       * cliente enviar — para que ninguem consiga alterar o valor por esta rota.
        *
        * Bloqueado depois de concluido: nesse ponto o pedido ja virou receita em
        * `transacoes` e ja somou nas metricas do cliente. Mudar o total aqui
        * deixaria o financeiro divergente em silencio; o caminho correto para
        * isso e um lancamento de estorno/ajuste no financeiro.
        */
-      if (b.desconto !== undefined || b.acrescimo !== undefined) {
+      if (b.desconto !== undefined || b.acrescimo !== undefined || itensChanged) {
         if (finais.includes(pedido.status)) {
           return err('Nao e possivel alterar o valor de um pedido ja concluido. Registre um ajuste no financeiro.', 409)
         }
         // Pedidos criados antes da migration 0015 tem subtotal 0; nesses, o
         // `total` gravado era exatamente a soma dos itens.
-        const subtotalBase = Number(pedido.subtotal) || Number(pedido.total) || 0
+        const subtotalBase = itensChanged
+          ? round2(upd.itens.reduce((s, it) => s + Number(it.preco) * Number(it.quantidade || 1), 0))
+          : (Number(pedido.subtotal) || Number(pedido.total) || 0)
         let valores
         try {
           valores = computePedidoValores(

@@ -509,6 +509,7 @@ function Pedidos() {
   const [pedidos, setPedidos] = useState([])
   const [dlg, setDlg] = useState(false)
   const [ajuste, setAjuste] = useState(null) // pedido em ajuste de valor
+  const [editar, setEditar] = useState(null) // pedido "recebido" sendo editado (itens/tipo/observacoes)
   const load = useCallback(() => api('/pedidos').then(setPedidos).catch((e) => toast.error(e.message)), [])
   useEffect(() => { load() }, [load])
   const move = async (p, status) => { try { await api(`/pedidos/${p.id}`, { method: 'PUT', body: { status } }); load() } catch (e) { toast.error(e.message) } }
@@ -552,6 +553,11 @@ function Pedidos() {
                         <div className="flex flex-col gap-2 pt-1">
                           {next && <Button size="sm" className="w-full h-8" onClick={() => move(p, next)}>{STATUS[next].label} <ArrowUpRight className="h-3.5 w-3.5 ml-1" /></Button>}
                           <div className="flex flex-wrap gap-2">
+                            {p.status === 'recebido' && (
+                              <Button size="sm" variant="outline" className="h-8" title="Editar pedido (itens, tipo, observações)" onClick={() => setEditar(p)}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             {!FINAIS.includes(p.status) && (
                               <Button size="sm" variant="outline" className="h-8" title="Ajustar valor (desconto/acrescimo)" onClick={() => setAjuste(p)}>
                                 <Percent className="h-3.5 w-3.5" />
@@ -583,6 +589,7 @@ function Pedidos() {
       </div>
       {dlg && <PedidoDialog onClose={() => setDlg(false)} onSaved={() => { setDlg(false); load() }} />}
       {ajuste && <AjusteValorDialog pedido={ajuste} onClose={() => setAjuste(null)} onSaved={() => { setAjuste(null); load() }} />}
+      {editar && <PedidoDialog pedido={editar} onClose={() => setEditar(null)} onSaved={() => { setEditar(null); load() }} />}
     </div>
   )
 }
@@ -650,22 +657,32 @@ function AjusteValorDialog({ pedido, onClose, onSaved }) {
     </Dialog>
   )
 }
-function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
+/**
+ * Cria um pedido novo OU edita um ja existente (Fix: pedidos "Recebido" nao
+ * podiam ser corrigidos — so tinham botoes de status/cancelar). Passar
+ * `pedido` entra em modo edicao: reaproveita a mesma UI de itens/tipo, troca
+ * POST /pedidos por PUT /pedidos/:id e esconde o que nao se aplica a um
+ * pedido ja criado (tipo "mesa" e a troca de cliente, que essa rota nao
+ * atualiza no backend).
+ */
+function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }) {
+  const isEditing = !!pedido
   const [prods, setProds] = useState([])
   const [mesasLivres, setMesasLivres] = useState([])
-  const [itens, setItens] = useState([])
-  const [cliente_id, setCliente] = useState(clienteInicial)
-  const [tipo, setTipo] = useState('balcao')
-  const [pagamento, setPag] = useState('pix')
+  const [itens, setItens] = useState(() => (pedido?.itens || []).map((i) => ({ ...i })))
+  const [cliente_id, setCliente] = useState(pedido?.cliente_id ?? clienteInicial)
+  const [tipo, setTipo] = useState(pedido?.tipo || 'balcao')
+  const [pagamento, setPag] = useState(pedido?.pagamento || 'pix')
   const [mesa_id, setMesaId] = useState('')
   const [pessoas, setPessoas] = useState(2)
-  const [desconto, setDesconto] = useState('')
-  const [acrescimo, setAcrescimo] = useState('')
+  const [observacoes, setObservacoes] = useState(pedido?.observacoes || '')
+  const [desconto, setDesconto] = useState(pedido?.desconto ? String(pedido.desconto) : '')
+  const [acrescimo, setAcrescimo] = useState(pedido?.acrescimo ? String(pedido.acrescimo) : '')
   const [saving, setSaving] = useState(false)
   useEffect(() => {
     api('/produtos').then(setProds).catch(() => {})
-    api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {})
-  }, [])
+    if (!isEditing) api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {})
+  }, [isEditing])
   const add = (p, observacao = '') => setItens((s) => {
     const ex = s.find((i) => i.produto_id === p.id && (i.observacao || '') === observacao)
     if (ex) return s.map((i) => i === ex ? { ...i, quantidade: i.quantidade + 1 } : i)
@@ -685,13 +702,16 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
     if (descontoExcede) return toast.error('O desconto nao pode ser maior que o valor do pedido')
     setSaving(true)
     try {
-      if (tipo === 'mesa') {
+      if (isEditing) {
+        await api(`/pedidos/${pedido.id}`, { method: 'PUT', body: { itens, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum } })
+        toast.success('Pedido atualizado')
+      } else if (tipo === 'mesa') {
         if (!mesa_id) { setSaving(false); return toast.error('Selecione a mesa') }
         const comanda = await api(`/mesas/${mesa_id}/abrir`, { method: 'POST', body: { cliente_id, pessoas } })
         for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade, observacao: it.observacao || '' } })
         toast.success('Comanda aberta na mesa')
       } else {
-        await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento, desconto: descontoNum, acrescimo: acrescimoNum } })
+        await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum } })
         toast.success('Pedido criado')
       }
       onSaved()
@@ -700,7 +720,10 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
-        <DialogHeader><DialogTitle>Novo pedido</DialogTitle><DialogDescription>Selecione os itens, o cliente e o tipo de atendimento.</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{isEditing ? `Editar pedido #${pedido.numero}` : 'Novo pedido'}</DialogTitle>
+          <DialogDescription>{isEditing ? 'Ajuste os itens, o tipo de atendimento e as observações.' : 'Selecione os itens, o cliente e o tipo de atendimento.'}</DialogDescription>
+        </DialogHeader>
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Produtos</Label>
@@ -713,12 +736,21 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
             </div>
           </div>
           <div className="space-y-3">
-            <ClientePicker value={cliente_id} onChange={setCliente} />
+            {/* Troca de cliente fica de fora da edicao: PUT /pedidos/:id nao
+                atualiza cliente_id/cliente_nome no backend, entao mostrar o
+                picker aqui enganaria o operador (pareceria editavel e nao e). */}
+            {isEditing ? (
+              <div className="space-y-1"><Label className="text-xs">Cliente</Label>
+                <div className="rounded-lg border p-2.5 text-sm">{pedido.cliente_nome}</div>
+              </div>
+            ) : (
+              <ClientePicker value={cliente_id} onChange={setCliente} />
+            )}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1"><Label className="text-xs">Tipo</Label>
-                <Select value={tipo} onValueChange={setTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="balcao">Balcao</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem><SelectItem value="mesa">Mesa</SelectItem></SelectContent></Select>
+                <Select value={tipo} onValueChange={setTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="balcao">Balcao</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem>{!isEditing && <SelectItem value="mesa">Mesa</SelectItem>}</SelectContent></Select>
               </div>
-              {tipo === 'mesa' ? (
+              {tipo === 'mesa' && !isEditing ? (
                 <div className="space-y-1"><Label className="text-xs">Mesa</Label>
                   <Select value={mesa_id} onValueChange={setMesaId}><SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger><SelectContent>{mesasLivres.map((m) => <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>)}</SelectContent></Select>
                 </div>
@@ -728,7 +760,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
                 </div>
               )}
             </div>
-            {tipo === 'mesa' && <div className="space-y-1"><Label className="text-xs">Pessoas</Label><Input type="number" min={1} value={pessoas} onChange={(e) => setPessoas(e.target.value)} /></div>}
+            {tipo === 'mesa' && !isEditing && <div className="space-y-1"><Label className="text-xs">Pessoas</Label><Input type="number" min={1} value={pessoas} onChange={(e) => setPessoas(e.target.value)} /></div>}
             <Separator />
             <div className="space-y-2 max-h-40 overflow-auto ros-scroll">
               {itens.length === 0 && <p className="text-sm text-muted-foreground">Nenhum item adicionado.</p>}
@@ -748,6 +780,16 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
                 </div>
               ))}
             </div>
+            {/* Observacao geral do pedido (ex: "sem talheres", "entregar na
+                portaria"). Nao se aplica ao tipo "mesa": ali quem acumula
+                observacoes e a comanda, item a item, na tela de Mesas. */}
+            {tipo !== 'mesa' && (
+              <div className="space-y-1">
+                <Label className="text-xs" htmlFor="pedido-observacoes">Observações do pedido</Label>
+                <Textarea id="pedido-observacoes" placeholder="Ex: sem talheres, entregar na portaria…" className="text-sm min-h-16"
+                  value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
+              </div>
+            )}
             {/* Ajuste de valor: so faz sentido no pedido direto. No tipo "mesa"
                 quem controla desconto/taxa e a comanda, na tela de Mesas. */}
             {tipo !== 'mesa' && (
@@ -776,7 +818,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null }) {
             </div>
           </div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{tipo === 'mesa' ? 'Abrir comanda' : 'Criar pedido'}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{isEditing ? 'Salvar alterações' : (tipo === 'mesa' ? 'Abrir comanda' : 'Criar pedido')}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -1565,19 +1607,23 @@ function ComandaDialog({ comandaId, onClose }) {
               {(c.pagamentos || []).length > 0 && <div className="space-y-1 pt-1">{c.pagamentos.map((p) => <div key={p.id} className="flex justify-between text-xs"><span className="text-muted-foreground capitalize">{p.metodo.replace('_', ' ')}</span><span className="text-emerald-500">{brl(p.valor)}</span></div>)}</div>}
             </CardContent></Card>
 
-            <div className="grid grid-cols-3 gap-2">
+            {/* 3 botoes lado a lado (grid-cols-3) espremiam "Fechar conta" — o
+                texto era cortado no limite direito do dialog mesmo em tela
+                cheia, ja que a largura disponivel aqui e a coluna de resumo,
+                nao o viewport. Acao primaria ganha linha propria, full-width. */}
+            <div className="grid grid-cols-2 gap-2">
               <Button variant="outline" onClick={() => setTransferOpen(!transferOpen)}><ArrowRightLeft className="h-4 w-4 mr-1" />Transferir</Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline"><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
+                  <Button variant="outline" className="w-full"><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuItem onClick={() => imprimirComanda(c, 'cozinha')}>Via cozinha</DropdownMenuItem>
                   <DropdownMenuItem onClick={() => imprimirComanda(c, 'cliente')}>Via cliente (conta)</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button onClick={fechar}><CheckCircle2 className="h-4 w-4 mr-1" />Fechar conta</Button>
             </div>
+            <Button className="w-full" onClick={fechar}><CheckCircle2 className="h-4 w-4 mr-1" />Fechar conta</Button>
             {transferOpen && (
               <div className="border rounded-lg p-2 max-h-32 overflow-auto ros-scroll">
                 {mesasLivres.length === 0 && <div className="text-xs text-muted-foreground p-2">Nenhuma mesa livre.</div>}
