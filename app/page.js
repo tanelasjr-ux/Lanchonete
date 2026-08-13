@@ -32,6 +32,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'sonner'
 import { imprimirCupom } from '@/components/cupom'
 import { dadosCupomPedido, dadosCupomComanda } from '@/lib/cupom-dados'
+import { KDSTv, KDSView, CozinhaPendentes } from '@/components/kds'
 
 /* ============================ API CLIENT ============================ */
 const TOKEN_KEY = 'ros_token'
@@ -1644,6 +1645,7 @@ const NAV = [
   { key: 'empresa', label: 'Empresa', icon: Building2, perm: 'empresa' },
   { key: 'integracoes', label: 'Integrações', icon: Plug, perm: 'integracoes' },
   { key: 'auditoria', label: 'Auditoria', icon: ScrollText, perm: 'auditoria' },
+  { key: 'kds_concluir', label: 'Cozinha (KDS)', icon: ChefHat, perm: 'pedidos' },
 ]
 
 function App() {
@@ -1651,6 +1653,12 @@ function App() {
   const [view, setView] = useState('dashboard')
   const [mobileNav, setMobileNav] = useState(false)
   const { theme, setTheme } = useTheme()
+
+  // TV do KDS: acesso por link tokenizado, sem login. Lido direto do
+  // browser (nao via useSearchParams do Next) para nao exigir <Suspense>
+  // do App Router; este componente ja e 'use client' e a leitura e so no
+  // primeiro render.
+  const kdsTvToken = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('kds_tv') : null
 
   /**
    * `setTheme` do next-themes MUDA DE IDENTIDADE a cada troca de tema (ele
@@ -1705,8 +1713,11 @@ function App() {
     temaInicialAplicado.current = false
   }
 
+  if (kdsTvToken) return <KDSTv token={kdsTvToken} />
+
   if (me === undefined) return <div className="min-h-screen grid place-items-center bg-background"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
   if (me === null) return <><AuthScreen onAuth={() => loadMe()} /><Toaster richColors position="top-right" /></>
+  if (me.usuario?.papel === 'COZINHA') return <KDSView apiFetch={api} />
 
   const perms = me.permissions || []
   const has = (p) => perms.includes('*') || perms.includes(p)
@@ -1778,6 +1789,7 @@ function App() {
           {view === 'empresa' && <Empresa reload={loadMe} />}
           {view === 'integracoes' && <Integracoes />}
           {view === 'auditoria' && <Auditoria />}
+          {view === 'kds_concluir' && <CozinhaPendentes apiFetch={api} />}
         </main>
       </div>
       <Toaster richColors position="top-right" />
