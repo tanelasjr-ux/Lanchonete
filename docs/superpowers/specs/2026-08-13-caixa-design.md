@@ -210,10 +210,15 @@ ou nulo).
 `caixaRepo` e `caixaMovimentoRepo` nos dois backends (Mongo e Supabase),
 registrados na factory, no mesmo formato do `entregadorRepo`.
 
-O `transacaoRepo` ganha um metodo de agregacao por caixa:
-`somarPorFormaPagamento(empresaId, caixaId)` retornando
-`{ forma_pagamento, tipo, total }[]` — usado pelo calculo do esperado e pelo
-grafico de pizza dos relatorios (item 5 do roadmap).
+O `transacaoRepo` ganha duas consultas: `findByCaixa(empresaId, caixaId)`, que
+alimenta o calculo do esperado, e `findByPedido(empresaId, pedidoId)`, que
+alimenta a validacao de estorno acumulado.
+
+A agregacao em si — total por forma de pagamento — sai do modulo puro
+`lib/caixa.js`, nao do repositorio. Os tres pontos que precisam do valor
+esperado (consulta do caixa, fechamento e validacao de sangria) chamam a mesma
+funcao, e o mesmo resumo alimenta depois o grafico de pizza dos relatorios
+(item 5 do roadmap).
 
 ## 7. Interface
 
