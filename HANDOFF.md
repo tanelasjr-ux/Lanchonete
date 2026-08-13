@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-12 (impressao de cupom publicada + bug de pagina em branco corrigido)
+Ultima atualizacao: 2026-08-12 (KDS backend 80% completo — 7/11 tasks, 1 em fix, 3 frontend pendentes)
 
 ## Como usar este arquivo
 
@@ -38,6 +38,26 @@ melhorias publicadas. EasyPanel implanta automaticamente ao receber push.
    Ver §4.1 (decisao estrutural) e §10 armadilha 21.
 5. **Correcao do bug de impressao** (container id no body, nao no JSX) —
    imprimia pagina em branco em producao; achado testando ao vivo.
+
+**EM PROGRESSO — Kitchen Display System (KDS):**
+Implementacao via subagent-driven-development com 11-task plan (`docs/plans/KDS-IMPLEMENTATION-PLAN.md`).
+
+**Status:**
+- ✅ Task 1-5, 7: COMPLETAS (migration 0016 + indices, domain + repo, kdsTokenRepository, dual-auth endpoints GET/kds/pendentes + POST/kds/concluir, token mgmt endpoints, campo observacao UI)
+- ⏳ Task 6: FIX ROUND 1 (background) — encontrados 2 important findings plan-mandated: GET /kds/tokens precisa filtrar revogado_em server-side; testes precisam cobrir GET listing + 403 permission denial
+- ⏳ Task 8-11: PENDENTES (components KDS, ligar App(), config screen TV, validacao final)
+
+**Ledger completo:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/progress.md`
+**Briefs por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-brief.md`
+**Reports por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-report.md` (Task 6 em progresso)
+
+**Proximos passos apos retomar:**
+1. Aguardar notificacao de Task 6 fix round 1 completar
+2. Revisar fix de Task 6 (deve filtrar revogado_em, adicionar testes)
+3. Despachar Task 8 (componentes KDS — KDSPainel, KDSTv, CozinhaPendentes)
+4. Despachar Task 9 (integrar KDS no App() — nav, query param kds_tv, papel COZINHA)
+5. Despachar Task 10 (config screen — gerar link TV)
+6. Despachar Task 11 (validacao final + testes)
 
 **Para retomar:**
 1. Usuarios com o app aberto precisam de Ctrl+Shift+R para limpar cache
