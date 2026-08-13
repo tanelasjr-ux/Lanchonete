@@ -39,15 +39,19 @@ const fmtDataHora = (d) => new Date(d).toLocaleString('pt-BR', { day: '2-digit',
  * @param {number} [dados.subtotal]
  * @param {number} [dados.desconto]
  * @param {number} [dados.acrescimo]
+ * @param {number} [dados.entregaTaxa]
  * @param {number} [dados.total]
  * @param {string} [dados.pagamento]
  * @param {string} [dados.observacoes]
+ * @param {string} [dados.tipo] — ex.: "delivery", "balcao", "retirada"
+ * @param {string} [dados.entregaEndereco]
  * @param {string|Date} [dados.criadoEm]
  */
 function CupomConteudo({ dados }) {
   const {
     via, empresa, titulo, subtitulo, clienteNome, operadorNome, itens = [],
-    subtotal, desconto, acrescimo, total, pagamento, observacoes, criadoEm,
+    subtotal, desconto, acrescimo, entregaTaxa, total, pagamento, observacoes, criadoEm,
+    tipo, entregaEndereco,
   } = dados
   const ehCliente = via === 'cliente'
 
@@ -91,6 +95,7 @@ function CupomConteudo({ dados }) {
           {subtotal !== undefined && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><span>{brl(subtotal)}</span></div>}
           {Number(desconto) > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Desconto</span><span>-{brl(desconto)}</span></div>}
           {Number(acrescimo) > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Acrescimo</span><span>+{brl(acrescimo)}</span></div>}
+          {tipo === 'delivery' && Number(entregaTaxa) > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Taxa Entrega</span><span>+{brl(entregaTaxa)}</span></div>}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}><span>TOTAL</span><span>{brl(total)}</span></div>
           {pagamento && <div style={{ marginTop: 4 }}>Pagamento: {pagamento}</div>}
         </div>
@@ -99,6 +104,12 @@ function CupomConteudo({ dados }) {
       {observacoes && (
         <div style={{ borderTop: '1px dashed #000', marginTop: 6, paddingTop: 4 }}>
           Obs: {observacoes}
+        </div>
+      )}
+
+      {tipo === 'delivery' && entregaEndereco && (
+        <div style={{ borderTop: '1px dashed #000', marginTop: 6, paddingTop: 4 }}>
+          Endereço: {entregaEndereco}
         </div>
       )}
 
