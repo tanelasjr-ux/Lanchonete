@@ -138,6 +138,53 @@ try:
     else:
         log_fail("GET /kds/pendentes sem auth", f"esperava 401, veio {resp.status_code}", critical=True)
 
+    print("\n6. Gestao de tokens da TV")
+    resp = requests.post(f"{BASE_URL}/kds/tokens", json={"modo": "toque"}, headers=headers_a)
+    if resp.status_code == 201 and resp.json()["modo"] == "toque":
+        log_pass("POST /kds/tokens - cria token modo toque")
+        tv_token = resp.json()["token"]
+        tv_token_id = resp.json()["id"]
+    else:
+        log_fail("POST /kds/tokens", resp.text, critical=True)
+        tv_token = None
+
+    resp = requests.get(f"{BASE_URL}/kds/pendentes?tv_token={tv_token}")
+    if resp.status_code == 200 and resp.json()["modo"] == "toque":
+        log_pass("GET /kds/pendentes?tv_token=... - le sem login, modo correto")
+    else:
+        log_fail("GET /kds/pendentes com tv_token", resp.text, critical=True)
+
+    # Token modo leitura nao pode concluir
+    resp = requests.post(f"{BASE_URL}/kds/tokens", json={"modo": "leitura"}, headers=headers_a)
+    tv_token_leitura = resp.json()["token"]
+    # O seed de registro ja abre 1 mesa demo - pega outra que ainda esteja livre.
+    mesas_a2 = requests.get(f"{BASE_URL}/mesas", headers=headers_a).json()
+    mesa_livre2 = next(m for m in mesas_a2 if m["status"] == "livre")
+    resp = requests.post(f"{BASE_URL}/mesas/{mesa_livre2['id']}/abrir", json={"pessoas": 1}, headers=headers_a)
+    comanda2 = resp.json()
+    resp = requests.post(f"{BASE_URL}/comandas/{comanda2['id']}/itens", json={"produto_id": produto_a["id"], "quantidade": 1}, headers=headers_a)
+    item2 = resp.json()["itens"][-1]
+
+    resp = requests.post(f"{BASE_URL}/kds/concluir?tv_token={tv_token_leitura}", json={"origem": "mesa", "id": item2["id"], "comanda_id": comanda2["id"]})
+    if resp.status_code == 403:
+        log_pass("POST /kds/concluir com token modo leitura - 403")
+    else:
+        log_fail("POST /kds/concluir com token modo leitura", f"esperava 403, veio {resp.status_code}", critical=True)
+
+    resp = requests.post(f"{BASE_URL}/kds/concluir?tv_token={tv_token}", json={"origem": "mesa", "id": item2["id"], "comanda_id": comanda2["id"]})
+    if resp.status_code == 200:
+        log_pass("POST /kds/concluir com token modo toque - 200")
+    else:
+        log_fail("POST /kds/concluir com token modo toque", resp.text, critical=True)
+
+    # Revogar e confirmar que para de funcionar
+    resp = requests.delete(f"{BASE_URL}/kds/tokens/{tv_token_id}", headers=headers_a)
+    resp = requests.get(f"{BASE_URL}/kds/pendentes?tv_token={tv_token}")
+    if resp.status_code == 401:
+        log_pass("Token revogado - GET /kds/pendentes retorna 401")
+    else:
+        log_fail("Token revogado ainda funciona", f"status {resp.status_code}", critical=True)
+
 except Exception as e:
     print(f"\nFATAL ERROR: {str(e)}")
     import traceback

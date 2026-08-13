@@ -762,6 +762,28 @@ async function handler(request, { params }) {
       return json({ logo: null, empresa: clean(atualizada) })
     }
 
+    /* ==================== KDS TOKENS (gestao dos links da TV) ==================== */
+    if (route === '/kds/tokens' && method === 'GET') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      const tokens = await kdsTokenRepo.listByEmpresa(ctx.empresa_id)
+      return json(tokens.map(clean))
+    }
+    if (route === '/kds/tokens' && method === 'POST') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      const modo = b.modo === 'toque' ? 'toque' : 'leitura'
+      const entity = { id: uuidv4(), empresa_id: ctx.empresa_id, token: uuidv4(), modo, criado_em: new Date(), revogado_em: null }
+      await kdsTokenRepo.create(entity)
+      await audit(repos, ctx, 'criar', 'kds_token', entity.id, { modo })
+      return json(clean(entity), 201)
+    }
+    if (seg[0] === 'kds' && seg[1] === 'tokens' && seg[2] && method === 'DELETE') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      await kdsTokenRepo.revoke(ctx.empresa_id, seg[2])
+      await audit(repos, ctx, 'revogar', 'kds_token', seg[2], {})
+      return json({ ok: true })
+    }
+
     /* ==================== USUARIOS ==================== */
     if (route === '/usuarios' && method === 'GET') {
       if (!can(ctx.papel, 'usuarios')) return err('Sem permissao', 403)
