@@ -58,11 +58,22 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 **Briefs por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-brief.md`
 **Reports por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-report.md` (Task 6 em progresso)
 
-**Proximos passos (nao urgentes):**
-1. Corrigir 2 deferred findings de KDS (nao-bloqueadores):
-   - Task 3: adicionar kds_tokens indices ao ensureMongoIndexes() para performance Mongo parity
-   - Task 5: standardizar 404 handling em POST /kds/concluir mesa branch (cosmético)
-2. Trabalhar nos 4 pontos de UX feedback (ver secao 12)
+**Status de bugs encontrados em produção (2026-08-13):**
+
+✅ **RESOLVIDOS:**
+- Hard refresh (Ctrl+Shift+R) resolveu cache de nome de mesa
+- TV setup descoberto e testado (funciona!)
+- Observações já estão implementadas (Task 7)
+
+❌ **PENDENTES (prioridade):**
+1. **Botão overflow em Comanda** — ao clicar numa mesa, o dialog que abre tem último botão (canto inferior direito) com texto cortado. NÃO é em "Configurar mesas", é na comanda aberta da mesa.
+2. **Edição de pedidos "Recebido"** — usuário quer poder editar pedidos já criados (adicionar observação, mudar tipo delivery/balcão, alterar itens). Atualmente não há UI para isso.
+
+**Proximos passos (retomar amanha):**
+1. Corrigir botão overflow em Comanda (CSS fix, similar ao que foi feito em Pedidos)
+2. Adicionar UI para editar pedidos com status "Recebido" (edit button + dialog, PATCH /pedidos/:id)
+3. Corrigir 2 deferred findings KDS (indices Mongo, 404 handling mesa)
+4. Commit, push, deploy
 
 ---
 
