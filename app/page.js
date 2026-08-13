@@ -540,25 +540,27 @@ function Pedidos() {
                           </div>
                           <span className="text-xs text-muted-foreground">{fmtDate(p.created_at)}</span>
                         </div>
-                        <div className="flex gap-2 pt-1">
-                          {next && <Button size="sm" className="flex-1 h-8" onClick={() => move(p, next)}>{STATUS[next].label} <ArrowUpRight className="h-3.5 w-3.5 ml-1" /></Button>}
-                          {!FINAIS.includes(p.status) && (
-                            <Button size="sm" variant="outline" className="h-8" title="Ajustar valor (desconto/acrescimo)" onClick={() => setAjuste(p)}>
-                              <Percent className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button size="sm" variant="outline" className="h-8" title="Imprimir">
-                                <Printer className="h-3.5 w-3.5" />
+                        <div className="flex flex-col gap-2 pt-1">
+                          {next && <Button size="sm" className="w-full h-8" onClick={() => move(p, next)}>{STATUS[next].label} <ArrowUpRight className="h-3.5 w-3.5 ml-1" /></Button>}
+                          <div className="flex flex-wrap gap-2">
+                            {!FINAIS.includes(p.status) && (
+                              <Button size="sm" variant="outline" className="h-8" title="Ajustar valor (desconto/acrescimo)" onClick={() => setAjuste(p)}>
+                                <Percent className="h-3.5 w-3.5" />
                               </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => imprimirPedido(p, 'cozinha')}>Via cozinha</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => imprimirPedido(p, 'cliente')}>Via cliente</DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                          {p.status !== 'cancelado' && p.status !== 'concluido' && <Button size="sm" variant="outline" className="h-8 text-destructive" onClick={() => move(p, 'cancelado')}><X className="h-3.5 w-3.5" /></Button>}
+                            )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="sm" variant="outline" className="h-8" title="Imprimir">
+                                  <Printer className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => imprimirPedido(p, 'cozinha')}>Via cozinha</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => imprimirPedido(p, 'cliente')}>Via cliente</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            {p.status !== 'cancelado' && p.status !== 'concluido' && <Button size="sm" variant="outline" className="h-8 text-destructive" onClick={() => move(p, 'cancelado')}><X className="h-3.5 w-3.5" /></Button>}
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
