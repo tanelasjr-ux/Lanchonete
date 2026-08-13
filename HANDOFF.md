@@ -60,20 +60,20 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 
 **Status de bugs encontrados em produção (2026-08-13):**
 
-✅ **RESOLVIDOS:**
+✅ **RESOLVIDOS (commit 2f5e330):**
 - Hard refresh (Ctrl+Shift+R) resolveu cache de nome de mesa
 - TV setup descoberto e testado (funciona!)
 - Observações já estão implementadas (Task 7)
+- **Botão overflow em Comanda** — CSS flex reflow (grid-cols-3 → grid-cols-2 + full-width bottom)
+- **Edição de pedidos "Recebido"** — adicionado pencil icon + dialog, PATCH /pedidos/:id, suporta: tipo, itens, observações
 
-❌ **PENDENTES (prioridade):**
-1. **Botão overflow em Comanda** — ao clicar numa mesa, o dialog que abre tem último botão (canto inferior direito) com texto cortado. NÃO é em "Configurar mesas", é na comanda aberta da mesa.
-2. **Edição de pedidos "Recebido"** — usuário quer poder editar pedidos já criados (adicionar observação, mudar tipo delivery/balcão, alterar itens). Atualmente não há UI para isso.
+**Deferred findings KDS (não-urgentes):**
+- Task 3: índices Mongo para kds_tokens
+- Task 5: 404 handling em POST /kds/concluir mesa branch
 
-**Proximos passos (retomar amanha):**
-1. Corrigir botão overflow em Comanda (CSS fix, similar ao que foi feito em Pedidos)
-2. Adicionar UI para editar pedidos com status "Recebido" (edit button + dialog, PATCH /pedidos/:id)
-3. Corrigir 2 deferred findings KDS (indices Mongo, 404 handling mesa)
-4. Commit, push, deploy
+**Proximos passos (quando houver novos issues):**
+1. Corrigir os 2 deferred findings KDS (se necessário)
+2. Monitorar em produção para outros issues
 
 ---
 
