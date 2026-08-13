@@ -59,6 +59,21 @@ Implementacao via subagent-driven-development com 11-task plan (`docs/plans/KDS-
 5. Despachar Task 10 (config screen — gerar link TV)
 6. Despachar Task 11 (validacao final + testes)
 
+---
+
+# 12. FEEDBACK DE UX — PROXIMA SESSAO
+
+Identificado pelo dono em 2026-08-12. Prioridade: proxima sessao.
+
+| # | Tipo | Descricao | Esforço | Impacto | Status |
+|---|------|-----------|---------|---------|--------|
+| 1 | 🔴 BUG | Botoes fora do enquadramento quando ha pedidos em todas as etapas (Pedidos) | 1-2h | Alto | Fazer logo |
+| 2 | 🟠 FEATURE | Nomear mesas customizado (cores, nomes) — `mesas.nome` + UI edit | 4-6h | Medio | Planejado |
+| 3 | 🟠 FEATURE | Status "Em Falta" no cardapio, linkado com menu digital QR | 6-8h | Alto | Planejado |
+| 4 | 🟠 FEATURE | Status pedido na tela de Mesas (sumario: "2 prontos, 1 preparo") | 4-6h | Alto (parity com Delivery) | Planejado |
+
+**Ordem recomendada:** 1 (bug urgente) → 4 (parity) → 2+3 (features conectadas).
+
 **Para retomar:**
 1. Usuarios com o app aberto precisam de Ctrl+Shift+R para limpar cache
    (navegador continua servindo JS antigo sem refresh hard).
