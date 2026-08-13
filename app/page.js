@@ -507,20 +507,58 @@ function ClienteDialog({ data, onClose, onSave }) {
 /* ============================ PEDIDOS (Kanban) ============================ */
 function Pedidos() {
   const [pedidos, setPedidos] = useState([])
+  const [entregadores, setEntregadores] = useState([])
   const [dlg, setDlg] = useState(false)
   const [ajuste, setAjuste] = useState(null) // pedido em ajuste de valor
   const [editar, setEditar] = useState(null) // pedido "recebido" sendo editado (itens/tipo/observacoes)
-  const load = useCallback(() => api('/pedidos').then(setPedidos).catch((e) => toast.error(e.message)), [])
+  const [filtroTipo, setFiltroTipo] = useState(null) // null (todas), 'balcao', 'mesa', 'retirada', 'delivery'
+  const [sairEntregaModal, setSairEntregaModal] = useState(null) // pedido sendo despachado para entrega
+  const [entregadorSelecionado, setEntregadorSelecionado] = useState(null) // entregador selecionado no modal
+  const [despachando, setDespachando] = useState(false)
+
+  const load = useCallback(() => {
+    api('/pedidos').then(setPedidos).catch((e) => toast.error(e.message))
+    api('/entregadores').then(setEntregadores).catch(() => {})
+  }, [])
   useEffect(() => { load() }, [load])
+
   const move = async (p, status) => { try { await api(`/pedidos/${p.id}`, { method: 'PUT', body: { status } }); load() } catch (e) { toast.error(e.message) } }
+
+  const despacharParaEntrega = async () => {
+    if (!sairEntregaModal || !entregadorSelecionado) return
+    setDespachando(true)
+    try {
+      await api(`/pedidos/${sairEntregaModal.id}`, {
+        method: 'PATCH',
+        body: { status: 'saiu_para_entrega', entregador_id: entregadorSelecionado }
+      })
+      toast.success('Pedido despachado para entrega')
+      setSairEntregaModal(null)
+      setEntregadorSelecionado(null)
+      load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setDespachando(false)
+    }
+  }
+
+  const pedidosFiltrados = filtroTipo ? pedidos.filter(p => p.tipo === filtroTipo) : pedidos
   const cols = [...FLOW]
   const FINAIS = ['concluido', 'ENTREGUE', 'cancelado']
   return (
     <div className="space-y-6">
       <PageHeader title="Pedidos" description="Acompanhe e movimente os pedidos pelo fluxo de produção." action={<Button onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Novo pedido</Button>} />
+      <div className="flex flex-wrap gap-2 items-center">
+        <Button size="sm" variant={filtroTipo === null ? 'default' : 'outline'} onClick={() => setFiltroTipo(null)}>Todas</Button>
+        <Button size="sm" variant={filtroTipo === 'balcao' ? 'default' : 'outline'} onClick={() => setFiltroTipo('balcao')}>Balcão</Button>
+        <Button size="sm" variant={filtroTipo === 'mesa' ? 'default' : 'outline'} onClick={() => setFiltroTipo('mesa')}>Mesa</Button>
+        <Button size="sm" variant={filtroTipo === 'retirada' ? 'default' : 'outline'} onClick={() => setFiltroTipo('retirada')}>Retirada</Button>
+        <Button size="sm" variant={filtroTipo === 'delivery' ? 'default' : 'outline'} onClick={() => setFiltroTipo('delivery')}>Delivery</Button>
+      </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {cols.map((col) => {
-          const items = pedidos.filter((p) => p.status === col)
+          const items = pedidosFiltrados.filter((p) => p.status === col)
           return (
             <div key={col} className="space-y-3">
               <div className="flex items-center justify-between px-1">
@@ -537,6 +575,33 @@ function Pedidos() {
                         <div className="flex items-center justify-between"><span className="font-semibold">#{p.numero}</span><Badge variant="outline" className="text-xs capitalize">{p.tipo}</Badge></div>
                         <div className="text-sm">{p.cliente_nome}</div>
                         <div className="text-xs text-muted-foreground">{(p.itens || []).map((i) => `${i.quantidade}x ${i.nome}`).join(', ')}</div>
+
+                        {p.tipo === 'delivery' && (
+                          <div className="space-y-1 py-1 border-t border-b text-xs">
+                            {p.endereco_entrega && (
+                              <div className="text-muted-foreground">📍 {p.endereco_entrega.substring(0, 40)}{p.endereco_entrega.length > 40 ? '...' : ''}</div>
+                            )}
+                            <div className="flex items-center gap-2">
+                              {p.taxa_entrega && <span>Taxa: {brl(p.taxa_entrega)}</span>}
+                            </div>
+                            {p.saiu_para_entrega_em && (
+                              <div className="space-y-0.5">
+                                {p.entregador_nome && <div>🚗 {p.entregador_nome}</div>}
+                                {(() => {
+                                  const elapsed = Math.floor((Date.now() - new Date(p.saiu_para_entrega_em)) / 60000)
+                                  const estimado = Number(p.entrega_tempo_estimado_min) || 0
+                                  const atrasado = estimado > 0 && elapsed > estimado
+                                  return (
+                                    <div className={atrasado ? 'text-red-500 font-semibold' : ''}>
+                                      • há {elapsed} min {atrasado && '⚠️ ATRASADO'}
+                                    </div>
+                                  )
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-between pt-1">
                           <div className="leading-tight">
                             <span className="font-bold">{brl(p.total)}</span>
@@ -551,7 +616,11 @@ function Pedidos() {
                           <span className="text-xs text-muted-foreground">{fmtDate(p.created_at)}</span>
                         </div>
                         <div className="flex flex-col gap-2 pt-1">
-                          {next && <Button size="sm" className="w-full h-8" onClick={() => move(p, next)}>{STATUS[next].label} <ArrowUpRight className="h-3.5 w-3.5 ml-1" /></Button>}
+                          {p.tipo === 'delivery' && p.status === 'pronto' && !p.saiu_para_entrega_em ? (
+                            <Button size="sm" className="w-full h-8 bg-blue-600 hover:bg-blue-700" onClick={() => { setSairEntregaModal(p); setEntregadorSelecionado(null) }}>
+                              Sair para Entrega
+                            </Button>
+                          ) : next && <Button size="sm" className="w-full h-8" onClick={() => move(p, next)}>{STATUS[next].label} <ArrowUpRight className="h-3.5 w-3.5 ml-1" /></Button>}
                           <div className="flex flex-wrap gap-2">
                             {p.status === 'recebido' && (
                               <Button size="sm" variant="outline" className="h-8" title="Editar pedido (itens, tipo, observações)" onClick={() => setEditar(p)}>
@@ -590,6 +659,48 @@ function Pedidos() {
       {dlg && <PedidoDialog onClose={() => setDlg(false)} onSaved={() => { setDlg(false); load() }} />}
       {ajuste && <AjusteValorDialog pedido={ajuste} onClose={() => setAjuste(null)} onSaved={() => { setAjuste(null); load() }} />}
       {editar && <PedidoDialog pedido={editar} onClose={() => setEditar(null)} onSaved={() => { setEditar(null); load() }} />}
+      {sairEntregaModal && (
+        <Dialog open onOpenChange={() => setSairEntregaModal(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Escolher Entregador</DialogTitle>
+              <DialogDescription>Selecione um entregador para deslocar o pedido #{sairEntregaModal.numero} para entrega.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              {entregadores.filter(e => e.ativo === true).length === 0 ? (
+                <Empty>Nenhum entregador ativo disponível.</Empty>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-auto ros-scroll border rounded-lg divide-y">
+                  {entregadores.filter(e => e.ativo === true).map((e) => (
+                    <button
+                      key={e.id}
+                      onClick={() => setEntregadorSelecionado(e.id)}
+                      className={`w-full text-left p-3 transition-colors ${
+                        entregadorSelecionado === e.id
+                          ? 'bg-primary/10 border-l-2 border-primary'
+                          : 'hover:bg-accent'
+                      }`}
+                    >
+                      <div className="font-medium">{e.nome}</div>
+                      {e.telefone && <div className="text-xs text-muted-foreground">{e.telefone}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSairEntregaModal(null)}>Cancelar</Button>
+              <Button
+                onClick={despacharParaEntrega}
+                disabled={!entregadorSelecionado || despachando}
+              >
+                {despachando && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Confirmar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -669,6 +780,8 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
   const isEditing = !!pedido
   const [prods, setProds] = useState([])
   const [mesasLivres, setMesasLivres] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [empresaConfig, setEmpresaConfig] = useState(null)
   const [itens, setItens] = useState(() => (pedido?.itens || []).map((i) => ({ ...i })))
   const [cliente_id, setCliente] = useState(pedido?.cliente_id ?? clienteInicial)
   const [tipo, setTipo] = useState(pedido?.tipo || 'balcao')
@@ -678,11 +791,45 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
   const [observacoes, setObservacoes] = useState(pedido?.observacoes || '')
   const [desconto, setDesconto] = useState(pedido?.desconto ? String(pedido.desconto) : '')
   const [acrescimo, setAcrescimo] = useState(pedido?.acrescimo ? String(pedido.acrescimo) : '')
+  const [entregaEndereco, setEntregaEndereco] = useState(pedido?.entrega_endereco || '')
+  const [entregaTaxa, setEntregaTaxa] = useState(pedido?.entrega_taxa ? String(pedido.entrega_taxa) : '')
+  const [entregaTempoEstimado, setEntregaTempoEstimado] = useState(pedido?.entrega_tempo_estimado_min ? String(pedido.entrega_tempo_estimado_min) : '')
   const [saving, setSaving] = useState(false)
+
   useEffect(() => {
     api('/produtos').then(setProds).catch(() => {})
+    api('/clientes').then(setClientes).catch(() => {})
+    api('/empresa').then(setEmpresaConfig).catch(() => {})
     if (!isEditing) api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {})
   }, [isEditing])
+
+  // Pre-fill delivery fields when tipo changes or cliente changes
+  useEffect(() => {
+    if (!isEditing && tipo === 'delivery') {
+      // Pre-fill endereco from cliente if exists
+      if (cliente_id) {
+        const cliente = clientes.find((c) => c.id === cliente_id)
+        if (cliente?.endereco) {
+          setEntregaEndereco(cliente.endereco)
+        }
+      }
+
+      // Pre-fill taxa and tempo from empresa config
+      if (empresaConfig?.config?.delivery) {
+        if (!entregaTaxa && empresaConfig.config.delivery.taxa_padrao) {
+          setEntregaTaxa(String(empresaConfig.config.delivery.taxa_padrao))
+        }
+        if (!entregaTempoEstimado && empresaConfig.config.delivery.tempo_estimado_min) {
+          setEntregaTempoEstimado(String(empresaConfig.config.delivery.tempo_estimado_min))
+        }
+      }
+    } else if (!isEditing && tipo !== 'delivery') {
+      // Clear delivery fields if not delivery
+      setEntregaEndereco('')
+      setEntregaTaxa('')
+      setEntregaTempoEstimado('')
+    }
+  }, [tipo, cliente_id, isEditing, clientes, empresaConfig])
   const add = (p, observacao = '') => setItens((s) => {
     const ex = s.find((i) => i.produto_id === p.id && (i.observacao || '') === observacao)
     if (ex) return s.map((i) => i === ex ? { ...i, quantidade: i.quantidade + 1 } : i)
@@ -694,7 +841,8 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
   const subtotal = itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
   const descontoNum = Math.max(0, Number(desconto) || 0)
   const acrescimoNum = Math.max(0, Number(acrescimo) || 0)
-  const total = Math.max(0, subtotal - descontoNum + acrescimoNum)
+  const entregaTaxaNum = tipo === 'delivery' ? Math.max(0, Number(entregaTaxa) || 0) : 0
+  const total = Math.max(0, subtotal - descontoNum + acrescimoNum + entregaTaxaNum)
   const descontoExcede = descontoNum > subtotal + acrescimoNum
 
   const save = async () => {
@@ -703,7 +851,13 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
     setSaving(true)
     try {
       if (isEditing) {
-        await api(`/pedidos/${pedido.id}`, { method: 'PUT', body: { itens, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum } })
+        const payload = { itens, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum }
+        if (tipo === 'delivery') {
+          payload.entrega_endereco = entregaEndereco
+          payload.entrega_taxa = entregaTaxaNum
+          payload.entrega_tempo_estimado_min = entregaTempoEstimado ? Number(entregaTempoEstimado) : null
+        }
+        await api(`/pedidos/${pedido.id}`, { method: 'PUT', body: payload })
         toast.success('Pedido atualizado')
       } else if (tipo === 'mesa') {
         if (!mesa_id) { setSaving(false); return toast.error('Selecione a mesa') }
@@ -711,7 +865,13 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
         for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade, observacao: it.observacao || '' } })
         toast.success('Comanda aberta na mesa')
       } else {
-        await api('/pedidos', { method: 'POST', body: { itens, cliente_id, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum } })
+        const payload = { itens, cliente_id, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum }
+        if (tipo === 'delivery') {
+          payload.entrega_endereco = entregaEndereco
+          payload.entrega_taxa = entregaTaxaNum
+          payload.entrega_tempo_estimado_min = entregaTempoEstimado ? Number(entregaTempoEstimado) : null
+        }
+        await api('/pedidos', { method: 'POST', body: payload })
         toast.success('Pedido criado')
       }
       onSaved()
@@ -761,6 +921,29 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
               )}
             </div>
             {tipo === 'mesa' && !isEditing && <div className="space-y-1"><Label className="text-xs">Pessoas</Label><Input type="number" min={1} value={pessoas} onChange={(e) => setPessoas(e.target.value)} /></div>}
+            {tipo === 'delivery' && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs" htmlFor="entrega-endereco">Endereço de Entrega</Label>
+                  <Input id="entrega-endereco" value={entregaEndereco} onChange={(e) => setEntregaEndereco(e.target.value)} placeholder="Rua, número, complemento..." />
+                  {!entregaEndereco && cliente_id && !clientes.find((c) => c.id === cliente_id)?.endereco && (
+                    <p className="text-xs text-amber-600">Cliente sem endereço cadastrado</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs" htmlFor="entrega-taxa">Taxa de Entrega (R$)</Label>
+                    <Input id="entrega-taxa" type="number" min="0" step="0.01" inputMode="decimal" placeholder="0,00"
+                      value={entregaTaxa} onChange={(e) => setEntregaTaxa(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs" htmlFor="entrega-tempo">Tempo Estimado (min)</Label>
+                    <Input id="entrega-tempo" type="number" min="1" inputMode="numeric" placeholder="30"
+                      value={entregaTempoEstimado} onChange={(e) => setEntregaTempoEstimado(e.target.value)} />
+                  </div>
+                </div>
+              </>
+            )}
             <Separator />
             <div className="space-y-2 max-h-40 overflow-auto ros-scroll">
               {itens.length === 0 && <p className="text-sm text-muted-foreground">Nenhum item adicionado.</p>}
@@ -814,6 +997,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
               <div className="flex items-center justify-between text-muted-foreground"><span>Subtotal</span><span>{brl(subtotal)}</span></div>
               {descontoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Desconto</span><span>- {brl(descontoNum)}</span></div>}
               {acrescimoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Acrescimo</span><span>+ {brl(acrescimoNum)}</span></div>}
+              {entregaTaxaNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Taxa de Entrega</span><span>+ {brl(entregaTaxaNum)}</span></div>}
               <div className="flex items-center justify-between font-bold text-lg pt-1"><span>Total</span><span>{brl(total)}</span></div>
             </div>
           </div>
@@ -1089,6 +1273,60 @@ function UsuarioDialog({ data, roles, onClose, onSave }) {
 function Empresa({ reload }) {
   const [f, setF] = useState(null)
   useEffect(() => { api('/empresa').then(setF).catch((e) => toast.error(e.message)) }, [])
+
+  /* --- DELIVERY: entregadores e configuracao --- */
+  const [entregadores, setEntregadores] = useState([])
+  const [taxaPadrao, setTaxaPadrao] = useState('')
+  const [tempoEstimadoPadrao, setTempoEstimadoPadrao] = useState('')
+  const [novoEntregador, setNovoEntregador] = useState({ nome: '', telefone: '' })
+
+  useEffect(() => {
+    if (f) {
+      // Carregar configuracoes de delivery do estado da empresa
+      const deliveryConfig = f.config?.delivery || {}
+      setTaxaPadrao(deliveryConfig.taxa_padrao || '')
+      setTempoEstimadoPadrao(deliveryConfig.tempo_estimado_min || '')
+      // Carregar lista de entregadores
+      api('/entregadores').then(setEntregadores).catch(() => {})
+    }
+  }, [f])
+
+  const handleAdicionarEntregador = async () => {
+    if (!novoEntregador.nome.trim()) return toast.error('Informe o nome do entregador')
+    try {
+      const entregador = await api('/entregadores', { method: 'POST', body: novoEntregador })
+      setEntregadores((s) => [entregador, ...s])
+      setNovoEntregador({ nome: '', telefone: '' })
+      toast.success('Entregador adicionado')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const handleAtivarDesativarEntregador = async (id, ativoAtual) => {
+    try {
+      await api(`/entregadores/${id}`, { method: 'PUT', body: { ativo: !ativoAtual } })
+      setEntregadores((s) => s.map((e) => e.id === id ? { ...e, ativo: !ativoAtual } : e))
+      toast.success(ativoAtual ? 'Entregador desativado' : 'Entregador ativado')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const handleSalvarConfigDelivery = async () => {
+    try {
+      await api('/empresa', {
+        method: 'PUT',
+        body: {
+          config: {
+            delivery: {
+              taxa_padrao: taxaPadrao ? Number(taxaPadrao) : null,
+              tempo_estimado_min: tempoEstimadoPadrao ? Number(tempoEstimadoPadrao) : null
+            }
+          }
+        }
+      })
+      toast.success('Configuracao de delivery salva')
+      reload?.()
+    } catch (e) { toast.error(e.message) }
+  }
+
   /* --- KDS: links tokenizados para a TV/tablet da cozinha --- */
   const [tokens, setTokens] = useState([])
   const carregarTokens = () => api('/kds/tokens').then(setTokens).catch((e) => toast.error(e.message))
@@ -1160,7 +1398,7 @@ function Empresa({ reload }) {
       <Tabs defaultValue="dados">
         <TabsList><TabsTrigger value="dados">Empresa</TabsTrigger><TabsTrigger value="aparencia">Aparencia</TabsTrigger><TabsTrigger value="pagamentos">Pagamentos</TabsTrigger><TabsTrigger value="modulos">Modulos</TabsTrigger><TabsTrigger value="kds">Cozinha (KDS)</TabsTrigger></TabsList>
 
-        <TabsContent value="dados" className="mt-4">
+        <TabsContent value="dados" className="mt-4 space-y-4">
           <Card><CardHeader><CardTitle className="text-base">Dados da empresa</CardTitle></CardHeader><CardContent className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-3">
               <div className="space-y-2"><Label>Razao social</Label><Input value={f.nome || ''} onChange={set('nome')} /></div>
@@ -1177,6 +1415,58 @@ function Empresa({ reload }) {
             </div>
             <div className="text-xs text-muted-foreground">Slug: <code className="bg-muted px-1.5 py-0.5 rounded">{f.slug}</code> · Plano: <Badge variant="secondary">{f.plano}</Badge></div>
             <Button onClick={saveDados}>Salvar dados</Button>
+          </CardContent></Card>
+
+          <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><Package className="h-4 w-4" />Delivery</CardTitle></CardHeader><CardContent className="space-y-4">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-2"><Label>Taxa padrao (R$)</Label><Input type="number" min="0" step="0.01" value={taxaPadrao} onChange={(e) => setTaxaPadrao(e.target.value)} placeholder="0,00" /></div>
+              <div className="space-y-2"><Label>Tempo estimado (min)</Label><Input type="number" min="0" value={tempoEstimadoPadrao} onChange={(e) => setTempoEstimadoPadrao(e.target.value)} placeholder="30" /></div>
+            </div>
+            <Button onClick={handleSalvarConfigDelivery}>Salvar configuracao</Button>
+
+            <Separator />
+
+            <div className="space-y-3">
+              <h3 className="font-semibold text-sm">Entregadores</h3>
+              <div className="space-y-2 max-h-48 overflow-auto ros-scroll">
+                {entregadores.length === 0 && <p className="text-sm text-muted-foreground">Nenhum entregador cadastrado.</p>}
+                {entregadores.map((e) => (
+                  <div key={e.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium">{e.nome}</div>
+                      {e.telefone && <div className="text-xs text-muted-foreground">{e.telefone}</div>}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={e.ativo ? 'text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10' : 'text-muted-foreground'}
+                      onClick={() => handleAtivarDesativarEntregador(e.id, e.ativo)}
+                    >
+                      {e.ativo ? 'Ativo' : 'Inativo'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium">Adicionar entregador</h4>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Nome"
+                    value={novoEntregador.nome}
+                    onChange={(e) => setNovoEntregador({ ...novoEntregador, nome: e.target.value })}
+                  />
+                  <Input
+                    placeholder="Telefone"
+                    value={novoEntregador.telefone}
+                    onChange={(e) => setNovoEntregador({ ...novoEntregador, telefone: e.target.value })}
+                  />
+                </div>
+                <Button onClick={handleAdicionarEntregador} className="w-full"><Plus className="h-4 w-4 mr-1" />Adicionar</Button>
+              </div>
+            </div>
           </CardContent></Card>
         </TabsContent>
 
