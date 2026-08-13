@@ -157,6 +157,18 @@ try:
     # Token modo leitura nao pode concluir
     resp = requests.post(f"{BASE_URL}/kds/tokens", json={"modo": "leitura"}, headers=headers_a)
     tv_token_leitura = resp.json()["token"]
+    tv_token_leitura_id = resp.json()["id"]
+
+    resp = requests.get(f"{BASE_URL}/kds/tokens", headers=headers_a)
+    if resp.status_code == 200:
+        ids_listados = [t["id"] for t in resp.json()]
+        if tv_token_id in ids_listados and tv_token_leitura_id in ids_listados:
+            log_pass("GET /kds/tokens - lista tokens ativos da empresa")
+        else:
+            log_fail("GET /kds/tokens - lista tokens ativos", f"esperava {tv_token_id} e {tv_token_leitura_id} em {ids_listados}", critical=True)
+    else:
+        log_fail("GET /kds/tokens", resp.text, critical=True)
+
     # O seed de registro ja abre 1 mesa demo - pega outra que ainda esteja livre.
     mesas_a2 = requests.get(f"{BASE_URL}/mesas", headers=headers_a).json()
     mesa_livre2 = next(m for m in mesas_a2 if m["status"] == "livre")
@@ -184,6 +196,42 @@ try:
         log_pass("Token revogado - GET /kds/pendentes retorna 401")
     else:
         log_fail("Token revogado ainda funciona", f"status {resp.status_code}", critical=True)
+
+    resp = requests.get(f"{BASE_URL}/kds/tokens", headers=headers_a)
+    ids_listados = [t["id"] for t in resp.json()]
+    if tv_token_id not in ids_listados and tv_token_leitura_id in ids_listados:
+        log_pass("GET /kds/tokens - token revogado nao aparece mais na listagem (filtro server-side)")
+    else:
+        log_fail("GET /kds/tokens apos revogar", f"esperava sem {tv_token_id} e com {tv_token_leitura_id} em {ids_listados}", critical=True)
+
+    print("\n7. Permissoes - GERENTE nao pode gerenciar tokens da TV")
+    novo_gerente = {"nome": "Gerente Teste", "email": random_email(), "senha": "senha_123456", "papel": "GERENTE"}
+    resp = requests.post(f"{BASE_URL}/usuarios", json=novo_gerente, headers=headers_a)
+    if resp.status_code == 201:
+        log_pass("POST /usuarios - cria usuario GERENTE para teste de permissao")
+    else:
+        log_fail("POST /usuarios (GERENTE)", resp.text, critical=True)
+
+    resp = requests.post(f"{BASE_URL}/auth/login", json={"email": novo_gerente["email"], "senha": novo_gerente["senha"]})
+    headers_gerente = {"Authorization": f"Bearer {resp.json()['token']}"}
+
+    resp = requests.get(f"{BASE_URL}/kds/tokens", headers=headers_gerente)
+    if resp.status_code == 403:
+        log_pass("GET /kds/tokens com GERENTE - 403")
+    else:
+        log_fail("GET /kds/tokens com GERENTE", f"esperava 403, veio {resp.status_code}", critical=True)
+
+    resp = requests.post(f"{BASE_URL}/kds/tokens", json={"modo": "toque"}, headers=headers_gerente)
+    if resp.status_code == 403:
+        log_pass("POST /kds/tokens com GERENTE - 403")
+    else:
+        log_fail("POST /kds/tokens com GERENTE", f"esperava 403, veio {resp.status_code}", critical=True)
+
+    resp = requests.delete(f"{BASE_URL}/kds/tokens/{tv_token_leitura_id}", headers=headers_gerente)
+    if resp.status_code == 403:
+        log_pass("DELETE /kds/tokens/:id com GERENTE - 403")
+    else:
+        log_fail("DELETE /kds/tokens/:id com GERENTE", f"esperava 403, veio {resp.status_code}", critical=True)
 
 except Exception as e:
     print(f"\nFATAL ERROR: {str(e)}")
