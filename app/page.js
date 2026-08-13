@@ -1323,6 +1323,19 @@ function Auditoria() {
 }
 
 /* ============================ MESAS / COMANDAS ============================ */
+// Resume os itens de uma comanda por estagio de preparo, para o card de Mesas
+// mostrar rapidamente o que ainda esta em preparo/aguardando e o que ja foi
+// entregue a mesa. Os itens de comanda (ver /kds/pendentes no backend) so tem
+// um campo booleano `entregue` — nao ha recebido/em_preparo/pronto distintos
+// como no Kanban de Pedidos (STATUS/FLOW), entao o resumo usa 2 estagios reais
+// em vez de fabricar uma granularidade que a comanda nao rastreia.
+function getOrderStatusSummary(comanda) {
+  if (!comanda) return []
+  const out = []
+  if (comanda.itens_pendentes > 0) out.push({ key: 'pendente', label: 'Em preparo', count: comanda.itens_pendentes, cls: STATUS.em_preparo.cls })
+  if (comanda.itens_entregues > 0) out.push({ key: 'entregue', label: 'Entregue', count: comanda.itens_entregues, cls: STATUS.pronto.cls })
+  return out
+}
 function Mesas() {
   const [mesas, setMesas] = useState([])
   const [cfg, setCfg] = useState(false)
@@ -1350,7 +1363,7 @@ function Mesas() {
                 <span className={`h-2.5 w-2.5 rounded-full ${st.dot}`} />
               </div>
               <div className={`text-xs mt-1 ${st.text}`}>{st.label}</div>
-              <div className="mt-3 h-10">
+              <div className="mt-3 min-h-[2.5rem]">
                 {m.comanda ? (
                   <div>
                     <div className="text-lg font-bold">{brl(m.comanda.total)}</div>
@@ -1360,6 +1373,16 @@ function Mesas() {
                   <div className="text-xs text-muted-foreground flex items-center gap-1"><Armchair className="h-3.5 w-3.5" />{m.capacidade} lugares</div>
                 )}
               </div>
+              {m.comanda && (() => {
+                const resumoStatus = getOrderStatusSummary(m.comanda)
+                return resumoStatus.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {resumoStatus.map((r) => (
+                      <Badge key={r.key} variant="outline" className={`text-[10px] px-1.5 py-0 h-4 ${r.cls}`}>{r.count} {r.label}</Badge>
+                    ))}
+                  </div>
+                ) : null
+              })()}
             </button>
           )
         })}

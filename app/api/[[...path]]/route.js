@@ -1218,7 +1218,13 @@ async function handler(request, { params }) {
       const byId = Object.fromEntries(comandas.map((c) => [c.id, c]))
       const out = mesas.map((m) => {
         const c = m.comanda_id ? byId[m.comanda_id] : null
-        return { ...clean(m), comanda: c ? { id: c.id, total: c.total, pessoas: c.pessoas, cliente_nome: c.cliente_nome, itens_count: (c.itens || []).length, aberta_em: c.aberta_em } : null }
+        const itens = c?.itens || []
+        // `entregue` e o unico campo de estagio que os itens de comanda realmente
+        // tem (ver /kds/pendentes): nao ha recebido/em_preparo distintos aqui,
+        // so pendente (ainda nao levado a mesa) vs entregue.
+        const itens_pendentes = itens.filter((it) => !it.entregue).length
+        const itens_entregues = itens.filter((it) => it.entregue).length
+        return { ...clean(m), comanda: c ? { id: c.id, total: c.total, pessoas: c.pessoas, cliente_nome: c.cliente_nome, itens_count: itens.length, itens_pendentes, itens_entregues, aberta_em: c.aberta_em } : null }
       })
       return json(out)
     }
