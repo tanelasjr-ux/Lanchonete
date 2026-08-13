@@ -388,9 +388,9 @@ async function seedEmpresa(repos, empresa_id, ctx) {
   const mesaDemo = mesas[1]
   const comandaId = uuidv4()
   const itensDemo = [
-    { produto_id: prods[5].id, nome: prods[5].nome, preco: prods[5].preco, quantidade: 2, observacao: 'Sem cebola', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() },
-    { produto_id: prods[6].id, nome: prods[6].nome, preco: prods[6].preco, quantidade: 2, observacao: '', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() },
-    { produto_id: prods[8].id, nome: prods[8].nome, preco: prods[8].preco, quantidade: 1, observacao: '', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() },
+    { id: uuidv4(), produto_id: prods[5].id, nome: prods[5].nome, preco: prods[5].preco, quantidade: 2, observacao: 'Sem cebola', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() },
+    { id: uuidv4(), produto_id: prods[6].id, nome: prods[6].nome, preco: prods[6].preco, quantidade: 2, observacao: '', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() },
+    { id: uuidv4(), produto_id: prods[8].id, nome: prods[8].nome, preco: prods[8].preco, quantidade: 1, observacao: '', operador_id: ctx.usuario_id, operador_nome: ctx.nome, created_at: new Date() },
   ]
   const comandaBase = {
     id: comandaId, empresa_id, mesa_id: mesaDemo.id, mesa_nome: mesaDemo.nome,
@@ -450,6 +450,7 @@ async function handler(request, { params }) {
       categoriaRepo, produtoRepo, clienteRepo, usuarioRepo, transacaoRepo,
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
+      kdsTokenRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -607,6 +608,80 @@ async function handler(request, { params }) {
         await conversaRepo.incrementarNaoLidas(empresaId, conversa.id, { ultima_mensagem: texto, ultima_mensagem_em: new Date(), status: 'AGUARDANDO_EQUIPE', updated_at: new Date() })
       }
       await mensagemRepo.create({ empresa_id: empresaId, conversa_id: conversa.id, direcao: 'in', tipo, texto, media_url: null, from_me: false, status: 'delivered', provider_message_id: key.id || null })
+      return json({ ok: true })
+    }
+
+    /* ==================== KDS (leitura/acao publica via token OU JWT) ====================
+     * Fica ANTES do portao de autenticacao padrao de proposito: a TV nao
+     * loga como usuario (docs/plans/KDS-DESIGN.md §5.4). resolveKdsAuth()
+     * aceita Bearer JWT normal (celular do atendente, ou COZINHA pelo
+     * navegador) OU ?tv_token=... (TV, sem login).
+     */
+    const resolveKdsAuth = async () => {
+      const url = new URL(request.url)
+      const tvToken = url.searchParams.get('tv_token')
+      if (tvToken) {
+        const rec = await kdsTokenRepo.findByToken(tvToken)
+        if (!rec || rec.revogado_em) return null
+        return { empresa_id: rec.empresa_id, modo: rec.modo, isTv: true, usuario_id: null, nome: 'TV Cozinha' }
+      }
+      const session = await auth(request)
+      if (!session) return null
+      const usuario = await usuarioRepo.findById(session.empresa_id, session.usuario_id)
+      if (!usuario || !usuario.ativo) return null
+      return { empresa_id: session.empresa_id, usuario_id: usuario.id, papel: usuario.papel, nome: usuario.nome, isTv: false }
+    }
+
+    if (route === '/kds/pendentes' && method === 'GET') {
+      const kctx = await resolveKdsAuth()
+      if (!kctx) return err('Nao autorizado', 401)
+      if (!kctx.isTv && !can(kctx.papel, 'pedidos')) return err('Sem permissao', 403)
+
+      const [pedidos, comandas] = await Promise.all([
+        pedidoRepo.list(kctx.empresa_id),
+        comandaRepo.list(kctx.empresa_id, { status: 'aberta' }),
+      ])
+      const pedidosPendentes = pedidos
+        .filter((p) => ['novo', 'em_preparacao'].includes(normPedidoStatus(p.status)))
+        .map((p) => ({
+          origem: 'pedido', id: p.id, numero: p.numero, tipo: p.tipo,
+          itens: (p.itens || []).map((it) => ({ nome: it.nome, quantidade: it.quantidade, observacao: it.observacao || '' })),
+          created_at: p.created_at,
+        }))
+      const itensMesaPendentes = comandas.flatMap((c) => (c.itens || [])
+        .filter((it) => !it.entregue)
+        .map((it) => ({
+          origem: 'mesa', id: it.id, comanda_id: c.id, mesa_nome: c.mesa_nome,
+          nome: it.nome, quantidade: it.quantidade, observacao: it.observacao || '',
+          created_at: it.created_at,
+        })))
+      const itens = [...pedidosPendentes, ...itensMesaPendentes]
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      return json({ itens, modo: kctx.isTv ? kctx.modo : null })
+    }
+
+    if (route === '/kds/concluir' && method === 'POST') {
+      const kctx = await resolveKdsAuth()
+      if (!kctx) return err('Nao autorizado', 401)
+      const b = (await request.json()) || {}
+      if (!['pedido', 'mesa'].includes(b.origem) || !b.id) return err('Campos obrigatorios: origem, id')
+      if (b.origem === 'mesa' && !b.comanda_id) return err('Campo obrigatorio: comanda_id')
+
+      if (kctx.isTv) {
+        if (kctx.modo !== 'toque') return err('Este link e somente leitura', 403)
+      } else {
+        const permNecessaria = b.origem === 'pedido' ? 'pedidos' : 'mesas'
+        if (!can(kctx.papel, permNecessaria)) return err('Sem permissao', 403)
+      }
+
+      if (b.origem === 'pedido') {
+        const pedido = await pedidoRepo.findById(kctx.empresa_id, b.id)
+        if (!pedido) return err('Pedido nao encontrado', 404)
+        await pedidoRepo.update(kctx.empresa_id, b.id, { status: 'pronto', updated_at: new Date() })
+      } else {
+        await comandaRepo.updateItemCampos(kctx.empresa_id, b.comanda_id, b.id, { entregue: true })
+      }
+      await audit(repos, { empresa_id: kctx.empresa_id, usuario_id: kctx.usuario_id, nome: kctx.nome }, 'concluir', b.origem === 'pedido' ? 'pedido' : 'comanda_item', b.id, {})
       return json({ ok: true })
     }
 

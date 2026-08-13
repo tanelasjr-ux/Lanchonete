@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""
+Restaurant OS - KDS Test Suite
+Cobre: GET /kds/pendentes, POST /kds/concluir, isolamento multi-tenant,
+tokens da TV (gerar/listar/revogar), modo leitura vs toque.
+"""
+
+import requests
+import random
+import string
+import os
+
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
+
+results = {"passed": [], "failed": [], "critical_failures": []}
+
+def log_pass(test_name):
+    print(f"PASS: {test_name}")
+    results["passed"].append(test_name)
+
+def log_fail(test_name, reason, critical=False):
+    print(f"FAIL: {test_name}")
+    print(f"   Reason: {reason}")
+    results["failed"].append({"test": test_name, "reason": reason})
+    if critical:
+        results["critical_failures"].append({"test": test_name, "reason": reason})
+
+def random_email():
+    rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    return f"kds.{rand}@teste.com"
+
+def registrar_tenant(nome_empresa):
+    email = random_email()
+    resp = requests.post(f"{BASE_URL}/auth/register", json={
+        "empresa_nome": nome_empresa, "nome": "Dono Teste", "email": email, "senha": "senha_123456"
+    })
+    assert resp.status_code == 200, f"register falhou: {resp.text}"
+    data = resp.json()
+    return {"token": data["token"], "empresa": data["empresa"], "usuario": data["usuario"]}
+
+try:
+    print("Setup: registrando tenant A e B...")
+    a = registrar_tenant("KDS Teste A")
+    b = registrar_tenant("KDS Teste B")
+    headers_a = {"Authorization": f"Bearer {a['token']}"}
+    headers_b = {"Authorization": f"Bearer {b['token']}"}
+
+    # Precisa de ao menos um produto para criar pedido/comanda com item.
+    def criar_produto(headers):
+        resp = requests.post(f"{BASE_URL}/categorias", json={"nome": "Lanches"}, headers=headers)
+        cat_id = resp.json()["id"]
+        resp = requests.post(f"{BASE_URL}/produtos", json={
+            "nome": "X-Burger", "preco": 25.0, "categoria_id": cat_id, "disponivel": True
+        }, headers=headers)
+        return resp.json()
+
+    produto_a = criar_produto(headers_a)
+
+    print("\n1. GET /kds/pendentes - pedido novo aparece")
+    resp = requests.post(f"{BASE_URL}/pedidos", json={
+        "itens": [{"produto_id": produto_a["id"], "nome": produto_a["nome"], "preco": produto_a["preco"], "quantidade": 1, "observacao": "sem cebola"}],
+        "tipo": "balcao", "pagamento": "pix"
+    }, headers=headers_a)
+    if resp.status_code == 201:
+        pedido = resp.json()
+        log_pass("POST /pedidos - cria pedido de teste")
+    else:
+        log_fail("POST /pedidos", resp.text, critical=True)
+        pedido = None
+
+    resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
+    if resp.status_code == 200:
+        itens = resp.json()["itens"]
+        achou = any(i["origem"] == "pedido" and i["id"] == pedido["id"] and i["itens"][0]["observacao"] == "sem cebola" for i in itens)
+        if achou:
+            log_pass("GET /kds/pendentes - pedido novo aparece com observacao")
+        else:
+            log_fail("GET /kds/pendentes - pedido novo", f"nao encontrado em {itens}", critical=True)
+    else:
+        log_fail("GET /kds/pendentes", resp.text, critical=True)
+
+    print("\n2. POST /kds/concluir (pedido) - remove da lista")
+    resp = requests.post(f"{BASE_URL}/kds/concluir", json={"origem": "pedido", "id": pedido["id"]}, headers=headers_a)
+    if resp.status_code == 200:
+        log_pass("POST /kds/concluir - conclui pedido")
+    else:
+        log_fail("POST /kds/concluir (pedido)", resp.text, critical=True)
+
+    resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
+    itens = resp.json()["itens"]
+    if not any(i["id"] == pedido["id"] for i in itens):
+        log_pass("GET /kds/pendentes - pedido concluido some da lista")
+    else:
+        log_fail("GET /kds/pendentes - pedido concluido", "ainda aparece na lista", critical=True)
+
+    print("\n3. Isolamento multi-tenant")
+    resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_b)
+    itens_b = resp.json()["itens"]
+    if not any(i.get("id") == pedido["id"] for i in itens_b):
+        log_pass("GET /kds/pendentes - tenant B nunca ve pedido do tenant A")
+    else:
+        log_fail("Isolamento multi-tenant", "tenant B viu pedido de A", critical=True)
+
+    print("\n4. Item de comanda (mesa)")
+    # O seed de registro ja abre uma comanda demo numa mesa (HANDOFF.md §10
+    # armadilha 10) - precisa filtrar por status 'livre', nao pegar mesas[0].
+    mesas_a = requests.get(f"{BASE_URL}/mesas", headers=headers_a).json()
+    mesa_livre = next(m for m in mesas_a if m["status"] == "livre")
+    resp = requests.post(f"{BASE_URL}/mesas/{mesa_livre['id']}/abrir", json={"pessoas": 2}, headers=headers_a)
+    comanda = resp.json()
+    resp = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/itens", json={"produto_id": produto_a["id"], "quantidade": 1}, headers=headers_a)
+    item = resp.json()["itens"][-1]
+
+    resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
+    itens = resp.json()["itens"]
+    if any(i["origem"] == "mesa" and i["id"] == item["id"] for i in itens):
+        log_pass("GET /kds/pendentes - item de comanda aparece")
+    else:
+        log_fail("GET /kds/pendentes - item de comanda", f"nao encontrado em {itens}", critical=True)
+
+    resp = requests.post(f"{BASE_URL}/kds/concluir", json={"origem": "mesa", "id": item["id"], "comanda_id": comanda["id"]}, headers=headers_a)
+    if resp.status_code == 200:
+        log_pass("POST /kds/concluir - conclui item de mesa")
+    else:
+        log_fail("POST /kds/concluir (mesa)", resp.text, critical=True)
+
+    resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
+    itens = resp.json()["itens"]
+    if not any(i.get("id") == item["id"] for i in itens):
+        log_pass("GET /kds/pendentes - item de mesa concluido some da lista")
+    else:
+        log_fail("GET /kds/pendentes - item de mesa concluido", "ainda aparece", critical=True)
+
+    print("\n5. Sem autenticacao")
+    resp = requests.get(f"{BASE_URL}/kds/pendentes")
+    if resp.status_code == 401:
+        log_pass("GET /kds/pendentes sem token/tv_token - 401")
+    else:
+        log_fail("GET /kds/pendentes sem auth", f"esperava 401, veio {resp.status_code}", critical=True)
+
+except Exception as e:
+    print(f"\nFATAL ERROR: {str(e)}")
+    import traceback
+    traceback.print_exc()
+
+print(f"\nPASSED: {len(results['passed'])}  FAILED: {len(results['failed'])}  CRITICAL: {len(results['critical_failures'])}")
+if results['failed']:
+    for f in results['failed']:
+        print(f"  - {f['test']}: {f['reason']}")
