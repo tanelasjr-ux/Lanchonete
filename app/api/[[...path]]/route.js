@@ -209,18 +209,20 @@ const padMesa = (n) => String(n).padStart(2, '0')
  * trigger nem em repository (ADR-006). Lanca em entrada invalida para que o
  * chamador devolva 400, em vez de gravar um valor sem sentido.
  */
-function computePedidoValores(subtotal, descontoEntrada, acrescimoEntrada) {
+function computePedidoValores(subtotal, descontoEntrada, acrescimoEntrada, entregaTaxaEntrada = 0) {
   const sub = round2(subtotal)
   const desconto = round2(descontoEntrada)
   const acrescimo = round2(acrescimoEntrada)
+  const entrega_taxa = round2(entregaTaxaEntrada)
 
   if (!Number.isFinite(desconto) || desconto < 0) throw new Error('Desconto invalido')
   if (!Number.isFinite(acrescimo) || acrescimo < 0) throw new Error('Acrescimo invalido')
+  if (!Number.isFinite(entrega_taxa) || entrega_taxa < 0) throw new Error('Taxa de entrega invalida')
   // Um pedido nao pode custar menos que zero: o desconto e limitado pelo que
-  // ha para descontar (itens + acrescimo).
-  if (desconto > sub + acrescimo) throw new Error('Desconto maior que o valor do pedido')
+  // ha para descontar (itens + acrescimo + taxa de entrega).
+  if (desconto > sub + acrescimo + entrega_taxa) throw new Error('Desconto maior que o valor do pedido')
 
-  return { subtotal: sub, desconto, acrescimo, total: round2(sub - desconto + acrescimo) }
+  return { subtotal: sub, desconto, acrescimo, entrega_taxa, total: round2(sub - desconto + acrescimo + entrega_taxa) }
 }
 
 /**
@@ -450,7 +452,7 @@ async function handler(request, { params }) {
       categoriaRepo, produtoRepo, clienteRepo, usuarioRepo, transacaoRepo,
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
-      kdsTokenRepo,
+      kdsTokenRepo, entregadorRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -710,12 +712,25 @@ async function handler(request, { params }) {
       for (const k of ['nome', 'telefone', 'endereco', 'moeda', 'nome_comercial', 'cnpj', 'whatsapp', 'email', 'logo', 'horario_funcionamento']) {
         if (b[k] !== undefined) upd[k] = b[k]
       }
-      // merge profundo de config (appearance / pagamentos / feature_flags)
+      // merge profundo de config (appearance / pagamentos / feature_flags / delivery)
       const config = { ...(current?.config || {}) }
       if (b.config) {
         if (b.config.appearance) config.appearance = { ...(config.appearance || {}), ...b.config.appearance }
         if (b.config.pagamentos) config.pagamentos = { ...(config.pagamentos || {}), ...b.config.pagamentos }
         if (b.config.feature_flags) config.feature_flags = { ...(config.feature_flags || {}), ...b.config.feature_flags }
+        if (b.config.delivery) {
+          // Validar taxa_padrao >= 0
+          if (b.config.delivery.taxa_padrao !== undefined && Number(b.config.delivery.taxa_padrao) < 0) {
+            return err('taxa_padrao deve ser >= 0')
+          }
+          // Validar tempo_estimado_min > 0 ou null
+          if (b.config.delivery.tempo_estimado_min !== undefined && b.config.delivery.tempo_estimado_min !== null) {
+            if (Number(b.config.delivery.tempo_estimado_min) <= 0) {
+              return err('tempo_estimado_min deve ser > 0 ou null')
+            }
+          }
+          config.delivery = { ...(config.delivery || {}), ...b.config.delivery }
+        }
       }
       upd.config = config
       upd.updated_at = new Date()
@@ -942,6 +957,56 @@ async function handler(request, { params }) {
       return json({ ok: true })
     }
 
+    /* ==================== ENTREGADORES ==================== */
+    if (route === '/entregadores' && method === 'GET') {
+      const url = new URL(request.url)
+      const ativo = url.searchParams.get('ativo')
+      try {
+        const list = await entregadorRepo.listByEmpresa(
+          ctx.empresa_id,
+          ativo === 'true' ? true : ativo === 'false' ? false : undefined
+        )
+        return json({ entregadores: list })
+      } catch (e) {
+        return err(e.message)
+      }
+    }
+    if (route === '/entregadores' && method === 'POST') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      if (!b.nome) return err('nome obrigatorio')
+      const doc = {
+        id: uuidv4(),
+        empresa_id: ctx.empresa_id,
+        nome: b.nome,
+        telefone: b.telefone || '',
+        ativo: true,
+        created_at: new Date(),
+      }
+      await entregadorRepo.create(doc)
+      await audit(repos, ctx, 'create', 'entregador', doc.id, { nome: b.nome })
+      return json({ entregador: clean(doc) }, 201)
+    }
+    if (seg[0] === 'entregadores' && seg[1] && method === 'PUT') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      const entregador = await entregadorRepo.findById(ctx.empresa_id, seg[1])
+      if (!entregador) return err('Entregador nao encontrado', 404)
+      const upd = {}
+      for (const k of ['nome', 'telefone', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
+      const atualizado = await entregadorRepo.update(ctx.empresa_id, seg[1], upd)
+      await audit(repos, ctx, 'update', 'entregador', seg[1], upd)
+      return json({ entregador: clean(atualizado) })
+    }
+    if (seg[0] === 'entregadores' && seg[1] && method === 'DELETE') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) return err('Sem permissao', 403)
+      const entregador = await entregadorRepo.findById(ctx.empresa_id, seg[1])
+      if (!entregador) return err('Entregador nao encontrado', 404)
+      await entregadorRepo.updateAtivo(ctx.empresa_id, seg[1], false)
+      await audit(repos, ctx, 'delete', 'entregador', seg[1])
+      return json({ ok: true })
+    }
+
     /* ==================== PEDIDOS ==================== */
     if (route === '/pedidos' && method === 'GET') {
       const url = new URL(request.url)
@@ -955,8 +1020,22 @@ async function handler(request, { params }) {
       const itens = Array.isArray(b.itens) ? b.itens : []
       if (!itens.length) return err('Pedido precisa de ao menos 1 item')
       const subtotal = round2(itens.reduce((s, it) => s + Number(it.preco) * Number(it.quantidade || 1), 0))
+
+      const tipo = b.tipo || 'balcao'
+      let entregaTaxa = 0
+      let entregaTempo = null
+      let entregaEndereco = ''
+
+      if (tipo === 'delivery') {
+        const emp = await empresaRepo.findById(ctx.empresa_id)
+        const deliveryConfig = emp?.config?.delivery || {}
+        entregaTaxa = b.entrega_taxa !== undefined ? round2(b.entrega_taxa) : round2(deliveryConfig.taxa_padrao || 0)
+        entregaTempo = b.entrega_tempo_estimado_min !== undefined ? Number(b.entrega_tempo_estimado_min) : (deliveryConfig.tempo_estimado_min || null)
+        entregaEndereco = b.entrega_endereco || ''
+      }
+
       let valores
-      try { valores = computePedidoValores(subtotal, b.desconto, b.acrescimo) } catch (e) { return err(e.message) }
+      try { valores = computePedidoValores(subtotal, b.desconto, b.acrescimo, entregaTaxa) } catch (e) { return err(e.message) }
       const numero = await pedidoRepo.nextNumero(ctx.empresa_id)
       let cliente_nome = b.cliente_nome || 'Consumidor'
       if (b.cliente_id) {
@@ -970,13 +1049,16 @@ async function handler(request, { params }) {
         cliente_id: b.cliente_id || null,
         cliente_nome,
         itens,
-        tipo: b.tipo || 'balcao',
+        tipo,
         pagamento: b.pagamento || 'pix',
         status: b.status || 'recebido',
         observacoes: b.observacoes || '',
         subtotal: valores.subtotal,
         desconto: valores.desconto,
         acrescimo: valores.acrescimo,
+        entrega_taxa: valores.entrega_taxa,
+        entrega_endereco: entregaEndereco,
+        entrega_tempo_estimado_min: entregaTempo,
         total: valores.total,
         created_at: new Date(),
         updated_at: new Date(),
@@ -997,6 +1079,32 @@ async function handler(request, { params }) {
       const finais = ['concluido', 'ENTREGUE']
       const travados = [...finais, 'cancelado', 'CANCELADO']
 
+      const tipoAtual = upd.tipo !== undefined ? upd.tipo : pedido.tipo
+      const mudarParaDelivery = tipoAtual === 'delivery' && pedido.tipo !== 'delivery'
+      const mudarDeDelivery = tipoAtual !== 'delivery' && pedido.tipo === 'delivery'
+      const permaneceDelivery = tipoAtual === 'delivery' && pedido.tipo === 'delivery'
+      const permaneceNaoDelivery = tipoAtual !== 'delivery' && pedido.tipo !== 'delivery'
+
+      if (mudarParaDelivery) {
+        const emp = await empresaRepo.findById(ctx.empresa_id)
+        const deliveryConfig = emp?.config?.delivery || {}
+        upd.entrega_taxa = round2(deliveryConfig.taxa_padrao || 0)
+        upd.entrega_tempo_estimado_min = deliveryConfig.tempo_estimado_min || null
+        if (b.entrega_endereco !== undefined) upd.entrega_endereco = b.entrega_endereco
+      } else if (mudarDeDelivery) {
+        upd.entrega_taxa = 0
+        upd.entrega_endereco = ''
+        upd.entrega_tempo_estimado_min = null
+      } else if (permaneceDelivery) {
+        if (b.entrega_taxa !== undefined) upd.entrega_taxa = round2(b.entrega_taxa)
+        if (b.entrega_tempo_estimado_min !== undefined) upd.entrega_tempo_estimado_min = Number(b.entrega_tempo_estimado_min)
+        if (b.entrega_endereco !== undefined) upd.entrega_endereco = b.entrega_endereco
+      } else if (permaneceNaoDelivery) {
+        upd.entrega_taxa = 0
+        upd.entrega_endereco = ''
+        upd.entrega_tempo_estimado_min = null
+      }
+
       /**
        * Edicao dos itens de um pedido ja criado (Fix: operador precisava
        * poder corrigir um pedido "Recebido" — trocar itens, nao so status).
@@ -1016,7 +1124,7 @@ async function handler(request, { params }) {
       }
 
       /**
-       * Ajuste manual de valor (desconto/acrescimo). Recalcula o total a partir
+       * Ajuste manual de valor (desconto/acrescimo/entrega). Recalcula o total a partir
        * do subtotal JA GRAVADO (ou, se os itens tambem mudaram nesta mesma
        * requisicao, do novo subtotal dos itens) — nunca a partir do que o
        * cliente enviar — para que ninguem consiga alterar o valor por esta rota.
@@ -1026,7 +1134,8 @@ async function handler(request, { params }) {
        * deixaria o financeiro divergente em silencio; o caminho correto para
        * isso e um lancamento de estorno/ajuste no financeiro.
        */
-      if (b.desconto !== undefined || b.acrescimo !== undefined || itensChanged) {
+      const entregaTaxaMudou = upd.entrega_taxa !== undefined
+      if (b.desconto !== undefined || b.acrescimo !== undefined || itensChanged || entregaTaxaMudou) {
         if (finais.includes(pedido.status)) {
           return err('Nao e possivel alterar o valor de um pedido ja concluido. Registre um ajuste no financeiro.', 409)
         }
@@ -1041,11 +1150,13 @@ async function handler(request, { params }) {
             subtotalBase,
             b.desconto !== undefined ? b.desconto : pedido.desconto,
             b.acrescimo !== undefined ? b.acrescimo : pedido.acrescimo,
+            upd.entrega_taxa !== undefined ? upd.entrega_taxa : (Number(pedido.entrega_taxa) || 0),
           )
         } catch (e) { return err(e.message) }
         upd.subtotal = valores.subtotal
         upd.desconto = valores.desconto
         upd.acrescimo = valores.acrescimo
+        upd.entrega_taxa = valores.entrega_taxa
         upd.total = valores.total
       }
 
@@ -1075,6 +1186,71 @@ async function handler(request, { params }) {
       await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
       if (b.status) await emitEvent(repos, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: b.status })
       return json(clean(await pedidoRepo.findById(ctx.empresa_id, seg[1])))
+    }
+
+    /**
+     * PATCH /pedidos/:id/status — transicao de status com regras especiais
+     * para saiu_para_entrega (Task 7: Delivery Completo).
+     *
+     * Validacoes para saiu_para_entrega:
+     * - Rejeita 400 se tipo !== 'delivery'
+     * - Rejeita 400 se entregador_id nao fornecido
+     * - Rejeita 404 se entregador nao encontrado ou nao pertence a empresa
+     * - Snapshot entregador_nome do banco (nunca do client)
+     * - Stamp saiu_para_entrega_em = now()
+     */
+    if (seg[0] === 'pedidos' && seg[1] && seg[2] === 'status' && method === 'PATCH') {
+      if (!can(ctx.papel, 'pedidos')) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      const pedido = await pedidoRepo.findById(ctx.empresa_id, seg[1])
+      if (!pedido) return err('Pedido nao encontrado', 404)
+
+      const novoStatus = b.status
+      if (!novoStatus) return err('status e obrigatorio', 400)
+
+      // Logica especial para saiu_para_entrega
+      if (novoStatus === 'saiu_para_entrega' || novoStatus === 'SAIU_PARA_ENTREGA') {
+        // Regra 1: so pedidos delivery podem sair para entrega
+        if (pedido.tipo !== 'delivery') {
+          return err('Apenas pedidos delivery podem ir para saiu_para_entrega', 400)
+        }
+
+        // Regra 2: entregador_id e obrigatorio
+        if (!b.entregador_id) {
+          return err('entregador_id e obrigatorio para saiu_para_entrega', 400)
+        }
+
+        // Regra 3: verificar que entregador existe e pertence a empresa
+        const entregador = await entregadorRepo.findById(ctx.empresa_id, b.entregador_id)
+        if (!entregador) {
+          return err('Entregador nao encontrado', 404)
+        }
+
+        // Regra 4: snapshot entregador_nome do banco (nunca confiar no client)
+        // e stamp timestamp
+        const upd = {
+          status: novoStatus,
+          entregador_id: b.entregador_id,
+          entregador_nome: entregador.nome,
+          saiu_para_entrega_em: new Date().toISOString(),
+          updated_at: new Date(),
+        }
+        await pedidoRepo.update(ctx.empresa_id, seg[1], upd)
+        await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
+        await emitEvent(repos, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: novoStatus })
+        return json({ pedido: clean(await pedidoRepo.findById(ctx.empresa_id, seg[1])) }, 200)
+      }
+
+      // Para outros status, nao tem logica especial por enquanto
+      // (manter extensivel para futuras regras por status)
+      const upd = {
+        status: novoStatus,
+        updated_at: new Date(),
+      }
+      await pedidoRepo.update(ctx.empresa_id, seg[1], upd)
+      await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
+      await emitEvent(repos, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: novoStatus })
+      return json({ pedido: clean(await pedidoRepo.findById(ctx.empresa_id, seg[1])) }, 200)
     }
 
     /* ==================== FINANCEIRO ==================== */
