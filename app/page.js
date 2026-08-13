@@ -51,6 +51,25 @@ const brl = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency:
 const fmtDate = (d) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
 /**
+ * VALIDACAO MANUAL — Cupom com delivery (Task 12)
+ *
+ * Checklist de validacao end-to-end (fazer manualmente no navegador):
+ * - [ ] Criar pedido delivery com cliente+endereco, verificar taxa auto-fill
+ * - [ ] Avancar status: recebido > em_preparo > pronto
+ * - [ ] Imprimir cupom via cliente, verificar:
+ *       * Taxa Entrega aparece na secao VALORES
+ *       * Endereco aparece na RODAPE (secao separada)
+ *       * Ambos desaparecem se taxa=0 ou tipo!=delivery
+ * - [ ] Refresh do navegador, verificar persistencia de todos campos
+ * - [ ] Criar pedido balcao, editar tipo para delivery, salvar/reload
+ * - [ ] Testar soft-delete entregador, verificar entregador_nome persiste
+ * - [ ] Multi-tenant: logon empresa 2, verificar isolamento entregadores
+ *
+ * Cupom template: lib/cupom-dados.js + components/cupom.jsx
+ * Impressao: via window.print() no navegador (nao ha backend printing)
+ */
+
+/**
  * Busca os dados da empresa sob demanda para o cupom. `Pedidos`/`Mesas` nao
  * recebem `me.empresa` como prop (cada tela busca so o que usa) — chamar
  * `/empresa` aqui e mais simples do que reestruturar o fluxo de estado do
