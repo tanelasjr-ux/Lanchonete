@@ -697,9 +697,11 @@ async function handler(request, { params }) {
       if (b.origem === 'pedido') {
         const pedido = await pedidoRepo.findById(kctx.empresa_id, b.id)
         if (!pedido) return err('Pedido nao encontrado', 404)
-        await pedidoRepo.update(kctx.empresa_id, b.id, { status: 'pronto', updated_at: new Date() })
+        const updated = await pedidoRepo.update(kctx.empresa_id, b.id, { status: 'pronto', updated_at: new Date() })
+        if (!updated) return err('Falha ao atualizar pedido', 500)
       } else {
-        await comandaRepo.updateItemCampos(kctx.empresa_id, b.comanda_id, b.id, { entregue: true })
+        const updated = await comandaRepo.updateItemCampos(kctx.empresa_id, b.comanda_id, b.id, { entregue: true })
+        if (!updated) return err('Falha ao atualizar item', 500)
       }
       await audit(repos, { empresa_id: kctx.empresa_id, usuario_id: kctx.usuario_id, nome: kctx.nome }, 'concluir', b.origem === 'pedido' ? 'pedido' : 'comanda_item', b.id, {})
       return json({ ok: true })

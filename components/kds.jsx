@@ -88,6 +88,7 @@ function KDSPainel({ fetchPendentes, onConcluir, tocavel }) {
     setItens((s) => s.filter((i) => i.id !== item.id)) // otimista
     try {
       await onConcluir(item)
+      await carregar() // verifica que backend confirmou (recarrega estado real)
     } catch (e) {
       setErro(e.message)
       carregar() // desfaz o otimista buscando o estado real
