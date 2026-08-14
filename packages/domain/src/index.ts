@@ -101,11 +101,24 @@ export interface Categoria extends TenantScoped {
 export interface Produto extends TenantScoped {
   id: UUID; categoria_id: UUID | null; nome: string; descricao: string;
   preco: number; imagem: string | null; disponivel: boolean; ativo: boolean;
+  estoque_habilitado: boolean;
+  estoque_quantidade: number | null;
+  estoque_minimo: number;
 }
 
 export interface Cliente extends TenantScoped {
   id: UUID; nome: string; telefone: string; email: string; endereco: string;
   observacoes: string; total_pedidos: number; total_gasto: number;
+}
+
+export interface EstoqueAjuste {
+  produto_id: UUID;
+  empresa_id: UUID;
+  quantidade_anterior: number;
+  quantidade_nova: number;
+  motivo: string; // 'venda', 'devolucao', 'ajuste_manual', 'sucata'
+  usuario_id: UUID;
+  data: Date;
 }
 
 export interface Entregador extends TenantScoped {
@@ -324,6 +337,11 @@ export interface BulkCreatable<T> {
 export interface ProdutoRepository extends Repository<Produto>, BulkCreatable<Produto> {
   /** Cascade usado ao excluir uma categoria (route.js). */
   deleteManyByCategoria(empresaId: UUID, categoriaId: UUID): Promise<void>;
+
+  decrementarEstoque(empresaId: UUID, produtoId: UUID, quantidade: number, motivo: string): Promise<Produto>;
+  ajustarEstoque(empresaId: UUID, produtoId: UUID, novaQuantidade: number, motivo: string): Promise<Produto>;
+  listEstoqueBaixo(empresaId: UUID): Promise<Produto[]>;
+  getEstoque(empresaId: UUID, produtoId: UUID): Promise<number | null>;
 }
 export interface CategoriaRepository extends Repository<Categoria>, BulkCreatable<Categoria> {}
 export interface ClienteRepository extends Repository<Cliente>, BulkCreatable<Cliente> {
