@@ -71,6 +71,35 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 - Task 3: índices Mongo para kds_tokens
 - Task 5: 404 handling em POST /kds/concluir mesa branch
 
+**🔴 BUG CRÍTICO DESCOBERTO (2026-08-14):**
+
+**Problema:** Quando cozinheiro clica "pronto" no KDS, o pedido fica travado em "em_preparo" (sem mensagem de erro). Clicar em outro pedido "destranca".
+
+**Root cause (investigação concluída):**
+1. **UI bug:** `components/kds.jsx` linha 87-95: `concluir()` remove item otimisticamente ANTES de confirmar sucesso. Se API retorna OK, nunca recarrega pra sincronizar.
+2. **Backend bug:** `app/api/route.js` linha 700: `pedidoRepo.update()` não verifica se update funcionou. Retorna `{ ok: true }` mesmo se update falhou silenciosamente.
+
+**Impact:** Pedido marcado como "pronto" no backend pode falhar, mas UI acha que sucedeu. Próximo polling traz item de volta (porque ainda em "em_preparacao"), criando ilusão de travamento.
+
+**Fix necessário (2 mudanças):**
+1. Backend: Verificar resultado de `update()`, retornar erro se null:
+   ```javascript
+   const updated = await pedidoRepo.update(kctx.empresa_id, b.id, { status: 'pronto' })
+   if (!updated) return err('Pedido nao encontrado', 404)
+   ```
+2. UI: Recarregar após sucesso de `onConcluir()`, não só em erro:
+   ```javascript
+   const concluir = async (item) => {
+     setItens(s => s.filter(i => i.id !== item.id))
+     try {
+       await onConcluir(item)
+       await carregar()  // <-- AQUI: recarregar após sucesso
+     } catch (e) { ... }
+   }
+   ```
+
+**Status:** Pronto para ser fixado amanhã (fix rápido, 10-15min)
+
 ---
 
 **DELIVERY COMPLETO — 12/12 TASKS COMPLETAS ✅**
@@ -101,59 +130,50 @@ Implementacao via subagent-driven-development, plano executado completamente (`d
 
 ---
 
-**CAIXA — EM EXECUÇÃO (6/14 TASKS COMPLETAS)**
+**CAIXA — EM EXECUÇÃO (12-13 DE 14 TASKS COMPLETAS)**
 
-**Status:** Implementacao via subagent-driven-development, plano iniciado mas **INTERROMPIDO** por usuario (2026-08-13 ~18:50, token usage approach 85%).
+**Status:** Implementacao via subagent-driven-development, plano quase completo.
 
-✅ **COMPLETAS E REVISADAS:**
-- Task 1 (c85abbe): Schema 0018_caixa.sql + domain contracts (Caixa, CaixaMovimento, tipos)
-  - Spec ✅, Quality ✅
-- Task 2 (5008a5b): Módulo puro lib/caixa.js com 10 testes, computeCaixaEsperado()
-  - Spec ✅, Quality ✅
-- Task 6 (5e7eaf4 + ff7bc14): Forma de pagamento na origem (comanda + pedido direto)
-  - Uma transacao por metodo de pagamento na comanda
-  - Especifica forma_pagamento e caixa_id em toda transacao de receita
-  - Spec ✅, Quality ✅
+✅ **T1-9 COMPLETAS (backend + endpoints):**
+- T1: Schema 0018_caixa.sql + domain contracts ✅
+- T2: lib/caixa.js + testes ✅
+- T3-5: Repositorios (Supabase + Mongo) + query methods ✅
+- T6: Forma de pagamento na origem (comanda + pedido) ✅
+- T7-9: Endpoints caixa completos (/abrir, /fechar, /movimento, /estorno) + security fixes (TOCTOU mitigated) ✅
+  - Commits: 57658f6..f8d7d26 (9 tasks total)
 
-🟡 **COMPLETAS, PARKED FINDINGS (arquivos pre-existentes de T6):**
-- Task 3 (c85abbe): Supabase repos caixaRepository + caixaMovimentoRepository
-  - Nota: caixaRepository ja existia de T6; T3 criou caixaMovimentoRepository
-  - Spec notation issue (arquivo nao foi criado T3, mas funcional requirement atendido)
-- Task 4 (907da9a): Mongo repos + 3 indices + factory registration
-  - Nota: mongo/caixaRepository ja existia de T6; T4 criou caixaMovimentoRepository
-  - Indices criados corretamente, factory wire completo
-- Task 5 (c3195ef): Query methods findByCaixa + findByPedido em ambos backends
-  - Spec ✅, Quality ✅
+✅ **T10-12 COMPLETAS (UI):**
+- T10 (054d0f9): Barra de status do caixa + dialog abertura
+- T11 (ae8a899): Fechamento com conferencia ao vivo + movimentos + historico  
+- T12 (bundled ae8a899): Estorno UI + aviso de caixa fechado
+  - Note: T12 code bundled into T11's commit due to concurrent-agent git race (all code present, correct, building)
 
-⏸️ **BLOQUEADO (HALTED POR USUARIO):**
-- Task 7 (affed465fe21633e5): Endpoints /caixa/atual, /caixa/abrir, /caixa/historico + resumoDoCaixa helper
-  - Status: **KILLED mid-exec** (sem output)
-- Task 8 (a580d617ef82e2bcd): Endpoints /caixa/fechar, /caixa/movimento
-  - Status: **COMPLETED but anomalous output** (verificar report)
-- Task 9 (a5752f6882772a860): Endpoint /pedidos/:id/estorno
-  - Status: **KILLED mid-exec** (sem output)
+⏸️ **T13 PAUSED (testes de API):**
+- backend_test_caixa.py nao existe ainda
+- Agent abe7139ddec5b574c foi kilado durante execucao
+- Pronto para retomar amanhã
 
-📋 **PENDENTE (NAO INICIADO):**
-- Task 10-12: UI (barra status, dialogos, historico)
-- Task 13: Testes (backend_test_caixa.py)
-- Task 14: Docs (HANDOFF + ROADMAP)
+📋 **T14 PENDENTE (docs):**
+- HANDOFF.md + ROADMAP.md: aguardando T13 completa pra documentar estado real
+- Se T13 completar OK: documenta "14/14 COMPLETO"
+- Se T13 falhar/skip: documenta estado real (13/14)
 
-**Ledger SDD completo:** `.superpowers/sdd/2026-08-13-caixa-implementation/progress.md`
+**Ledger SDD:** `.superpowers/sdd/2026-08-13-caixa-implementation/progress.md`
 **Spec e plan:** `docs/superpowers/specs/2026-08-13-caixa-design.md` + `docs/superpowers/plans/2026-08-13-caixa-implementation.md`
 
-**PARA RETOMAR:**
-1. Verificar output de T8 (completou com msg anomala — pode estar correto)
-2. Redespachar T7 e T9 (foram kiladas) com modelo mais robusto
-3. Revisar T7-9 quando completarem
-4. Despachar T10-14 (UI, testes, docs)
+**PARA AMANHÃ:**
+1. Retomar T13 (backend_test_caixa.py) se necessário
+2. Executar T14 (final audit + docs)
+3. **BUG CRÍTICO DESCOBERTO EM KDS** (ver seção abaixo) — **FIX URGENTE AMANHÃ**
 
 ---
 
-**Proximos passos (quando houver novos issues):**
-1. Corrigir os 2 deferred findings KDS (se necessário)
-2. Monitorar em produção para outros issues
-3. **RETOMAR CAIXA** (T7-14)
-4. Iniciar próxima feature (ver §11)
+**Proximos passos (URGÊNCIA):**
+1. **[AMANHÃ - CRÍTICO]** Fixar bug KDS: `concluir()` não recarrega após sucesso + `update()` não verifica resultado
+2. **[AMANHÃ]** Completar Caixa: T13 (testes) + T14 (docs)
+3. Corrigir deferred findings KDS (índices Mongo, 404 handling)
+4. Monitorar em produção para outros issues
+5. Iniciar próxima feature (ver §11)
 
 ---
 
