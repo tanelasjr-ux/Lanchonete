@@ -1352,6 +1352,23 @@ async function handler(request, { params }) {
         if (pedido.cliente_id) {
           await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, totalFinal)
         }
+        // NEW: Decrement stock for each item sold (if tracking enabled)
+        for (const item of (pedido.itens || [])) {
+          if (item.produto_id) {
+            try {
+              await produtoRepo.decrementarEstoque(
+                ctx.empresa_id,
+                item.produto_id,
+                item.quantidade,
+                'venda'
+              )
+            } catch (e) {
+              // Stock error is non-fatal — log to audit and continue
+              console.warn(`Stock deduction failed for produto ${item.produto_id}: ${e.message}`)
+              await audit(repos, ctx, 'estoque_erro', 'pedido', pedido.id, { erro: e.message })
+            }
+          }
+        }
       }
       await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
       if (b.status) await emitEvent(repos, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: b.status })
@@ -1905,6 +1922,22 @@ async function handler(request, { params }) {
         })
       }
       if (comanda.cliente_id) await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, comanda.cliente_id, totals.total)
+      // NEW: Decrement stock for each item sold (if tracking enabled)
+      for (const item of (comanda.itens || [])) {
+        if (item.produto_id) {
+          try {
+            await produtoRepo.decrementarEstoque(
+              ctx.empresa_id,
+              item.produto_id,
+              item.quantidade,
+              'venda'
+            )
+          } catch (e) {
+            console.warn(`Stock deduction failed for produto ${item.produto_id}: ${e.message}`)
+            await audit(repos, ctx, 'estoque_erro', 'comanda', comanda.id, { erro: e.message })
+          }
+        }
+      }
       await comandaRepo.update(ctx.empresa_id, comanda.id, { status: 'fechada', fechada_em: new Date(), total: totals.total, updated_at: new Date() })
       if (comanda.mesa_id) await mesaRepo.update(ctx.empresa_id, comanda.mesa_id, { status: 'livre', comanda_id: null, updated_at: new Date() })
       await audit(repos, ctx, 'fechar', 'comanda', comanda.id, { total: totals.total, pedido: numero })
