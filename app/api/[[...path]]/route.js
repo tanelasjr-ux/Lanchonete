@@ -24,6 +24,7 @@ import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations
 import { uploadLogo, removeLogo, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
+import { computeCaixaEsperado } from '@/lib/caixa'
 
 /* ============================ INFRA: persistencia ========================
  * A escolha do backend (MongoDB ou Supabase) vive inteiramente em
@@ -250,6 +251,23 @@ function computeComanda(comanda) {
 }
 const MESA_STATUS = ['livre', 'ocupada', 'aguardando_pagamento', 'reservada']
 
+/**
+ * Monta o resumo financeiro de um caixa: quanto deveria haver na gaveta e o
+ * total por forma de pagamento. Usado pelo GET /caixa/atual, pelo fechamento e
+ * pela validacao de sangria — os tres precisam exatamente do mesmo numero.
+ */
+async function resumoDoCaixa(repos, empresaId, caixa) {
+  const [transacoes, movimentos] = await Promise.all([
+    repos.transacaoRepo.findByCaixa(empresaId, caixa.id),
+    repos.caixaMovimentoRepo.listByCaixa(empresaId, caixa.id),
+  ])
+  return computeCaixaEsperado({
+    valor_abertura: caixa.valor_abertura,
+    transacoes,
+    movimentos,
+  })
+}
+
 /* ============================ SEED (demo) ============================= */
 async function seedEmpresa(repos, empresa_id, ctx) {
   const now = Date.now()
@@ -452,7 +470,7 @@ async function handler(request, { params }) {
       categoriaRepo, produtoRepo, clienteRepo, usuarioRepo, transacaoRepo,
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
-      kdsTokenRepo, entregadorRepo, caixaRepo,
+      kdsTokenRepo, entregadorRepo, caixaRepo, caixaMovimentoRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -1007,6 +1025,140 @@ async function handler(request, { params }) {
       return json({ ok: true })
     }
 
+    /* ==================== CAIXA ==================== */
+    // GET /caixa/atual — caixa aberto com os parciais calculados, ou null.
+    if (seg[0] === 'caixa' && seg[1] === 'atual' && method === 'GET') {
+      const caixa = await caixaRepo.findAberto(ctx.empresa_id)
+      if (!caixa) return json({ caixa: null, resumo: null, movimentos: [] })
+      const resumo = await resumoDoCaixa(repos, ctx.empresa_id, caixa)
+      const movimentos = await caixaMovimentoRepo.listByCaixa(ctx.empresa_id, caixa.id)
+      return json({ caixa, resumo, movimentos })
+    }
+
+    // POST /caixa/abrir — GERENTE+. 409 se ja houver caixa aberto.
+    if (seg[0] === 'caixa' && seg[1] === 'abrir' && method === 'POST') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) {
+        return err('Sem permissao para abrir caixa', 403)
+      }
+      const b = (await request.json()) || {}
+      const valorAbertura = Number(b.valor_abertura)
+      if (!Number.isFinite(valorAbertura) || valorAbertura < 0) {
+        return err('valor_abertura invalido')
+      }
+
+      const jaAberto = await caixaRepo.findAberto(ctx.empresa_id)
+      if (jaAberto) return err('Ja existe um caixa aberto', 409)
+
+      const caixa = await caixaRepo.create({
+        id: uuidv4(),
+        empresa_id: ctx.empresa_id,
+        status: 'aberto',
+        aberto_por: ctx.usuario_id,
+        aberto_por_nome: ctx.nome || '',
+        aberto_em: new Date().toISOString(),
+        valor_abertura: Math.round(valorAbertura * 100) / 100,
+        created_at: new Date().toISOString(),
+      })
+
+      await audit(repos, ctx, 'abrir', 'caixa', caixa.id, { valor_abertura: caixa.valor_abertura })
+      return json({ caixa })
+    }
+
+    // GET /caixa/historico — GERENTE+. Caixas fechados, mais recentes primeiro.
+    if (seg[0] === 'caixa' && seg[1] === 'historico' && method === 'GET') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) {
+        return err('Sem permissao', 403)
+      }
+      const url = new URL(request.url)
+      const limiteBruto = Number(url.searchParams.get('limite'))
+      const limite = Number.isFinite(limiteBruto) && limiteBruto > 0 ? Math.min(limiteBruto, 100) : 20
+      const caixas = await caixaRepo.listarFechados(ctx.empresa_id, limite)
+      return json({ caixas })
+    }
+
+    // POST /caixa/fechar — GERENTE+. Calcula esperado, grava diferenca.
+    if (seg[0] === 'caixa' && seg[1] === 'fechar' && method === 'POST') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) {
+        return err('Sem permissao para fechar caixa', 403)
+      }
+      const b = (await request.json()) || {}
+      const valorContado = Number(b.valor_contado)
+      if (!Number.isFinite(valorContado) || valorContado < 0) {
+        return err('valor_contado invalido')
+      }
+
+      const caixa = await caixaRepo.findAberto(ctx.empresa_id)
+      if (!caixa) return err('Nao ha caixa aberto', 409)
+
+      const resumo = await resumoDoCaixa(repos, ctx.empresa_id, caixa)
+      const contado = Math.round(valorContado * 100) / 100
+      const diferenca = Math.round((contado - resumo.valor_esperado) * 100) / 100
+
+      // Quebra de caixa exige justificativa. O sistema registra e segue — o que
+      // fazer com a diferenca e decisao do dono, nao do software.
+      const observacoes = (b.observacoes || '').trim()
+      if (diferenca !== 0 && !observacoes) {
+        return err('Informe uma observacao explicando a diferenca do caixa')
+      }
+
+      const fechado = await caixaRepo.update(ctx.empresa_id, caixa.id, {
+        status: 'fechado',
+        fechado_por: ctx.usuario_id,
+        fechado_por_nome: ctx.nome || '',
+        fechado_em: new Date().toISOString(),
+        valor_contado: contado,
+        valor_esperado: resumo.valor_esperado,
+        diferenca,
+        observacoes,
+      })
+
+      await audit(repos, ctx, 'fechar', 'caixa', caixa.id, {
+        valor_esperado: resumo.valor_esperado, valor_contado: contado, diferenca,
+      })
+      return json({ caixa: fechado, resumo })
+    }
+
+    // POST /caixa/movimento — GERENTE+. Sangria ou suprimento no caixa aberto.
+    if (seg[0] === 'caixa' && seg[1] === 'movimento' && method === 'POST') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) {
+        return err('Sem permissao para registrar movimento', 403)
+      }
+      const b = (await request.json()) || {}
+      if (!['sangria', 'suprimento'].includes(b.tipo)) {
+        return err('tipo deve ser sangria ou suprimento')
+      }
+      const valor = Number(b.valor)
+      if (!Number.isFinite(valor) || valor <= 0) return err('valor deve ser maior que zero')
+
+      const caixa = await caixaRepo.findAberto(ctx.empresa_id)
+      if (!caixa) return err('Nao ha caixa aberto', 409)
+
+      // Nao se tira da gaveta mais do que ha nela.
+      if (b.tipo === 'sangria') {
+        const resumo = await resumoDoCaixa(repos, ctx.empresa_id, caixa)
+        if (valor > resumo.valor_esperado) {
+          return err(`Sangria maior que o disponivel na gaveta (R$ ${resumo.valor_esperado.toFixed(2)})`)
+        }
+      }
+
+      const movimento = await caixaMovimentoRepo.create({
+        id: uuidv4(),
+        empresa_id: ctx.empresa_id,
+        caixa_id: caixa.id,
+        tipo: b.tipo,
+        valor: Math.round(valor * 100) / 100,
+        motivo: b.motivo || '',
+        usuario_id: ctx.usuario_id,
+        usuario_nome: ctx.nome || '',
+        created_at: new Date().toISOString(),
+      })
+
+      await audit(repos, ctx, 'registrar', 'caixa_movimento', movimento.id, {
+        tipo: movimento.tipo, valor: movimento.valor,
+      })
+      return json({ movimento })
+    }
+
     /* ==================== PEDIDOS ==================== */
     if (route === '/pedidos' && method === 'GET') {
       const url = new URL(request.url)
@@ -1254,6 +1406,61 @@ async function handler(request, { params }) {
       await audit(repos, ctx, 'update', 'pedido', seg[1], upd)
       await emitEvent(repos, ctx, 'order.status_changed', { pedido_id: seg[1], numero: pedido.numero, status: novoStatus })
       return json({ pedido: clean(await pedidoRepo.findById(ctx.empresa_id, seg[1])) }, 200)
+    }
+
+    // POST /pedidos/:id/estorno — GERENTE+. Lancamento de contrapartida.
+    // O `total` do pedido nunca muda; o estorno e um lancamento novo em
+    // `transacoes` (tipo despesa, categoria Estorno) — exatamente o que o
+    // comentario acima (edicao de valor apos concluido) ja orientava.
+    if (seg[0] === 'pedidos' && seg[2] === 'estorno' && method === 'POST') {
+      if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) {
+        return err('Sem permissao para estornar', 403)
+      }
+      const b = (await request.json()) || {}
+      const pedido = await pedidoRepo.findById(ctx.empresa_id, seg[1])
+      if (!pedido) return err('Pedido nao encontrado', 404)
+
+      const finaisEstornaveis = ['concluido', 'ENTREGUE', 'entregue']
+      if (!finaisEstornaveis.includes(pedido.status)) {
+        return err('So pedidos concluidos podem ser estornados')
+      }
+
+      const valor = Number(b.valor)
+      if (!Number.isFinite(valor) || valor <= 0) return err('valor deve ser maior que zero')
+
+      const motivo = (b.motivo || '').trim()
+      if (!motivo) return err('motivo e obrigatorio')
+
+      // Estorno parcial e permitido, mas a soma dos estornos nunca passa do total.
+      const doPedido = await transacaoRepo.findByPedido(ctx.empresa_id, pedido.id)
+      const jaEstornado = doPedido
+        .filter((t) => t.tipo === 'despesa' && t.categoria === 'Estorno')
+        .reduce((s, t) => s + Number(t.valor || 0), 0)
+
+      const valorArred = Math.round(valor * 100) / 100
+      if (jaEstornado + valorArred > pedido.total) {
+        const restante = Math.round((pedido.total - jaEstornado) * 100) / 100
+        return err(`Estorno acima do disponivel. Restam R$ ${restante.toFixed(2)} deste pedido`)
+      }
+
+      const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
+      const estorno = await transacaoRepo.create({
+        id: uuidv4(),
+        empresa_id: ctx.empresa_id,
+        tipo: 'despesa',
+        categoria: 'Estorno',
+        descricao: `Estorno do Pedido #${pedido.numero}: ${motivo}`,
+        valor: valorArred,
+        pedido_id: pedido.id,
+        comanda_id: pedido.comanda_id || null,
+        forma_pagamento: pedido.pagamento || 'dinheiro',
+        caixa_id: caixaAberto ? caixaAberto.id : null,
+        data: new Date(),
+        created_at: new Date(),
+      })
+
+      await audit(repos, ctx, 'estornar', 'pedido', pedido.id, { valor: valorArred, motivo })
+      return json({ estorno: clean(estorno), total_estornado: Math.round((jaEstornado + valorArred) * 100) / 100 })
     }
 
     /* ==================== FINANCEIRO ==================== */
