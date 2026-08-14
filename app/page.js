@@ -1032,13 +1032,95 @@ function Financeiro() {
   const [resumo, setResumo] = useState(null)
   const [tx, setTx] = useState([])
   const [dlg, setDlg] = useState(false)
+
+  // Caixa (fundo de troco / abertura-fechamento de turno). `caixaResumo` e
+  // `caixaMovimentos` sao reaproveitados pelas Tasks 11 (sangria/suprimento/
+  // fechamento) e 12 (impressao/relatorio de fechamento).
+  const [caixaAtual, setCaixaAtual] = useState(null)
+  const [caixaResumo, setCaixaResumo] = useState(null)
+  const [caixaMovimentos, setCaixaMovimentos] = useState([])
+  const [caixaHistorico, setCaixaHistorico] = useState([])
+  const [dialogAbrirCaixa, setDialogAbrirCaixa] = useState(false)
+  const [dialogFecharCaixa, setDialogFecharCaixa] = useState(false)
+  const [valorAbertura, setValorAbertura] = useState('')
+
   const load = useCallback(async () => { const [r, t] = await Promise.all([api('/financeiro/resumo'), api('/financeiro/transacoes')]); setResumo(r); setTx(t) }, [])
   useEffect(() => { load().catch((e) => toast.error(e.message)) }, [load])
   const save = async (d) => { try { await api('/financeiro/transacoes', { method: 'POST', body: d }); toast.success('Lançamento adicionado'); setDlg(false); load() } catch (e) { toast.error(e.message) } }
+
+  const carregarCaixa = useCallback(async () => {
+    try {
+      const atual = await api('/caixa/atual')
+      setCaixaAtual(atual.caixa)
+      setCaixaResumo(atual.resumo)
+      setCaixaMovimentos(atual.movimentos || [])
+      const hist = await api('/caixa/historico?limite=10')
+      setCaixaHistorico(hist.caixas || [])
+    } catch (e) { console.error(e) }
+  }, [])
+  useEffect(() => { carregarCaixa() }, [carregarCaixa])
+
+  // Preenchida pela Task 11 (dialogo de sangria/suprimento). Aqui so garante
+  // que a tela compile enquanto os botoes ja existem na barra de status.
+  const abrirDialogMovimento = useCallback((_tipo) => {}, [])
+
+  const handleAbrirCaixa = async () => {
+    const valor = parseFloat(valorAbertura)
+    if (!Number.isFinite(valor) || valor < 0) {
+      toast.error('Informe o fundo de troco')
+      return
+    }
+    try {
+      await api('/caixa/abrir', { method: 'POST', body: { valor_abertura: valor } })
+      setDialogAbrirCaixa(false)
+      setValorAbertura('')
+      await carregarCaixa()
+      toast.success('Caixa aberto')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
   if (!resumo) return <Empty>Carregando…</Empty>
   return (
     <div className="space-y-6">
       <PageHeader title="Financeiro" description="Visão geral, lançamentos e relatórios do restaurante." />
+
+      {caixaAtual ? (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm text-muted-foreground">
+                  Caixa aberto desde {new Date(caixaAtual.aberto_em).toLocaleString('pt-BR')}
+                  {caixaAtual.aberto_por_nome ? ` por ${caixaAtual.aberto_por_nome}` : ''}
+                </div>
+                <div className="text-2xl font-semibold">
+                  {brl(caixaResumo?.valor_esperado ?? 0)}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">em dinheiro na gaveta</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <Button variant="outline" onClick={() => abrirDialogMovimento('sangria')}>Sangria</Button>
+                <Button variant="outline" onClick={() => abrirDialogMovimento('suprimento')}>Suprimento</Button>
+                <Button onClick={() => setDialogFecharCaixa(true)} className="col-span-2 sm:col-span-1">
+                  Fechar caixa
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="text-sm text-muted-foreground">
+              Caixa fechado. Abra o caixa para conferir o dinheiro no fim do dia.
+            </div>
+            <Button onClick={() => setDialogAbrirCaixa(true)}>Abrir caixa</Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Tabs defaultValue="visao">
         <TabsList><TabsTrigger value="visao">Visão Geral</TabsTrigger><TabsTrigger value="lancamentos">Lançamentos</TabsTrigger><TabsTrigger value="relatorios">Relatórios</TabsTrigger></TabsList>
 
@@ -1089,6 +1171,29 @@ function Financeiro() {
         <TabsContent value="relatorios" className="mt-4"><Relatorios /></TabsContent>
       </Tabs>
       {dlg && <TxDialog onClose={() => setDlg(false)} onSave={save} />}
+
+      <Dialog open={dialogAbrirCaixa} onOpenChange={setDialogAbrirCaixa}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Abrir caixa</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Fundo de troco (R$)</Label>
+              <Input
+                type="number" min="0" step="0.01" value={valorAbertura}
+                onChange={(e) => setValorAbertura(e.target.value)}
+                placeholder="0,00"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Dinheiro que já está na gaveta agora, antes da primeira venda.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setDialogAbrirCaixa(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={handleAbrirCaixa}>Abrir</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
