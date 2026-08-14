@@ -1104,7 +1104,7 @@ async function handler(request, { params }) {
         })
       } catch (e) {
         // Unique index violation: another request opened caixa between check and create
-        if (e.message?.includes('unique') || e.code === '23505') {
+        if (e.message?.includes('unique') || e.code === '23505' || e.code === 11000) {
           return err('Ja existe um caixa aberto', 409)
         }
         throw e
