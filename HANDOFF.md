@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-14 (KDS + DELIVERY + ESTOQUE 100% COMPLETO — app no ar, pronto para producao)
+Ultima atualizacao: 2026-08-14 (5 modulos completos e no ar; spec de Custo/CMV aprovada, plano pendente — ver §0)
 
 ## Como usar este arquivo
 
@@ -16,6 +16,55 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 ---
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
+
+## 🔵 EM ANDAMENTO — Custo e Margem (CMV)
+
+**Onde parou:** spec aprovada e commitada (`b70cea2`). **Falta escrever o plano
+de implementacao.** Nenhuma linha de codigo da feature foi escrita ainda.
+
+**Proximo comando ao retomar:**
+
+> Ler `docs/superpowers/specs/2026-08-14-custo-margem-design.md` e invocar
+> `superpowers:writing-plans` para gerar
+> `docs/superpowers/plans/2026-08-14-custo-margem-implementation.md`.
+> Depois executar via `superpowers:subagent-driven-development`.
+
+**O que a feature faz:** hoje `Produto` tem `preco` e nao tem custo em lugar
+nenhum — o sistema sabe quanto entrou e nunca quanto sobrou. A feature adiciona
+custo ao produto e deriva CMV%, cobertura e lucro bruto no Dashboard e no
+Relatorio financeiro.
+
+**As 4 decisoes que nao podem ser perdidas** (detalhadas na spec):
+
+1. **Custo congelado na `transacao`, nao no item.** Evita reescrever as 4 funcoes
+   atomicas do Postgres (armadilha do §4.3) e ainda assim preserva a historia:
+   mudar o custo amanha nao reescreve o CMV de hoje.
+2. **`produtos.custo` e `null`, nunca `0` por omissao.** `null` = nao cadastrado
+   (fora do calculo, conta contra a cobertura); `0` = custo zero real (brinde).
+   Sem essa distincao o CMV do dia 1 sai lindo e falso.
+3. **Cobertura sempre ao lado do CMV.** Um CMV de 31% com 40% de cobertura nao e
+   um CMV de 31%.
+4. **Estorno nao devolve custo.** A comida foi produzida e perdida — o custo
+   aconteceu. Estorno piora o CMV, que e o sinal correto.
+
+**Escopo aprovado:** campo de custo no cadastro do produto; CMV/cobertura/lucro
+no Dashboard (dia) e no Relatorio (periodo + CSV).
+**Fora de escopo (decidido, nao esquecido):** margem por item na lista de
+produtos, preview de margem ao vivo no dialog, ficha tecnica, custo por media
+ponderada de compras.
+
+**Arquivos previstos** (nenhum criado ainda): migration `0020_custo.sql`,
+`lib/custo.js` + `test_custo_calculo.mjs`, os 4 repositorios (produto e transacao
+nos dois backends), `route.js` (3 pontos de gravacao + 2 endpoints),
+`app/page.js`, `backend_test_custo.py`.
+
+**Por que esta feature primeiro:** analise de especialista feita em 2026-08-14
+apontou 3 lacunas de gestao — ausencia total de custo, estoque por produto em vez
+de insumo (ficha tecnica), e dashboard sem KPI operacional. Custo e a de menor
+esforco e maior retorno, e **desbloqueia a ficha tecnica** depois (com ela,
+`produtos.custo` deixa de ser digitado e passa a ser derivado da receita).
+
+---
 
 **O app esta NO AR e em uso:**
 
@@ -269,11 +318,32 @@ f2424d3 plan: Estoque MVP implementation — 12 tasks
 
 ---
 
-**Proximos passos (PRIORITÁRIO):**
-1. ✅ **Estoque MVP** — COMPLETO, no ar
-2. **Fechamento de Caixa** (14/14 tasks, auditoría anterior) — proximo passo recomendado
-3. **Cardápio Digital + QR** — vende o SaaS, feature estratégica
-4. **Frontend validation completa** (Playwright, todas as telas)
+**Roadmap (revisado em 2026-08-14 apos analise de especialista)**
+
+Concluido e no ar: KDS (11/11), Delivery (12/12), Caixa (14/14), Estoque
+(12/12), Cardapio Digital (7/7).
+
+| # | Frente | Estado | Por que |
+|---|--------|--------|---------|
+| 1 | **Custo e Margem (CMV)** | 🔵 spec pronta, plano pendente | O sistema sabe quanto entrou e nunca quanto sobrou. Menor esforco, maior retorno. Ver §0 |
+| 2 | **Ficha tecnica (insumos)** | ⚪ nao iniciada | Faz o estoque funcionar para comida preparada, nao so revenda. Fecha o CMV real. **Depende da #1** |
+| 3 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
+| 4 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
+
+**Debitos tecnicos conhecidos (nao urgentes, mas reais):**
+
+- **`route.js` com 2.192 linhas e `page.js` com 2.920.** Maior risco do projeto.
+  Ja cobrou: o fix do KDS (`34e374c`) quebrou o fechamento de comanda no Supabase
+  e so foi pego em code review, depois de marcado "completo".
+- **`backend_test_caixa.py` e `backend_test_kds.py` nunca foram executados.**
+  Existem, sao bons, e ninguem rodou.
+- **Um caixa aberto por empresa** (indice unico parcial). Cliente com balcao +
+  delivery em PDVs separados nao consegue operar.
+- **Sem NFC-e.** Fora de escopo por decisao, mas e bloqueio comercial real no
+  Brasil. Caminho quando virar prioridade: intermediario fiscal (Focus NFe,
+  NFe.io, Tecnospeed), nunca integracao direta com a SEFAZ.
+- **Sem integracao iFood/Rappi.** Pedido de marketplace entra manual — hoje e o
+  maior ralo de tempo operacional num restaurante real.
 
 ---
 
