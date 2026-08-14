@@ -707,6 +707,44 @@ async function handler(request, { params }) {
       return json({ ok: true })
     }
 
+    /* ==================== CARDAPIO DIGITAL (visualizacao publica, sem login) ==================== */
+
+    if (seg[0] === 'cardapio' && seg[1] && method === 'GET') {
+      const empresa = await empresaRepo.findBySlug(seg[1])
+      if (!empresa || !empresa.ativo) return err('Cardapio nao encontrado', 404)
+
+      const [categorias, produtos] = await Promise.all([
+        categoriaRepo.list(empresa.id),
+        produtoRepo.list(empresa.id),
+      ])
+
+      const categoriasVisiveis = categorias
+        .filter((c) => c.ativo)
+        .sort((a, b) => a.ordem - b.ordem)
+        .map((c) => ({ id: c.id, nome: c.nome }))
+
+      const produtosVisiveis = produtos
+        .filter((p) => p.ativo && p.disponivel)
+        .map((p) => ({
+          id: p.id,
+          categoria_id: p.categoria_id,
+          nome: p.nome,
+          descricao: p.descricao,
+          preco: p.preco,
+          imagem: p.imagem,
+        }))
+
+      return json({
+        empresa: {
+          nome: empresa.nome_comercial || empresa.nome,
+          logo: empresa.logo,
+          cor_principal: empresa.config?.appearance?.cor_principal || null,
+        },
+        categorias: categoriasVisiveis,
+        produtos: produtosVisiveis,
+      })
+    }
+
     /* ---- a partir daqui, tudo autenticado ---- */
     const session = await auth(request)
     if (!session) return err('Nao autorizado', 401)
