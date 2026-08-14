@@ -453,6 +453,41 @@ function ProdutoDialog({ data, cats, onClose, onSave }) {
           </div>
           <div className="space-y-2"><Label>Descrição</Label><Textarea value={f.descricao || ''} onChange={(e) => set('descricao', e.target.value)} rows={2} /></div>
           <div className="flex items-center justify-between rounded-lg border p-3"><Label>Disponível</Label><Switch checked={f.disponivel !== false} onCheckedChange={(v) => set('disponivel', v)} /></div>
+
+          <div className="space-y-3 border-t pt-3">
+            <div className="flex items-center justify-between">
+              <Label>Rastrear Estoque</Label>
+              <Switch
+                checked={f.estoque_habilitado}
+                onCheckedChange={(v) => set('estoque_habilitado', v)}
+              />
+            </div>
+
+            {f.estoque_habilitado && (
+              <>
+                <div>
+                  <Label>Quantidade Atual</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={f.estoque_quantidade || ''}
+                    onChange={(e) => set('estoque_quantidade', e.target.value ? Number(e.target.value) : null)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label>Quantidade Mínima (Alerta)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={f.estoque_minimo || '0'}
+                    onChange={(e) => set('estoque_minimo', Number(e.target.value))}
+                    placeholder="0.00"
+                  />
+                </div>
+              </>
+            )}
+          </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={() => onSave(f)}>Salvar</Button></DialogFooter>
       </DialogContent>
