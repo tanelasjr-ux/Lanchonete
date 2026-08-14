@@ -410,6 +410,7 @@ function Cardapio() {
   const [dlg, setDlg] = useState(null) // produto edit
   const [catDlg, setCatDlg] = useState(false)
   const [catName, setCatName] = useState('')
+  const [ajusteDlg, setAjusteDlg] = useState(null) // { id, nome, estoque_quantidade }
   const load = useCallback(async () => {
     const [c, p] = await Promise.all([api('/categorias'), api('/produtos')])
     setCats(c); setProds(p)
@@ -429,6 +430,17 @@ function Cardapio() {
       const disponivel = !(p.disponivel !== false)
       await api(`/produtos/${p.id}`, { method: 'PUT', body: { disponivel } })
       toast.success(disponivel ? 'Produto marcado como disponível' : 'Produto marcado como em falta')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+  const handleAjustarEstoque = async (data) => {
+    try {
+      await api(`/produtos/${data.produto_id}`, {
+        method: 'PUT',
+        body: { estoque_quantidade: data.quantidade_nova },
+      })
+      toast.success('Estoque ajustado')
+      setAjusteDlg(null)
       load()
     } catch (e) { toast.error(e.message) }
   }
@@ -454,6 +466,9 @@ function Cardapio() {
                   <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7 opacity-60 group-hover:opacity-100"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => setDlg(p)}><Pencil className="h-4 w-4 mr-2" />Editar</DropdownMenuItem>
+                    {p.estoque_habilitado && (
+                      <DropdownMenuItem onClick={() => setAjusteDlg({ id: p.id, nome: p.nome, estoque_quantidade: p.estoque_quantidade })}><Package className="h-4 w-4 mr-2" />Ajustar Estoque</DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => toggleDisponivel(p)}><PackageX className="h-4 w-4 mr-2" />{p.disponivel !== false ? 'Marcar como em falta' : 'Marcar como disponível'}</DropdownMenuItem>
                     <DropdownMenuItem className="text-destructive" onClick={() => delProd(p.id)}><Trash2 className="h-4 w-4 mr-2" />Remover</DropdownMenuItem>
                   </DropdownMenuContent>
@@ -480,6 +495,7 @@ function Cardapio() {
       </div>
 
       {dlg && <ProdutoDialog data={dlg} cats={cats} onClose={() => setDlg(null)} onSave={saveProd} />}
+      {ajusteDlg && <AjusteEstoqueDialog produto={ajusteDlg} open={!!ajusteDlg} onOpenChange={() => setAjusteDlg(null)} onAjustar={handleAjustarEstoque} />}
       <Dialog open={catDlg} onOpenChange={setCatDlg}>
         <DialogContent><DialogHeader><DialogTitle>Nova categoria</DialogTitle></DialogHeader>
           <div className="space-y-2"><Label>Nome</Label><Input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="Ex: Lanches" /></div>
@@ -546,6 +562,76 @@ function ProdutoDialog({ data, cats, onClose, onSave }) {
           </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={() => onSave(f)}>Salvar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AjusteEstoqueDialog({ produto, open, onOpenChange, onAjustar }) {
+  const [quantidade, setQuantidade] = useState('')
+  const [motivo, setMotivo] = useState('correcao_manual')
+  const [loading, setLoading] = useState(false)
+  const [erro, setErro] = useState(null)
+
+  const handleAjustar = async () => {
+    if (!quantidade || isNaN(quantidade)) {
+      setErro('Quantidade inválida')
+      return
+    }
+    setLoading(true)
+    setErro(null)
+    try {
+      await onAjustar({
+        produto_id: produto.id,
+        quantidade_nova: Number(quantidade),
+        motivo,
+      })
+      setQuantidade('')
+      setMotivo('correcao_manual')
+      onOpenChange(false)
+    } catch (e) {
+      setErro(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Ajustar Estoque: {produto?.nome}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Quantidade Atual</Label>
+            <div className="text-sm text-muted-foreground font-mono font-bold">{produto?.estoque_quantidade || 0}</div>
+          </div>
+          <div>
+            <Label>Quantidade Nova</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={quantidade}
+              onChange={(e) => setQuantidade(e.target.value)}
+              placeholder={`Atual: ${produto?.estoque_quantidade || 0}`}
+            />
+          </div>
+          <div>
+            <Label>Motivo</Label>
+            <select value={motivo} onChange={(e) => setMotivo(e.target.value)} className="w-full border rounded p-2 bg-background">
+              <option value="correcao_manual">Correção Manual</option>
+              <option value="ajuste_inventario">Ajuste de Inventário</option>
+              <option value="devolvido">Devolvido</option>
+              <option value="danificado">Danificado</option>
+            </select>
+          </div>
+          {erro && <div className="text-sm text-red-500">{erro}</div>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={handleAjustar} disabled={loading}>{loading ? 'Ajustando...' : 'Ajustar'}</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
