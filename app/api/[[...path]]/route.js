@@ -1028,6 +1028,7 @@ async function handler(request, { params }) {
     /* ==================== CAIXA ==================== */
     // GET /caixa/atual — caixa aberto com os parciais calculados, ou null.
     if (seg[0] === 'caixa' && seg[1] === 'atual' && method === 'GET') {
+      // Any authenticated user can check their caixa status (not GERENTE-only per spec)
       const caixa = await caixaRepo.findAberto(ctx.empresa_id)
       if (!caixa) return json({ caixa: null, resumo: null, movimentos: [] })
       const resumo = await resumoDoCaixa(repos, ctx.empresa_id, caixa)
@@ -1049,16 +1050,25 @@ async function handler(request, { params }) {
       const jaAberto = await caixaRepo.findAberto(ctx.empresa_id)
       if (jaAberto) return err('Ja existe um caixa aberto', 409)
 
-      const caixa = await caixaRepo.create({
-        id: uuidv4(),
-        empresa_id: ctx.empresa_id,
-        status: 'aberto',
-        aberto_por: ctx.usuario_id,
-        aberto_por_nome: ctx.nome || '',
-        aberto_em: new Date().toISOString(),
-        valor_abertura: Math.round(valorAbertura * 100) / 100,
-        created_at: new Date().toISOString(),
-      })
+      let caixa
+      try {
+        caixa = await caixaRepo.create({
+          id: uuidv4(),
+          empresa_id: ctx.empresa_id,
+          status: 'aberto',
+          aberto_por: ctx.usuario_id,
+          aberto_por_nome: ctx.nome || '',
+          aberto_em: new Date().toISOString(),
+          valor_abertura: Math.round(valorAbertura * 100) / 100,
+          created_at: new Date().toISOString(),
+        })
+      } catch (e) {
+        // Unique index violation: another request opened caixa between check and create
+        if (e.message?.includes('unique') || e.code === '23505') {
+          return err('Ja existe um caixa aberto', 409)
+        }
+        throw e
+      }
 
       await audit(repos, ctx, 'abrir', 'caixa', caixa.id, { valor_abertura: caixa.valor_abertura })
       return json({ caixa })
@@ -1111,6 +1121,9 @@ async function handler(request, { params }) {
         diferenca,
         observacoes,
       })
+
+      // Verify update succeeded; if caixa was already closed, update returns null/empty
+      if (!fechado) return err('Nao ha caixa aberto', 409)
 
       await audit(repos, ctx, 'fechar', 'caixa', caixa.id, {
         valor_esperado: resumo.valor_esperado, valor_contado: contado, diferenca,
