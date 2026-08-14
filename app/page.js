@@ -33,6 +33,8 @@ import { toast } from 'sonner'
 import { imprimirCupom } from '@/components/cupom'
 import { dadosCupomPedido, dadosCupomComanda } from '@/lib/cupom-dados'
 import { KDSTv, KDSView, CozinhaPendentes } from '@/components/kds'
+import { CardapioPublico } from '@/components/cardapio'
+import QRCodeSVG from 'qrcode.react'
 
 /* ============================ API CLIENT ============================ */
 const TOKEN_KEY = 'ros_token'
@@ -1991,7 +1993,7 @@ function Empresa({ reload }) {
     <div className="space-y-6 max-w-3xl">
       <PageHeader title="Configuracoes" description="Personalize os dados, a identidade visual e as formas de pagamento." />
       <Tabs defaultValue="dados">
-        <TabsList><TabsTrigger value="dados">Empresa</TabsTrigger><TabsTrigger value="aparencia">Aparencia</TabsTrigger><TabsTrigger value="pagamentos">Pagamentos</TabsTrigger><TabsTrigger value="modulos">Modulos</TabsTrigger><TabsTrigger value="kds">Cozinha (KDS)</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="dados">Empresa</TabsTrigger><TabsTrigger value="aparencia">Aparencia</TabsTrigger><TabsTrigger value="pagamentos">Pagamentos</TabsTrigger><TabsTrigger value="modulos">Modulos</TabsTrigger><TabsTrigger value="kds">Cozinha (KDS)</TabsTrigger><TabsTrigger value="cardapio">Cardapio Digital</TabsTrigger></TabsList>
 
         <TabsContent value="dados" className="mt-4 space-y-4">
           <Card><CardHeader><CardTitle className="text-base">Dados da empresa</CardTitle></CardHeader><CardContent className="space-y-4">
@@ -2157,6 +2159,69 @@ function Empresa({ reload }) {
                     <Button size="sm" variant="ghost" className="text-destructive" onClick={() => revogarToken(t.id)}>Revogar</Button>
                   </div>
                 ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="cardapio" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Cardápio Digital</CardTitle>
+              <CardDescription>
+                Link público e código QR para clientes acessarem o cardápio sem fazer login.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div>
+                <h3 className="font-semibold mb-2">Link Público</h3>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${typeof window !== 'undefined' ? window.location.origin : ''}/?cardapio=${f.slug}`}
+                    className="flex-1 border rounded px-3 py-2 text-sm bg-muted"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const link = `${typeof window !== 'undefined' ? window.location.origin : ''}/?cardapio=${f.slug}`
+                      navigator.clipboard.writeText(link)
+                      toast.success('Link copiado!')
+                    }}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copiar
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <h3 className="font-semibold mb-2">Código QR</h3>
+                <div className="flex flex-col items-center gap-3">
+                  <div className="border rounded p-2 bg-white">
+                    <QRCodeSVG
+                      value={`${typeof window !== 'undefined' ? window.location.origin : ''}/?cardapio=${f.slug}`}
+                      size={200}
+                      level="H"
+                      includeMargin={true}
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      const canvas = document.querySelector('canvas')
+                      if (!canvas) return
+                      const link = document.createElement('a')
+                      link.href = canvas.toDataURL('image/png')
+                      link.download = `cardapio-${f.slug}.png`
+                      link.click()
+                    }}
+                  >
+                    Baixar QR
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -2712,6 +2777,7 @@ function App() {
   // do App Router; este componente ja e 'use client' e a leitura e so no
   // primeiro render.
   const kdsTvToken = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('kds_tv') : null
+  const cardapioSlug = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('cardapio') : null
 
   /**
    * `setTheme` do next-themes MUDA DE IDENTIDADE a cada troca de tema (ele
@@ -2767,6 +2833,7 @@ function App() {
   }
 
   if (kdsTvToken) return <KDSTv token={kdsTvToken} />
+  if (cardapioSlug) return <CardapioPublico slug={cardapioSlug} />
 
   if (me === undefined) return <div className="min-h-screen grid place-items-center bg-background"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
   if (me === null) return <><AuthScreen onAuth={() => loadMe()} /><Toaster richColors position="top-right" /></>
