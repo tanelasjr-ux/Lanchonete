@@ -524,7 +524,7 @@ function ClienteDialog({ data, onClose, onSave }) {
 }
 
 /* ============================ PEDIDOS (Kanban) ============================ */
-function Pedidos() {
+function Pedidos({ me }) {
   const [pedidos, setPedidos] = useState([])
   const [entregadores, setEntregadores] = useState([])
   const [dlg, setDlg] = useState(false)
@@ -534,6 +534,14 @@ function Pedidos() {
   const [sairEntregaModal, setSairEntregaModal] = useState(null) // pedido sendo despachado para entrega
   const [entregadorSelecionado, setEntregadorSelecionado] = useState(null) // entregador selecionado no modal
   const [despachando, setDespachando] = useState(false)
+  const [pedidoEstorno, setPedidoEstorno] = useState(null)
+  const [estornoValor, setEstornoValor] = useState('')
+  const [estornoMotivo, setEstornoMotivo] = useState('')
+
+  // Estorno e o aviso de caixa fechado sao acoes de gerencia — mesmo criterio
+  // de papel usado no backend (route.js: GERENTE ou acima) para os endpoints
+  // de caixa e de estorno.
+  const podeGerenciar = ['OWNER', 'ADMIN', 'GERENTE'].includes(me?.usuario?.papel)
 
   const load = useCallback(() => {
     api('/pedidos').then(setPedidos).catch((e) => toast.error(e.message))
@@ -541,7 +549,54 @@ function Pedidos() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  const move = async (p, status) => { try { await api(`/pedidos/${p.id}`, { method: 'PUT', body: { status } }); load() } catch (e) { toast.error(e.message) } }
+  const move = async (p, status) => {
+    try {
+      await api(`/pedidos/${p.id}`, { method: 'PUT', body: { status } })
+      load()
+      // Aviso nao bloqueante: a venda acontece normalmente mesmo sem caixa
+      // aberto (grava caixa_id nulo no backend). Bloquear porque alguem
+      // esqueceu de abrir o caixa seria pior que a falha.
+      if (status === 'concluido') {
+        try {
+          const atual = await api('/caixa/atual')
+          if (!atual.caixa) {
+            toast.warning('Caixa fechado', {
+              description: 'Esta venda não entrará em nenhuma conferência de caixa.',
+            })
+          }
+        } catch { /* checagem best-effort — nao interfere na conclusao da venda */ }
+      }
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const abrirDialogEstorno = (pedido) => {
+    setEstornoValor(String(pedido.total ?? ''))
+    setEstornoMotivo('')
+    setPedidoEstorno(pedido)
+  }
+
+  const handleEstornar = async () => {
+    const valor = parseFloat(estornoValor)
+    if (!Number.isFinite(valor) || valor <= 0) {
+      toast.error('Informe um valor maior que zero')
+      return
+    }
+    if (!estornoMotivo.trim()) {
+      toast.error('Informe o motivo do estorno')
+      return
+    }
+    try {
+      await api(`/pedidos/${pedidoEstorno.id}/estorno`, {
+        method: 'POST',
+        body: { valor, motivo: estornoMotivo },
+      })
+      setPedidoEstorno(null)
+      load()
+      toast.success('Estorno registrado')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
 
   const despacharParaEntrega = async () => {
     if (!sairEntregaModal || !entregadorSelecionado) return
@@ -663,6 +718,11 @@ function Pedidos() {
                               </DropdownMenuContent>
                             </DropdownMenu>
                             {p.status !== 'cancelado' && p.status !== 'concluido' && <Button size="sm" variant="outline" className="h-8 text-destructive" onClick={() => move(p, 'cancelado')}><X className="h-3.5 w-3.5" /></Button>}
+                            {['concluido', 'ENTREGUE', 'entregue'].includes(p.status) && podeGerenciar && (
+                              <Button size="sm" variant="outline" className="h-8" onClick={() => abrirDialogEstorno(p)}>
+                                Estornar
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </CardContent>
@@ -720,6 +780,35 @@ function Pedidos() {
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog open={pedidoEstorno !== null} onOpenChange={(v) => !v && setPedidoEstorno(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Estornar pedido #{pedidoEstorno?.numero}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              O valor do pedido não muda. O estorno entra como lançamento separado no
+              financeiro, preservando o histórico da venda.
+            </p>
+            <div>
+              <Label>Valor a estornar (R$)</Label>
+              <Input type="number" min="0" step="0.01" value={estornoValor}
+                onChange={(e) => setEstornoValor(e.target.value)} />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Total do pedido: {brl(pedidoEstorno?.total ?? 0)}. Estorno parcial é permitido.
+              </p>
+            </div>
+            <div>
+              <Label>Motivo</Label>
+              <Input value={estornoMotivo} onChange={(e) => setEstornoMotivo(e.target.value)}
+                placeholder="ex: cliente desistiu do pedido" />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setPedidoEstorno(null)}>Cancelar</Button>
+              <Button className="flex-1" onClick={handleEstornar}>Confirmar estorno</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1043,6 +1132,11 @@ function Financeiro() {
   const [dialogAbrirCaixa, setDialogAbrirCaixa] = useState(false)
   const [dialogFecharCaixa, setDialogFecharCaixa] = useState(false)
   const [valorAbertura, setValorAbertura] = useState('')
+  const [dialogMovimento, setDialogMovimento] = useState(null) // 'sangria' | 'suprimento' | null
+  const [movimentoValor, setMovimentoValor] = useState('')
+  const [movimentoMotivo, setMovimentoMotivo] = useState('')
+  const [valorContado, setValorContado] = useState('')
+  const [obsFechamento, setObsFechamento] = useState('')
 
   const load = useCallback(async () => { const [r, t] = await Promise.all([api('/financeiro/resumo'), api('/financeiro/transacoes')]); setResumo(r); setTx(t) }, [])
   useEffect(() => { load().catch((e) => toast.error(e.message)) }, [load])
@@ -1060,9 +1154,11 @@ function Financeiro() {
   }, [])
   useEffect(() => { carregarCaixa() }, [carregarCaixa])
 
-  // Preenchida pela Task 11 (dialogo de sangria/suprimento). Aqui so garante
-  // que a tela compile enquanto os botoes ja existem na barra de status.
-  const abrirDialogMovimento = useCallback((_tipo) => {}, [])
+  const abrirDialogMovimento = useCallback((tipo) => {
+    setMovimentoValor('')
+    setMovimentoMotivo('')
+    setDialogMovimento(tipo)
+  }, [])
 
   const handleAbrirCaixa = async () => {
     const valor = parseFloat(valorAbertura)
@@ -1076,6 +1172,46 @@ function Financeiro() {
       setValorAbertura('')
       await carregarCaixa()
       toast.success('Caixa aberto')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const handleRegistrarMovimento = async () => {
+    const valor = parseFloat(movimentoValor)
+    if (!Number.isFinite(valor) || valor <= 0) {
+      toast.error('Informe um valor maior que zero')
+      return
+    }
+    try {
+      await api('/caixa/movimento', {
+        method: 'POST',
+        body: { tipo: dialogMovimento, valor, motivo: movimentoMotivo },
+      })
+      setDialogMovimento(null)
+      await carregarCaixa()
+      toast.success(dialogMovimento === 'sangria' ? 'Sangria registrada' : 'Suprimento registrado')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const handleFecharCaixa = async () => {
+    const contado = parseFloat(valorContado)
+    if (!Number.isFinite(contado) || contado < 0) {
+      toast.error('Informe o valor contado')
+      return
+    }
+    try {
+      await api('/caixa/fechar', {
+        method: 'POST',
+        body: { valor_contado: contado, observacoes: obsFechamento },
+      })
+      setDialogFecharCaixa(false)
+      setValorContado('')
+      setObsFechamento('')
+      await carregarCaixa()
+      toast.success('Caixa fechado')
     } catch (e) {
       toast.error(e.message)
     }
@@ -1120,6 +1256,58 @@ function Financeiro() {
           </CardContent>
         </Card>
       )}
+
+      {caixaAtual && caixaMovimentos.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Movimentos deste caixa</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-sm">
+            {caixaMovimentos.map((m) => (
+              <div key={m.id} className="flex justify-between">
+                <span>
+                  {m.tipo === 'sangria' ? 'Sangria' : 'Suprimento'}
+                  {m.motivo ? ` — ${m.motivo}` : ''}
+                  <span className="ml-2 text-xs text-muted-foreground">{m.usuario_nome}</span>
+                </span>
+                <span className={m.tipo === 'sangria' ? 'text-red-600' : 'text-emerald-600'}>
+                  {m.tipo === 'sangria' ? '-' : '+'} {brl(m.valor)}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Caixas anteriores</CardTitle></CardHeader>
+        <CardContent>
+          {caixaHistorico.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum caixa fechado ainda.</p>
+          ) : (
+            <div className="space-y-2 text-sm">
+              {caixaHistorico.map((c) => (
+                <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2">
+                  <div>
+                    <div className="font-medium">{new Date(c.fechado_em).toLocaleDateString('pt-BR')}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Abriu: {c.aberto_por_nome || '—'} · Fechou: {c.fechado_por_nome || '—'}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">
+                      Esperado {brl(c.valor_esperado ?? 0)} · Contado {brl(c.valor_contado ?? 0)}
+                    </div>
+                    <div className={`font-medium ${
+                      (c.diferenca ?? 0) === 0 ? '' : (c.diferenca ?? 0) > 0 ? 'text-emerald-600' : 'text-red-600'
+                    }`}>
+                      {(c.diferenca ?? 0) === 0 ? 'Conferiu' : `Diferença ${brl(c.diferenca ?? 0)}`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="visao">
         <TabsList><TabsTrigger value="visao">Visão Geral</TabsTrigger><TabsTrigger value="lancamentos">Lançamentos</TabsTrigger><TabsTrigger value="relatorios">Relatórios</TabsTrigger></TabsList>
@@ -1192,6 +1380,112 @@ function Financeiro() {
               <Button className="flex-1" onClick={handleAbrirCaixa}>Abrir</Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialogMovimento !== null} onOpenChange={(v) => !v && setDialogMovimento(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dialogMovimento === 'sangria' ? 'Sangria' : 'Suprimento'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {dialogMovimento === 'sangria'
+                ? 'Retirada de dinheiro da gaveta para o cofre ou o banco. Não é despesa.'
+                : 'Entrada de dinheiro na gaveta, geralmente troco. Não é receita.'}
+            </p>
+            <div>
+              <Label>Valor (R$)</Label>
+              <Input type="number" min="0" step="0.01" value={movimentoValor}
+                onChange={(e) => setMovimentoValor(e.target.value)} placeholder="0,00" />
+            </div>
+            <div>
+              <Label>Motivo</Label>
+              <Input value={movimentoMotivo} onChange={(e) => setMovimentoMotivo(e.target.value)}
+                placeholder="ex: depósito no banco" />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setDialogMovimento(null)}>Cancelar</Button>
+              <Button className="flex-1" onClick={handleRegistrarMovimento}>Registrar</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialogFecharCaixa} onOpenChange={setDialogFecharCaixa}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Fechar caixa</DialogTitle></DialogHeader>
+
+          {(() => {
+            const esperado = caixaResumo?.valor_esperado ?? 0
+            const contado = parseFloat(valorContado)
+            const temContado = Number.isFinite(contado)
+            const diferenca = temContado ? Math.round((contado - esperado) * 100) / 100 : 0
+            const porForma = caixaResumo?.por_forma_pagamento || {}
+
+            return (
+              <div className="space-y-4">
+                <div className="rounded-md border p-3 text-sm">
+                  <div className="mb-2 font-medium">Recebido neste caixa</div>
+                  {Object.keys(porForma).length === 0 ? (
+                    <div className="text-muted-foreground">Nenhuma venda registrada.</div>
+                  ) : (
+                    Object.entries(porForma).map(([forma, valor]) => (
+                      <div key={forma} className="flex justify-between">
+                        <span className="capitalize">{forma === 'nao_informado' ? 'não informado' : forma}</span>
+                        <span>{brl(valor)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="rounded-md border p-3 text-sm">
+                  <div className="flex justify-between"><span>Fundo de troco</span><span>{brl(caixaResumo?.valor_abertura ?? 0)}</span></div>
+                  <div className="flex justify-between"><span>+ Vendas em dinheiro</span><span>{brl(caixaResumo?.receitas_dinheiro ?? 0)}</span></div>
+                  <div className="flex justify-between"><span>- Estornos em dinheiro</span><span>{brl(caixaResumo?.estornos_dinheiro ?? 0)}</span></div>
+                  <div className="flex justify-between"><span>+ Suprimentos</span><span>{brl(caixaResumo?.suprimentos ?? 0)}</span></div>
+                  <div className="flex justify-between"><span>- Sangrias</span><span>{brl(caixaResumo?.sangrias ?? 0)}</span></div>
+                  <div className="mt-2 flex justify-between border-t pt-2 font-semibold">
+                    <span>Esperado na gaveta</span><span>{brl(esperado)}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <Label>Valor contado na gaveta (R$)</Label>
+                  <Input type="number" min="0" step="0.01" value={valorContado}
+                    onChange={(e) => setValorContado(e.target.value)} placeholder="0,00" />
+                </div>
+
+                {temContado && (
+                  <div className={`rounded-md p-3 text-sm font-medium ${
+                    diferenca === 0 ? 'bg-muted'
+                      : diferenca > 0 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                      : 'bg-red-500/10 text-red-700 dark:text-red-400'
+                  }`}>
+                    {diferenca === 0
+                      ? 'Caixa confere exatamente.'
+                      : diferenca > 0
+                        ? `Sobra de ${brl(diferenca)}`
+                        : `Falta de ${brl(Math.abs(diferenca))}`}
+                  </div>
+                )}
+
+                <div>
+                  <Label>Observações {temContado && diferenca !== 0 ? '(obrigatório)' : '(opcional)'}</Label>
+                  <Textarea value={obsFechamento} onChange={(e) => setObsFechamento(e.target.value)}
+                    placeholder="O que explica a diferença?" rows={3} />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setDialogFecharCaixa(false)}>Cancelar</Button>
+                  <Button className="flex-1" onClick={handleFecharCaixa}
+                    disabled={!temContado || (diferenca !== 0 && !obsFechamento.trim())}>
+                    Confirmar fechamento
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
         </DialogContent>
       </Dialog>
     </div>
@@ -2361,7 +2655,7 @@ function App() {
 
         <main className="flex-1 overflow-auto ros-scroll p-4 lg:p-6">
           {view === 'dashboard' && <Dashboard />}
-          {view === 'pedidos' && <Pedidos />}
+          {view === 'pedidos' && <Pedidos me={me} />}
           {view === 'mesas' && <Mesas />}
           {view === 'atendimento' && <Atendimento />}
           {view === 'cardapio' && <Cardapio />}
