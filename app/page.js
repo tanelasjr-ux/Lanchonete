@@ -8,7 +8,7 @@ import {
   ChefHat, TrendingUp, TrendingDown, DollarSign, Package, ArrowUpRight,
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
-  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX,
+  Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX, AlertCircle,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -287,6 +287,52 @@ function Empty({ children }) {
   return <div className="text-center text-muted-foreground py-12 text-sm">{children}</div>
 }
 
+/* ============================ ESTOQUE BAIXO CARD ============================ */
+function EstoqueBaixoCard() {
+  const [produtos, setProdutos] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const carregar = async () => {
+      try {
+        const data = await api('/produtos/estoque-baixo')
+        setProdutos(data.produtos || [])
+      } catch (e) {
+        console.warn('Erro ao carregar estoque baixo:', e.message)
+        setProdutos([])
+      } finally {
+        setLoading(false)
+      }
+    }
+    carregar()
+    const id = setInterval(carregar, 30000) // Refresh every 30s
+    return () => clearInterval(id)
+  }, [])
+
+  if (loading) return <Card><CardContent className="p-4">Carregando...</CardContent></Card>
+  if (produtos.length === 0) return null // Don't show if no low-stock items
+
+  return (
+    <Card className="border-yellow-500 bg-yellow-50">
+      <CardHeader>
+        <CardTitle className="text-yellow-900 flex items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          Estoque Baixo ({produtos.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2">
+          {produtos.map(p => (
+            <div key={p.id} className="text-sm text-yellow-800">
+              <span className="font-medium">{p.nome}</span>: {p.estoque_quantidade} un (mín: {p.estoque_minimo})
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ============================ DASHBOARD ============================ */
 function Dashboard() {
   const [m, setM] = useState(null)
@@ -301,6 +347,7 @@ function Dashboard() {
         <Stat icon={TrendingUp} label="Ticket médio" value={brl(m.ticketMedio)} tone="violet" />
         <Stat icon={Users} label="Clientes" value={m.totalClientes} hint={`${m.totalProdutos} produtos no cardápio`} tone="amber" />
       </div>
+      <EstoqueBaixoCard />
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader><CardTitle className="text-base">Faturamento — últimos 7 dias</CardTitle></CardHeader>
@@ -417,6 +464,15 @@ function Cardapio() {
                 <span className="font-bold text-lg">{brl(p.preco)}</span>
                 <Badge variant="outline" className={p.disponivel !== false ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10'}>{p.disponivel !== false ? 'Disponível' : 'Em falta'}</Badge>
               </div>
+              {p.estoque_habilitado && (
+                <Badge variant={
+                  p.estoque_quantidade == null || p.estoque_quantidade >= p.estoque_minimo ? 'default' :
+                  p.estoque_quantidade > 0 ? 'secondary' :
+                  'destructive'
+                }>
+                  {p.estoque_quantidade != null ? `${p.estoque_quantidade.toFixed(2)}` : '—'} un
+                </Badge>
+              )}
             </CardContent>
           </Card>
         ))}
