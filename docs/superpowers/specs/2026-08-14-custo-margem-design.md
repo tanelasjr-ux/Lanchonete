@@ -102,10 +102,17 @@ hoje. Nao ha dupla contagem.
 
 ### 4.5 Falha na apuracao nao derruba a venda
 
-Se a leitura dos produtos falhar, a transacao e gravada com os tres campos
-zerados e a venda segue. Mesma politica `non-fatal` que o Estoque adotou (o erro
-vai para `auditoria`). Nenhum indicador de gestao vale travar um caixa em horario
-de pico.
+Se a leitura dos produtos falhar, a venda segue e a transacao e gravada com
+`custo_total = 0` e `receita_com_custo = 0`, **mantendo `receita_base` real**
+(ela vem dos itens, que ja estao em maos — nao depende da leitura que falhou).
+
+Zerar os tres seria pior: tiraria a venda tambem do denominador da cobertura, e
+a cobertura passaria a parecer melhor do que e justamente quando o sistema falhou
+em apurar. Mantendo a base, a cobertura cai — que e o sinal honesto de "esta
+venda nao teve custo apurado".
+
+Mesma politica `non-fatal` que o Estoque adotou (o erro vai para `auditoria`).
+Nenhum indicador de gestao vale travar um caixa em horario de pico.
 
 ### 4.6 Sem migracao retroativa
 
@@ -400,16 +407,21 @@ Padrao de `backend_test_caixa.py`:
 | `packages/domain/src/index.ts` | `Produto.custo`, 3 campos em `Transacao` |
 | `lib/custo.js` | **novo** — modulo puro |
 | `test_custo_calculo.mjs` | **novo** — 10 testes |
-| `lib/repositories/mongo/produtoRepository.js` | propagar `custo` (create/update/normalize) |
-| `lib/repositories/supabase/produtoRepository.js` | propagar `custo` |
-| `lib/repositories/mongo/transacaoRepository.js` | propagar os 3 campos |
-| `lib/repositories/supabase/transacaoRepository.js` | propagar os 3 campos |
+| `lib/repositories/mongo/transacaoRepository.js` | `normalize()` precisa repassar os 3 campos |
 | `app/api/[[...path]]/route.js` | 3 pontos de gravacao + `/dashboard/metrics` + `/financeiro/relatorio` |
 | `app/page.js` | campo no dialog do produto, 2 cards no Dashboard, colunas no Relatorio + CSV |
 | `backend_test_custo.py` | **novo** — 8 testes |
 
 **Nenhuma funcao atomica do Postgres e tocada.** Era o principal risco tecnico e
 a decisao §4.1 o contorna por inteiro.
+
+**Por que so um repositorio muda** (verificado no codigo, nao suposto): nos dois
+backends, `create()` grava a entidade inteira (`insert(entity)` no Supabase,
+`insertOne(entity)` no Mongo) e `update()` aplica o patch inteiro
+(`update(patch)` / `$set: patch`); no Supabase as leituras usam `select('*')`.
+Campo novo na entidade propaga sozinho. A unica excecao e `normalize()` em
+`mongo/transacaoRepository.js`, que monta o objeto campo a campo e descartaria
+os tres novos em silencio.
 
 ## 12. O que esta feature desbloqueia
 
