@@ -104,6 +104,12 @@ export interface Produto extends TenantScoped {
   estoque_habilitado: boolean;
   estoque_quantidade: number | null;
   estoque_minimo: number;
+  /**
+   * Custo unitario. `null` = nao cadastrado: fica fora do CMV e conta contra
+   * a cobertura. `0` = custo zero real (brinde, cortesia) e entra no calculo.
+   * A distincao e o que impede o CMV de mentir para baixo.
+   */
+  custo: number | null;
 }
 
 export interface Cliente extends TenantScoped {
@@ -179,6 +185,17 @@ export interface Transacao extends TenantScoped {
   forma_pagamento: string;
   /** Caixa em que a venda entrou. Nulo quando nao havia caixa aberto. */
   caixa_id: UUID | null;
+  /**
+   * Custo apurado no momento da venda. Congelado: mudar o custo do produto
+   * amanha nao reescreve o CMV de hoje. Transacoes anteriores a migration
+   * 0020 tem 0 — nao ha dado de onde inferir o custo, e inventar um falsearia
+   * o indicador.
+   */
+  custo_total: number;
+  /** Receita dos itens que tinham custo. Denominador do CMV. */
+  receita_com_custo: number;
+  /** Receita de TODOS os itens. Denominador da cobertura. */
+  receita_base: number;
 }
 
 /**
