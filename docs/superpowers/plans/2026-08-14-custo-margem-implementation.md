@@ -656,19 +656,53 @@ git commit -m "feat: bloco cmv no dashboard e no relatorio financeiro"
 
 ---
 
-### Task 5: UI — campo de custo no cadastro do produto
+### Task 5: Backend + UI — campo de custo no cadastro do produto
 
 **Files:**
+- Modify: `app/api/[[...path]]/route.js` (`POST /produtos` e `PUT /produtos/:id`)
 - Modify: `app/page.js:519-527` (componente `ProdutoDialog`)
 
 **Interfaces:**
 - Consumes: coluna `produtos.custo` da Task 1
-- Produces: campo `custo` no formulario; grava `null` quando vazio
+- Produces: campo `custo` no formulario; grava `null` quando vazio; backend
+  persiste `custo` na criacao e na edicao do produto
 
 Este e o unico ponto de entrada do dado — sem ele o resto da feature nao tem
 como funcionar.
 
-- [ ] **Step 1: Adicionar o campo ao formulario**
+**Aviso — leia antes de escrever a UI:** `POST /produtos` e `PUT /produtos/:id`
+em `route.js` gravam a entidade a partir de uma **lista explicita de campos**,
+nao do corpo inteiro da requisicao. Em 2026-08-16 (item A1 do programa de
+profissionalizacao) essa mesma forma fez os campos de estoque ficarem
+semanas sem gravar — o toggle "Rastrear Estoque" era um no-op silencioso desde
+que a Estoque MVP foi entregue como "completa". Se o Step 1 abaixo for pulado,
+`custo` sofre exatamente o mesmo destino: a UI manda o valor, o backend
+descarta, e o CMV fica sempre `null` sem nenhum erro aparecer em lugar nenhum.
+
+- [ ] **Step 1: Persistir `custo` no backend**
+
+Em `POST /produtos` (procure por `if (!b.nome || b.preco === undefined)`), o
+objeto `doc` grava campos explicitamente. Adicionar `custo` junto dos outros:
+
+```javascript
+        custo: b.custo !== undefined && b.custo !== null ? Number(b.custo) : null,
+```
+
+Em `PUT /produtos/:id` (procure pelo array
+`['categoria_id', 'nome', 'descricao', 'imagem', 'disponivel', 'ativo', 'estoque_habilitado']`),
+`custo` **nao pode entrar nesse array**: o array so copia o valor quando
+`b[k] !== undefined`, e isso trataria "enviei `null` de proposito" e "nao
+enviei o campo" como a mesma coisa — o padrao ja usado para
+`estoque_quantidade` logo abaixo, por causa exatamente disso. Adicionar como
+linha propria, no mesmo bloco das outras excecoes:
+
+```javascript
+      if (b.custo !== undefined) upd.custo = b.custo === null ? null : Number(b.custo)
+```
+
+Confirmar sintaxe: `node --check "app/api/[[...path]]/route.js"`
+
+- [ ] **Step 2: Adicionar o campo ao formulario**
 
 Em `ProdutoDialog`, o preco e a categoria vivem hoje num `grid grid-cols-2`.
 Trocar esse grid por tres colunas e inserir o custo entre eles. Substituir:
@@ -693,7 +727,7 @@ por:
 O `?? ''` importa: `custo` vem `null` do banco, e `value={null}` faz o React
 tratar o input como nao-controlado e emitir warning.
 
-- [ ] **Step 2: Adicionar a linha de ajuda**
+- [ ] **Step 3: Adicionar a linha de ajuda**
 
 Logo abaixo do fechamento desse grid (apos o `</div>` que fecha o
 `grid grid-cols-2 gap-3 sm:grid-cols-3`), inserir:
@@ -705,7 +739,7 @@ Logo abaixo do fechamento desse grid (apos o `</div>` que fecha o
           </p>
 ```
 
-- [ ] **Step 3: Converter vazio em `null` ao salvar**
+- [ ] **Step 4: Converter vazio em `null` ao salvar**
 
 Localize onde o dialog envia o formulario (o `onSave(f)` do `ProdutoDialog`, ou o
 handler que recebe esse `f` e chama a API). O campo chega como **string** do
@@ -726,18 +760,20 @@ String vazia precisa virar `null`, nao `0`: `Number('')` e `0`, e gravar zero
 diria "este produto custa nada" em vez de "ainda nao sei o custo" — exatamente a
 mentira que a feature existe para evitar.
 
-- [ ] **Step 4: Verificar no navegador**
+- [ ] **Step 5: Verificar no navegador**
 
 Abra o cadastro de um produto, deixe o custo vazio e salve; confirme via
-`GET /api/produtos` que o campo veio `null`. Edite o mesmo produto, preencha
-`0` e salve; confirme que agora veio `0`, nao `null` — a distincao entre "sem
-custo" e "custo zero" precisa sobreviver ao formulario.
+`GET /api/produtos/:id` que o campo veio `null` — este endpoint existe desde
+2026-08-16 (item A1). Edite o mesmo produto, preencha `0` e salve; confirme que
+agora veio `0`, nao `null` — a distincao entre "sem custo" e "custo zero"
+precisa sobreviver ao formulario **e** ao backend, no ciclo POST→PUT completo,
+nao so no estado local da UI.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add app/page.js
-git commit -m "feat: campo de custo no cadastro do produto"
+git add "app/api/[[...path]]/route.js" app/page.js
+git commit -m "feat: campo de custo no cadastro do produto, persistido nos dois sentidos"
 ```
 
 ---
@@ -1202,8 +1238,8 @@ git commit -m "docs: Custo e Margem (CMV) completo — 9/9 tasks"
 | §10.1 testes puros | 2 |
 | §10.2 testes de integracao | 8 |
 
-**Duas correcoes feitas na spec durante a escrita deste plano**, ambas por
-leitura do codigo real — a spec ja esta atualizada, nao ha divergencia pendente:
+**Tres correcoes feitas por leitura do codigo real** — a spec ja reflete as
+duas primeiras, nao ha divergencia pendente:
 
 1. **§11 listava mudanca em 4 repositorios; o real e 1.** Produto e transacao
    propagam campos novos automaticamente nos dois backends (`insert(entity)` /
@@ -1214,6 +1250,14 @@ leitura do codigo real — a spec ja esta atualizada, nao ha divergencia pendent
    cobertura, fazendo a cobertura parecer melhor do que e justamente quando a
    apuracao falhou. Manter a base e zerar custo/coberto faz a cobertura cair,
    que e o sinal honesto.
+3. **Task 5 nao tinha passo de backend — adicionado em 2026-08-16.** Rodando
+   `backend_test_estoque.py` pela primeira vez (item A1 do programa de
+   profissionalizacao), descobriu-se que `POST /produtos` e `PUT
+   /produtos/:id` gravam a partir de lista explicita de campos, e os campos de
+   estoque ficaram semanas fora dela — o toggle "Rastrear Estoque" era um
+   no-op silencioso. Sem o novo Step 1 da Task 5, `custo` sofreria exatamente
+   o mesmo destino: UI escreve, backend descarta, CMV fica `null` para sempre
+   sem erro nenhum. Corrigido no plano antes de qualquer task ser dispatchada.
 
 **Consistencia de tipos:** `computeCustoVenda` e `computeCMV` sao usados nas
 Tasks 3 e 4 exatamente com as assinaturas definidas na Task 2. O objeto `cmv`
