@@ -32,7 +32,7 @@ de spec + plano proprios.
 
 | # | Item | Trilha | Tam | Status | Commit |
 |---|------|--------|-----|--------|--------|
-| A1 | Consolidar e executar as suites de teste | Confianca | P | ⚪ | |
+| A1 | Consolidar e executar as suites de teste | Confianca | P | ✅ | `b46d88e`,`be8f167`,`f79a46b` |
 | A2 | Eliminar falhas silenciosas na UI | Confianca | P | ⚪ | |
 | A3 | Monitoramento de erro em producao | Confianca | M | ⚪ | |
 | A4 | Testes E2E dos fluxos criticos | Confianca | G | ⚪ | |
@@ -88,6 +88,48 @@ criam a sensacao de estarem cobertos.
 **Pronto quando:** `npm test` roda todas as suites e imprime
 `N/M testes passaram`; qualquer falha existente esta documentada como bug
 conhecido ou corrigida.
+
+---
+
+**✅ CONCLUIDO em 2026-08-16.** `npm test` roda `tests/run_all.py`, que descobre
+as 7 suites, executa cada uma como subprocesso e da o resumo consolidado.
+Resultado real, contra ambiente local (Docker + Mongo, producao intocada):
+**7/7 suites, 0 falhas, ~9 minutos.**
+
+O trabalho nao foi so mover arquivo. A primeira execucao de verdade (a suite
+inteira nunca tinha rodado) encontrou seis problemas reais, cada um corrigido:
+
+**No runner (`b46d88e`):**
+- 4 das 7 suites imprimiam falha e saiam com codigo 0 — nenhum runner que
+  confiasse no exit code jamais teria pego uma quebra nelas
+- O runner aborta com codigo 2 se a API nao responder, para nunca reportar
+  "0 passaram" como se fosse resultado
+
+**No backend (`be8f167`)** — achado direto por `backend_test_estoque.py`
+rodando pela primeira vez, nao suspeita previa:
+- `POST /produtos` e `PUT /produtos/:id` gravam a partir de **lista explicita
+  de campos**. Os tres campos de estoque nunca estiveram nela — o toggle
+  "Rastrear Estoque" do dialog era um no-op silencioso desde que a Estoque MVP
+  foi entregue como "12/12 completo". Corrigido nos dois handlers.
+- `GET /produtos/:id` nao existia — so list-all e PUT/DELETE por id.
+
+**Nos testes (`f79a46b`):**
+- `backend_test_cardapio.py` chamava `/signup` (nunca existiu) com um formato
+  de resposta que tambem nunca existiu. Reescrito para `/auth/register`, e
+  junto, corrigido pra ser robusto ao seed de demonstracao que toda empresa
+  nova ja ganha (o teste assumia cardapio vazio, premissa que caiu quando o
+  seed nasceu). Reforcado alem do original: agora prova ausencia cross-tenant
+  e ausencia de produto indisponivel, que a versao anterior nunca verificava.
+- `backend_test_v3.py` tinha 1 falha: o nao-bug ja documentado do webhook da
+  Evolution API (`tipo:'conversation'` vs `'text'`). Assercao ajustada pra
+  aceitar o valor real, aceito desde a migracao Mongo→Supabase.
+- O detector de falso-positivo do proprio runner tinha um falso-positivo: batia
+  em `❌ FAILED: 0` so por comecar com o emoji, sem checar o numero.
+
+**Consequencia para o CMV:** o plano de implementacao ja escrito
+(`docs/superpowers/plans/2026-08-14-custo-margem-implementation.md`) tinha a
+mesma lacuna — a Task 5 so tocava o frontend. Corrigido no proprio plano
+(commit seguinte) antes de qualquer task ser executada.
 
 ---
 
@@ -418,3 +460,14 @@ interface e trocar um risco conhecido por um desconhecido.
 4. **Operacao destrutiva em producao pede confirmacao do dono.** Vale para C1.
 5. **Falha silenciosa e pior que erro.** Foi o que escondeu o alerta de estoque
    por semanas — e o proprio A2.
+6. **Campo novo em entidade: confira se o handler usa lista explicita antes de
+   supor que "propaga sozinho".** `POST /produtos` e `PUT /produtos/:id`
+   montam o registro a partir de uma lista de campos — igual as funcoes
+   atomicas do Postgres que ja tinham essa armadilha documentada (HANDOFF
+   §4.3), so que aqui e puro JS, sem nem precisar de Postgres pra acontecer.
+   Foi o que aconteceu aos tres campos de estoque por semanas, e quase
+   aconteceu ao `custo` do CMV — pego so porque A1 rodou os testes antes da
+   Task 5 ser executada. **Antes de adicionar qualquer campo a uma entidade
+   existente:** `grep` pelos handlers POST/PUT dela e confirme que o campo
+   novo esta na lista, ou que o handler usa o corpo inteiro
+   (`{...entity}`/`insert(entity)`) em vez de campos nomeados um a um.

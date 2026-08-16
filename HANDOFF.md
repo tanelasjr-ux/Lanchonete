@@ -33,19 +33,26 @@ tela de configuracao, e **nenhum dos 81 endpoints as consulta** — desligar
 "Estoque" nao desliga o Estoque. Sem corrigir isso (item B1) nao existe plano
 Basico e plano Pro, e portanto nao existe billing.
 
+**Item A1 concluido em 2026-08-16** (`b46d88e`, `be8f167`, `f79a46b`) — as 7
+suites de teste rodam com `npm test`, 7/7 passando contra ambiente local. A
+execucao encontrou e corrigiu 6 problemas reais, incluindo um que teria repetido
+no proprio CMV: `POST/PUT /produtos` gravam a partir de lista explicita de
+campos, e os campos de estoque ficaram semanas fora dela. Detalhes completos no
+proprio `PROFISSIONALIZACAO.md`, item A1.
+
 ---
 
 ## 🔵 EM ANDAMENTO — Custo e Margem (CMV)
 
-**Onde parou:** spec aprovada e commitada (`b70cea2`). **Falta escrever o plano
-de implementacao.** Nenhuma linha de codigo da feature foi escrita ainda.
+**Onde parou:** spec (`b70cea2`) e plano (`ba0219d`, corrigido em commit
+seguinte apos o achado do A1) estao prontos e commitados. **Nenhuma linha de
+codigo da feature foi escrita ainda** — a proxima acao e executar o plano.
 
 **Proximo comando ao retomar:**
 
-> Ler `docs/superpowers/specs/2026-08-14-custo-margem-design.md` e invocar
-> `superpowers:writing-plans` para gerar
-> `docs/superpowers/plans/2026-08-14-custo-margem-implementation.md`.
-> Depois executar via `superpowers:subagent-driven-development`.
+> Ler `docs/superpowers/plans/2026-08-14-custo-margem-implementation.md`
+> (9 tasks) e `docs/superpowers/specs/2026-08-14-custo-margem-design.md`, e
+> executar via `superpowers:subagent-driven-development`.
 
 **O que a feature faz:** hoje `Produto` tem `preco` e nao tem custo em lugar
 nenhum — o sistema sabe quanto entrou e nunca quanto sobrou. A feature adiciona
