@@ -44,10 +44,16 @@ for _fluxo in (sys.stdout, sys.stderr):
 
 # Marcadores de falha usados pelas suites. Se algum aparecer na saida, a suite
 # e considerada falha mesmo que tenha saido com codigo 0.
+#
+# Cada marcador exige um numero diferente de zero depois de si — sem isso,
+# "❌ FAILED: 0" ou "🔴 CRITICAL FAILURES: 0" (as proprias linhas de resumo que
+# uma suite 100% verde imprime) davam falso-positivo. Foi pego na primeira
+# execucao real desta suite (A1, 2026-08-14): backend_test.py passou 40/40 e
+# o runner acusou falha por causa da propria linha que dizia "0 falhas".
 MARCADORES_FALHA = [
-    re.compile(r"^\s*(❌|🔴)", re.MULTILINE),
+    re.compile(r"(FAILED|FALHOU|FALHAS?)\s*:?\s*([1-9]\d*)", re.IGNORECASE),
+    re.compile(r"^\s*(❌|🔴).*?([1-9]\d*)", re.MULTILINE),
     re.compile(r"^FAIL:", re.MULTILINE),
-    re.compile(r"\bFAILED\b"),
 ]
 
 

@@ -146,10 +146,18 @@ try:
             mensagens = resp.json()
             if len(mensagens) >= 1:
                 msg = mensagens[0]
-                if (msg.get("direcao") == "in" and 
-                    msg.get("tipo") == "text" and
+                # A Evolution API manda 'conversation' (nao 'text') no tipo de
+                # mensagem de texto do webhook real, e o app grava o valor
+                # verbatim, sem normalizar. Documentado como comportamento
+                # aceito desde a migracao Mongo->Supabase (nao e regressao) —
+                # ver [[project-restaurant-os-supabase-migration]]. Corrigido
+                # aqui em 2026-08-16 (A1): esta era a unica falha registrada
+                # em toda a suite, e sempre vai aparecer ate a assercao
+                # aceitar o valor real.
+                if (msg.get("direcao") == "in" and
+                    msg.get("tipo") in ("text", "conversation") and
                     "Ola, gostaria de fazer um pedido" in msg.get("texto", "")):
-                    log_pass("Webhook - Mensagem created with correct direcao (in), tipo (text), texto")
+                    log_pass("Webhook - Mensagem created with correct direcao (in), tipo (text/conversation), texto")
                 else:
                     log_fail("Webhook - Mensagem fields", f"Expected direcao:in, tipo:text, got {msg}")
             else:
