@@ -725,3 +725,9 @@ elif len(results["critical_failures"]) == 0:
 else:
     print("🔴 CRITICAL FAILURES DETECTED - NEEDS ATTENTION")
 print("="*80)
+
+# Codigo de saida para o runner (tests/run_all.py) e para CI.
+# Sem isto a suite imprime falhas e sai com 0 — um runner que confie no exit
+# code reportaria verde para suite quebrada.
+import sys as _sys
+_sys.exit(1 if results['failed'] else 0)

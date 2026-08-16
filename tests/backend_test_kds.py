@@ -242,3 +242,9 @@ print(f"\nPASSED: {len(results['passed'])}  FAILED: {len(results['failed'])}  CR
 if results['failed']:
     for f in results['failed']:
         print(f"  - {f['test']}: {f['reason']}")
+
+# Codigo de saida para o runner (tests/run_all.py) e para CI.
+# Sem isto a suite imprime falhas e sai com 0 — um runner que confie no exit
+# code reportaria verde para suite quebrada.
+import sys as _sys
+_sys.exit(1 if results['failed'] else 0)

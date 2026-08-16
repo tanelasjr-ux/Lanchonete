@@ -112,4 +112,6 @@ def test_cardapio_sem_categoria():
     assert len(data["produtos"]) == 0
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    # `raise SystemExit(...)` propaga o codigo do pytest. Sem isso a suite
+    # sempre sai com 0 e o runner reporta verde mesmo com teste falhando.
+    raise SystemExit(pytest.main([__file__, '-v']))
