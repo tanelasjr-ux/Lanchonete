@@ -42,17 +42,26 @@ proprio `PROFISSIONALIZACAO.md`, item A1.
 
 ---
 
-## 🔵 EM ANDAMENTO — Custo e Margem (CMV)
+## 🔵 EM EXECUÇÃO — Custo e Margem (CMV)
 
-**Onde parou:** spec (`b70cea2`) e plano (`ba0219d`, corrigido em commit
-seguinte apos o achado do A1) estao prontos e commitados. **Nenhuma linha de
-codigo da feature foi escrita ainda** — a proxima acao e executar o plano.
+**Status atual (2026-08-16):**
+- Spec `b70cea2` + Plano `ba0219d` (corrigido apos achado do A1): ✅ prontos
+- **Execucao via SDD iniciada:**
+  - Task 1 (schema + contratos + Mongo normalize): ✅ **COMPLETE** (commit `ac17676`, review clean)
+  - Task 2 (lib/custo.js + testes puros): ✅ **DONE** (commit `3019916`, 12/12 testes, reviewer despachado)
+  - Tasks 3-9 (integracao, UI, testes): 📋 Briefs prontos, prontos para despacho apos Task 2 review
 
 **Proximo comando ao retomar:**
 
-> Ler `docs/superpowers/plans/2026-08-14-custo-margem-implementation.md`
-> (9 tasks) e `docs/superpowers/specs/2026-08-14-custo-margem-design.md`, e
-> executar via `superpowers:subagent-driven-development`.
+> Task 2 review em andamento (revisor `a2d5f8c7ce1d03249`). Apos passar:
+> - Gerar review package para Task 3
+> - Despachar implementer Task 3 (gravacao de custo nos 3 pontos de venda)
+> - Continuar a cadeia de dispatch para Tasks 4-9 sem parar
+
+**Estrutura de workspace SDD:**
+- Ledger: `.superpowers/sdd/2026-08-14-custo-margem-implementation/progress.md`
+- Briefs: `task-{1..9}-brief.md` (todos pre-gerados)
+- Reports: `task-{N}-report.md` (criados durante execucao)
 
 **O que a feature faz:** hoje `Produto` tem `preco` e nao tem custo em lugar
 nenhum — o sistema sabe quanto entrou e nunca quanto sobrou. A feature adiciona
