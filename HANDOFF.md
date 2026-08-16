@@ -17,6 +17,24 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
+## 📋 Dois backlogs, propositos diferentes
+
+| Documento | Para que serve |
+|---|---|
+| **este arquivo** | features de produto — o que o restaurante ganha de novo |
+| **`docs/PROFISSIONALIZACAO.md`** | saude tecnica e prontidao comercial — o que impede vender e o que impede mudar sem quebrar |
+
+O programa de profissionalizacao e um **documento vivo com 15 itens**, executavel
+ao longo de varias sessoes, cada um com evidencia no codigo e criterio de pronto.
+Comece pelo primeiro `⚪ pendente` da ordem recomendada (`A1 → A2 → C1 → B1 → ...`).
+
+**O achado mais importante que ele registra:** as `feature_flags` existem, tem
+tela de configuracao, e **nenhum dos 81 endpoints as consulta** — desligar
+"Estoque" nao desliga o Estoque. Sem corrigir isso (item B1) nao existe plano
+Basico e plano Pro, e portanto nao existe billing.
+
+---
+
 ## 🔵 EM ANDAMENTO — Custo e Margem (CMV)
 
 **Onde parou:** spec aprovada e commitada (`b70cea2`). **Falta escrever o plano
@@ -330,7 +348,8 @@ Concluido e no ar: KDS (11/11), Delivery (12/12), Caixa (14/14), Estoque
 | 3 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
 | 4 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
 
-**Debitos tecnicos conhecidos (nao urgentes, mas reais):**
+**Debitos tecnicos conhecidos** — todos catalogados com evidencia, criterio de
+pronto e ordem de ataque em **`docs/PROFISSIONALIZACAO.md`**. Resumo:
 
 - **`route.js` com 2.192 linhas e `page.js` com 2.920.** Maior risco do projeto.
   Ja cobrou: o fix do KDS (`34e374c`) quebrou o fechamento de comanda no Supabase
