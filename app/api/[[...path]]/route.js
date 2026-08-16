@@ -962,18 +962,44 @@ async function handler(request, { params }) {
         imagem: b.imagem || null,
         disponivel: b.disponivel !== false,
         ativo: true,
+        // Encontrado em 2026-08-16 rodando backend_test_estoque.py pela
+        // primeira vez (A1): estes tres campos nunca foram gravados na
+        // criacao — o toggle "Rastrear Estoque" do dialog era um no-op
+        // silencioso desde que a Estoque MVP foi entregue. Mesmo padrao das
+        // funcoes atomicas do Postgres (lista explicita de coluna descarta o
+        // que nao esta nela), so que aqui e o handler puro em JS.
+        estoque_habilitado: b.estoque_habilitado === true,
+        estoque_quantidade: b.estoque_quantidade !== undefined ? Number(b.estoque_quantidade) : null,
+        estoque_minimo: b.estoque_minimo !== undefined ? Number(b.estoque_minimo) : 0,
         created_at: new Date(),
       }
       await produtoRepo.create(doc)
       await audit(repos, ctx, 'create', 'produto', doc.id, { nome: b.nome, preco: doc.preco })
       return json(clean(doc), 201)
     }
+    /**
+     * GET /produtos/:id — produto unico.
+     *
+     * Faltava por completo (achado em 2026-08-16, A1): so existia list-all e
+     * PUT/DELETE por id. Precisa vir depois de /produtos/estoque-baixo — se
+     * viesse antes, "estoque-baixo" seria capturado como se fosse um :id.
+     */
+    if (seg[0] === 'produtos' && seg[1] && method === 'GET') {
+      const produto = await produtoRepo.findById(ctx.empresa_id, seg[1])
+      if (!produto) return err('Produto nao encontrado', 404)
+      return json(clean(produto))
+    }
     if (seg[0] === 'produtos' && seg[1] && method === 'PUT') {
       if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
       const upd = {}
-      for (const k of ['categoria_id', 'nome', 'descricao', 'imagem', 'disponivel', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
+      // estoque_habilitado/estoque_quantidade/estoque_minimo faltavam desta
+      // lista (achado em 2026-08-16, A1) — editar um produto existente para
+      // ligar o rastreamento de estoque nunca persistia, em silencio.
+      for (const k of ['categoria_id', 'nome', 'descricao', 'imagem', 'disponivel', 'ativo', 'estoque_habilitado']) if (b[k] !== undefined) upd[k] = b[k]
       if (b.preco !== undefined) upd.preco = Number(b.preco)
+      if (b.estoque_quantidade !== undefined) upd.estoque_quantidade = b.estoque_quantidade === null ? null : Number(b.estoque_quantidade)
+      if (b.estoque_minimo !== undefined) upd.estoque_minimo = Number(b.estoque_minimo)
       const atualizado = await produtoRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(repos, ctx, 'update', 'produto', seg[1], upd)
       return json(clean(atualizado))
