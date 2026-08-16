@@ -937,6 +937,17 @@ async function handler(request, { params }) {
       const list = await produtoRepo.list(ctx.empresa_id)
       return json(list.map(clean))
     }
+    /**
+     * GET /produtos/estoque-baixo — produtos no minimo ou abaixo dele.
+     *
+     * Consumido pelo card de alerta do Dashboard, que faz polling a cada 30s.
+     * Precisa vir antes de qualquer handler de /produtos/:id para nao ser
+     * capturado como se "estoque-baixo" fosse um id.
+     */
+    if (route === '/produtos/estoque-baixo' && method === 'GET') {
+      const produtos = await produtoRepo.listEstoqueBaixo(ctx.empresa_id)
+      return json({ produtos: produtos.map(clean) })
+    }
     if (route === '/produtos' && method === 'POST') {
       if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
