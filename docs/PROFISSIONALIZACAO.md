@@ -30,6 +30,8 @@ de spec + plano proprios.
 
 ## Status
 
+`✅` concluido · `🟡` parcialmente concluido (ver detalhe no item) · `⚪` pendente
+
 | # | Item | Trilha | Tam | Status | Commit |
 |---|------|--------|-----|--------|--------|
 | A1 | Consolidar e executar as suites de teste | Confianca | P | ✅ | `b46d88e`,`be8f167`,`f79a46b` |
@@ -40,7 +42,7 @@ de spec + plano proprios.
 | B2 | Onboarding de novo restaurante | Comercial | M | ⚪ | |
 | B3 | Billing e assinatura | Comercial | G | ⚪ | |
 | B4 | Emissao fiscal (NFC-e) | Comercial | G | ⚪ | |
-| C1 | Limpar empresas de teste da producao | Operacao | P | ⚪ | |
+| C1 | Limpar empresas de teste da producao | Operacao | P | 🟡 | (sem commit — dado, nao codigo) |
 | C2 | Multiplos caixas por empresa | Operacao | M | ⚪ | |
 | C3 | Supabase Auth + refresh de token | Operacao | G | ⚪ | |
 | C4 | RLS realmente ativa | Operacao | G | ⚪ | |
@@ -364,6 +366,40 @@ regularmente.
 nenhuma la.
 
 **Atencao:** operacao destrutiva em producao — confirmar com o dono antes.
+
+---
+
+**✅ LIMPEZA CONCLUIDA em 2026-08-18** (dono confirmou explicitamente antes da
+execucao). 126 de 127 empresas em producao eram teste (`@teste.com`, nomes
+`Restaurante Bella Vista`/`Pizzaria Napolitana`/`KDS Teste A/B`/`Caixa Teste`,
+criadas entre 2026-08-10 e 2026-08-14). Processo:
+
+1. Backup completo (todas as colunas, 127 registros) salvo antes de qualquer
+   exclusao
+2. Lista de candidatas mostrada ao dono com contagem exata; confirmacao
+   explicita obtida antes de executar
+3. Delete em 6 lotes de 25 via REST (`id=in.(...)`), 200/126 confirmados
+4. Pos-delete verificado: producao com exatamente 1 empresa (`Tanelas FooD`,
+   a real), 0 produtos orfaos (contagem total de produtos = contagem de
+   produtos da empresa real)
+
+**🟡 Causa raiz (passo 4 do "o que fazer") — parcialmente endereçada.** O
+projeto **nao tem um Supabase de staging/teste separado** — e um unico
+projeto multi-tenant (ver `project_restaurant_os_multitenancy` na memoria).
+Rodar as suites com `DATABASE_PROVIDER=supabase` localmente *e* escrever em
+producao, porque e o mesmo projeto. O estado atual (`.env` local com
+`DATABASE_PROVIDER=mongo`) e seguro, mas e uma convencao, nao uma trava
+tecnica — nada impede uma sessao futura (ex: um novo ciclo de validacao
+"Supabase real", como a Fase 6B que provavelmente causou a poluicao original)
+de apontar `DATABASE_PROVIDER=supabase` e repetir o problema.
+
+Duas saidas possiveis, nenhuma executada agora (decisao de custo/infra do
+dono, fora do escopo de um item `P`):
+- Criar um segundo projeto Supabase dedicado a teste/staging (custo
+  recorrente, mas isolamento real)
+- Formalizar a convencao: `DATABASE_PROVIDER=supabase` local so em sessao
+  supervisionada e curta, nunca como default, com um lembrete visivel (ex:
+  comentario no `.env.example`)
 
 ---
 
