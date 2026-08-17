@@ -626,18 +626,45 @@ async function handler(request, { params }) {
       return json({ ok: true, status: statusInfo.status })
     }
 
-    /* ==================== WEBHOOK WHATSAPP (Evolution, pre-auth) ==================== */
+    /* ==================== WEBHOOK WHATSAPP (Evolution, pre-auth, assinado) ====================
+     * Mesmo padrao do webhook do Mercado Pago (:603): valida o segredo antes
+     * de tocar em qualquer dado, e deduplica por evento. Sem isso, qualquer
+     * um que descubra um empresa_id (vaza em URL/print/ticket) injeta
+     * cliente+conversa+mensagem falsos na caixa de atendimento de outra
+     * empresa — o dado mais sensivel deste endpoint nao e o que ele le, e o
+     * que ele grava.
+     */
     if (route === '/whatsapp/webhook' && method === 'POST') {
       const url = new URL(request.url)
       const empresaId = url.searchParams.get('tenant')
-      const body = (await request.json().catch(() => ({}))) || {}
+      const secret = url.searchParams.get('secret')
       if (!empresaId) return json({ ok: true, ignored: 'no-tenant' })
+      const integ = await integracaoRepo.findByTipo(empresaId, 'evolution')
+      const expectedSecret = integ?.config?.webhookSecret
+      if (!integ || integ.status !== 'configurado' || !expectedSecret) {
+        return json({ ok: true, ignored: 'not-configured' })
+      }
+      const validSecret = Boolean(secret) && secret.length === expectedSecret.length &&
+        crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(expectedSecret))
+      if (!validSecret) return json({ error: 'assinatura invalida' }, 401)
+
+      const body = (await request.json().catch(() => ({}))) || {}
       const data = body.data || body
       const key = data.key || {}
       if (key.fromMe) return json({ ok: true, ignored: 'from_me' }) // apenas inbound
       const remoteJid = key.remoteJid || data.remoteJid || ''
       const numero = String(remoteJid).split('@')[0].replace(/\D/g, '')
       if (!numero) return json({ ok: true, ignored: 'no-number' })
+
+      // Idempotencia: mesma mensagem reentregue pela Evolution (retry de
+      // rede) nao duplica cliente/conversa/mensagem. Sem messageId (payload
+      // atipico), segue sem dedupe em vez de arriscar descartar mensagem
+      // real por falta de chave.
+      if (key.id) {
+        const dedupe = await webhookEventsRepo.upsert(empresaId, `${empresaId}:${key.id}`, 'evolution')
+        if (!dedupe.isNew) return json({ ok: true, duplicated: true })
+      }
+
       const nome = data.pushName || `Cliente ${numero.slice(-4)}`
       const msg = data.message || {}
       const tipo = data.messageType || (msg.imageMessage ? 'image' : msg.audioMessage ? 'audio' : msg.documentMessage ? 'document' : 'text')
@@ -1756,9 +1783,13 @@ async function handler(request, { params }) {
       const map = {}
       for (const i of list) {
         const c = clean(i)
-        // Nunca expor credenciais sensiveis (access token) ao client.
+        // Nunca expor credenciais sensiveis (access token / api key / segredo
+        // de webhook) ao client — so sinalizar presenca via booleano.
         if (c.tipo === 'mercadopago' && c.config) {
           c.config = { mode: c.config.mode || 'sandbox', hasAccessToken: Boolean(c.config.accessToken), hasWebhookSecret: Boolean(c.config.webhookSecret) }
+        }
+        if (c.tipo === 'evolution' && c.config) {
+          c.config = { serverUrl: c.config.serverUrl || '', instance: c.config.instance || 'restaurant-os', hasApiKey: Boolean(c.config.apiKey), hasWebhookSecret: Boolean(c.config.webhookSecret) }
         }
         map[i.tipo] = c
       }
@@ -1782,10 +1813,23 @@ async function handler(request, { params }) {
     if (route === '/integracoes/evolution' && method === 'PUT') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
-      const config = { serverUrl: b.serverUrl || '', apiKey: b.apiKey || '', instance: b.instance || 'restaurant-os' }
+      const current = await integracaoRepo.findByTipo(ctx.empresa_id, 'evolution')
+      // Segredo do webhook: gerado automaticamente na primeira vez (nunca
+      // pedido ao usuario) e preservado nas edicoes seguintes, a menos que a
+      // troca seja pedida explicitamente. E o valor que o dono cola na
+      // configuracao de webhook da Evolution API (query param ?secret=...)
+      // para provar que a chamada em /whatsapp/webhook e mesmo dela.
+      const webhookSecret = b.webhookSecret !== undefined && b.webhookSecret !== ''
+        ? b.webhookSecret
+        : current?.config?.webhookSecret || crypto.randomBytes(24).toString('hex')
+      const config = { serverUrl: b.serverUrl || '', apiKey: b.apiKey || '', instance: b.instance || 'restaurant-os', webhookSecret }
       const status = config.serverUrl && config.apiKey ? 'configurado' : 'nao_configurado'
       const atualizado = await integracaoRepo.upsert(ctx.empresa_id, 'evolution', { config, status })
       await audit(repos, ctx, 'update', 'integracao', 'evolution', { status })
+      // clean() so remove _id/senha_hash: o config volta completo (incluindo
+      // webhookSecret) so nesta resposta, para o dono copiar e colar na
+      // configuracao de webhook da Evolution API. GET /integracoes mascara
+      // (linha ~1716) e nunca devolve o valor de novo depois deste PUT.
       return json(clean(atualizado))
     }
     if (route === '/integracoes/n8n' && method === 'PUT') {

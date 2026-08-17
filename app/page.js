@@ -2408,10 +2408,24 @@ function Integracoes() {
   const [testing, setTesting] = useState('')
   const load = useCallback(() => api('/integracoes').then(setData).catch((e) => toast.error(e.message)), [])
   useEffect(() => { load() }, [load])
-  const [ev, setEv] = useState({ serverUrl: '', apiKey: '', instance: 'restaurant-os' })
+  const [ev, setEv] = useState({ serverUrl: '', apiKey: '', instance: 'restaurant-os', webhookSecret: '' })
   const [n8, setN8] = useState({ webhookUrl: '', apiKey: '' })
-  useEffect(() => { if (data) { setEv({ ...ev, ...(data.evolution?.config || {}) }); setN8({ ...n8, ...(data.n8n?.config || {}) }) } }, [data])
-  const saveEv = async () => { try { await api('/integracoes/evolution', { method: 'PUT', body: ev }); toast.success('Evolution API salva'); load() } catch (e) { toast.error(e.message) } }
+  // apiKey/webhookSecret nunca voltam do GET (mascarados no backend) — so
+  // serverUrl/instance sao pre-preenchidos. Mesmo espirito do Mercado Pago
+  // abaixo: campo de segredo comeca vazio, com placeholder "mantido".
+  useEffect(() => { if (data) { setEv((s) => ({ ...s, serverUrl: data.evolution?.config?.serverUrl ?? s.serverUrl, instance: data.evolution?.config?.instance || s.instance || 'restaurant-os' })); setN8({ ...n8, ...(data.n8n?.config || {}) }) } }, [data])
+  const saveEv = async () => {
+    try {
+      // O backend gera o webhookSecret sozinho na primeira vez e devolve em
+      // texto puro so nesta resposta — precisa ficar visivel na tela para o
+      // dono copiar para a configuracao de webhook da Evolution API, porque
+      // o proximo GET (load() logo abaixo) ja vem mascarado.
+      const r = await api('/integracoes/evolution', { method: 'PUT', body: ev })
+      setEv((s) => ({ ...s, apiKey: '', webhookSecret: r?.config?.webhookSecret || s.webhookSecret }))
+      toast.success('Evolution API salva')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
   const saveN8 = async () => { try { await api('/integracoes/n8n', { method: 'PUT', body: n8 }); toast.success('n8n salvo'); load() } catch (e) { toast.error(e.message) } }
   const testEv = async () => { setTesting('ev'); try { const r = await api('/integracoes/evolution/testar', { method: 'POST' }); r.connected ? toast.success('WhatsApp conectado!') : toast.warning(r.message || `Estado: ${r.state}`) } catch (e) { toast.error(e.message) } finally { setTesting('') } }
   const testN8 = async () => { setTesting('n8'); try { const r = await api('/integracoes/n8n/testar', { method: 'POST' }); r.connected ? toast.success('Webhook n8n respondeu!') : toast.warning(r.message || 'Sem resposta') } catch (e) { toast.error(e.message) } finally { setTesting('') } }
@@ -2431,8 +2445,17 @@ function Integracoes() {
         <CardContent className="space-y-4">
           <div className="space-y-2"><Label>Server URL</Label><Input value={ev.serverUrl} onChange={(e) => setEv({ ...ev, serverUrl: e.target.value })} placeholder="https://evolution.seudominio.com" /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2"><Label>API Key</Label><Input value={ev.apiKey} onChange={(e) => setEv({ ...ev, apiKey: e.target.value })} placeholder="••••••••" /></div>
+            <div className="space-y-2"><Label>API Key</Label><Input type="password" value={ev.apiKey} onChange={(e) => setEv({ ...ev, apiKey: e.target.value })} placeholder={data.evolution?.config?.hasApiKey ? '•••• (mantido — preencha para trocar)' : '••••••••'} /></div>
             <div className="space-y-2"><Label>Instância</Label><Input value={ev.instance} onChange={(e) => setEv({ ...ev, instance: e.target.value })} /></div>
+          </div>
+          <div className="space-y-2">
+            <Label>Segredo do webhook</Label>
+            <Input value={ev.webhookSecret} onChange={(e) => setEv({ ...ev, webhookSecret: e.target.value })} placeholder={data.evolution?.config?.hasWebhookSecret ? '•••• (gerado automaticamente — copie para a Evolution API)' : 'gerado ao salvar'} />
+          </div>
+          <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+            URL do webhook (configurar na Evolution API, evento <code className="bg-background px-1.5 py-0.5 rounded">messages.upsert</code>):{' '}
+            <code className="bg-background px-1.5 py-0.5 rounded">/api/whatsapp/webhook?tenant=SUA_EMPRESA&amp;secret=SEU_SEGREDO</code>.
+            Sem o segredo correto, o webhook e recusado — evita que outra empresa injete mensagem falsa na sua caixa de atendimento.
           </div>
           <div className="flex gap-2"><Button onClick={saveEv}>Salvar</Button><Button variant="outline" onClick={testEv} disabled={testing === 'ev'}>{testing === 'ev' && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Testar conexão</Button></div>
         </CardContent>

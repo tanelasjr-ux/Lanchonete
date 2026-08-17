@@ -76,13 +76,44 @@ try:
         log_fail("Setup Tenant A", f"Status {resp.status_code}: {resp.text}", critical=True)
         raise Exception("Cannot proceed without tenant setup")
 
+    # Webhook agora exige assinatura (mesmo padrao do webhook do Mercado
+    # Pago): configura Evolution para a integracao ficar "configurado" e
+    # capturar o webhookSecret gerado automaticamente. Sem isso, /whatsapp/webhook
+    # ignora a chamada (ver A.0/A.9) em vez de aceitar tenant nao configurado.
+    print("\nSETUP - PUT /integracoes/evolution - Configura Evolution e captura webhookSecret...")
+    setup_headers = {"Authorization": f"Bearer {tenant_a['token']}"}
+    resp = requests.put(f"{BASE_URL}/integracoes/evolution", headers=setup_headers, json={
+        "serverUrl": "https://fake-evolution.example.com", "apiKey": "fake-key", "instance": "restaurant-os",
+    })
+    if resp.status_code == 200 and resp.json().get("config", {}).get("webhookSecret"):
+        tenant_a["webhook_secret"] = resp.json()["config"]["webhookSecret"]
+        log_pass("Setup - Evolution configurada, webhookSecret gerado automaticamente")
+    else:
+        log_fail("Setup - PUT /integracoes/evolution", f"Status {resp.status_code}: {resp.text}", critical=True)
+        raise Exception("Cannot proceed without webhookSecret")
+
+    WEBHOOK_QS = f"tenant={tenant_a['empresa_id']}&secret={tenant_a['webhook_secret']}"
+
     # ========================================================================
-    # A) WEBHOOK WHATSAPP (pre-auth, no token required)
+    # A) WEBHOOK WHATSAPP (pre-auth, assinado por segredo por-empresa)
     # ========================================================================
-    print_section("A) WEBHOOK WHATSAPP (pre-auth)")
-    
+    print_section("A) WEBHOOK WHATSAPP (pre-auth, assinado)")
+
+    # A.0 - Sem o segredo (ou tenant sem Evolution configurada) - deve ser
+    # recusado, nunca criar cliente/conversa/mensagem. E a defesa contra
+    # injecao: qualquer um que descubra o empresa_id nao consegue mais
+    # forjar mensagem na caixa de atendimento de outra empresa.
+    print("A.0 - POST /whatsapp/webhook sem secret - Deve ser recusado (401)...")
+    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?tenant={tenant_a['empresa_id']}", json={
+        "data": {"key": {"remoteJid": "5511900000000@s.whatsapp.net", "fromMe": False, "id": "NOSECRET"}, "message": {"conversation": "tentativa sem secret"}},
+    })
+    if resp.status_code == 401:
+        log_pass("Webhook - Sem secret retorna 401 (recusado)")
+    else:
+        log_fail("Webhook - Sem secret deveria recusar", f"Status {resp.status_code}: {resp.text}", critical=True)
+
     # A.1 - POST webhook with Evolution messages.upsert format - should create cliente + conversa + mensagem
-    print("A.1 - POST /whatsapp/webhook?tenant=<empresa_id> - Create new conversa...")
+    print("A.1 - POST /whatsapp/webhook?tenant=<empresa_id>&secret=<webhookSecret> - Create new conversa...")
     webhook_body = {
         "event": "messages.upsert",
         "data": {
@@ -99,7 +130,7 @@ try:
         }
     }
     
-    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?tenant={tenant_a['empresa_id']}", json=webhook_body)
+    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?{WEBHOOK_QS}", json=webhook_body)
     if resp.status_code == 200:
         data = resp.json()
         if data.get("ok") == True:
@@ -183,7 +214,7 @@ try:
         }
     }
     
-    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?tenant={tenant_a['empresa_id']}", json=webhook_body2)
+    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?{WEBHOOK_QS}", json=webhook_body2)
     if resp.status_code == 200:
         data = resp.json()
         if data.get("ok") == True:
@@ -243,7 +274,7 @@ try:
         }
     }
     
-    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?tenant={tenant_a['empresa_id']}", json=webhook_body3)
+    resp = requests.post(f"{BASE_URL}/whatsapp/webhook?{WEBHOOK_QS}", json=webhook_body3)
     if resp.status_code == 200:
         data = resp.json()
         if data.get("ok") == True and data.get("ignored") == "from_me":
@@ -404,21 +435,37 @@ try:
     # C) ENVIO DE MENSAGEM (should NOT mock - must return 400 without Evolution)
     # ========================================================================
     print_section("C) ENVIO DE MENSAGEM (must return 400 without Evolution)")
-    
+
     # C.1 - POST /conversas/:id/mensagens without Evolution config - should return 400
+    # Usa um tenant PROPRIO (nunca chamou PUT /integracoes/evolution) — tenant_a
+    # foi configurado no SETUP so para o webhookSecret do bloco A, entao nao
+    # serve mais para provar "sem config" (ficaria 502 de fetch numa URL fake,
+    # nao 400, porque agora esta genuinamente configurado).
     print("C.1 - POST /conversas/:id/mensagens without Evolution - Should return 400...")
-    if "webhook_conversa_id" in tenant_a:
-        msg_body = {"texto": "Ola! Como posso ajudar?"}
-        resp = requests.post(f"{BASE_URL}/conversas/{tenant_a['webhook_conversa_id']}/mensagens", 
-                           json=msg_body, headers=headers)
-        if resp.status_code == 400:
-            data = resp.json()
-            if "Evolution API nao configurada" in data.get("error", ""):
-                log_pass("POST /conversas/:id/mensagens - Returns 400 'Evolution API nao configurada' (NOT mocking)")
+    resp = requests.post(f"{BASE_URL}/auth/register", json={
+        "empresa_nome": "Restaurante Sem Evolution", "nome": "Dono Teste", "email": random_email(), "senha": "senha_segura_123",
+    })
+    tenant_c_headers = None
+    if resp.status_code == 200:
+        tenant_c_token = resp.json()["token"]
+        tenant_c_headers = {"Authorization": f"Bearer {tenant_c_token}"}
+        conversas_c = requests.get(f"{BASE_URL}/conversas", headers=tenant_c_headers).json()
+        if conversas_c:
+            msg_body = {"texto": "Ola! Como posso ajudar?"}
+            resp = requests.post(f"{BASE_URL}/conversas/{conversas_c[0]['id']}/mensagens",
+                               json=msg_body, headers=tenant_c_headers)
+            if resp.status_code == 400:
+                data = resp.json()
+                if "Evolution API nao configurada" in data.get("error", ""):
+                    log_pass("POST /conversas/:id/mensagens - Returns 400 'Evolution API nao configurada' (NOT mocking)")
+                else:
+                    log_fail("POST /conversas/:id/mensagens - Wrong error message", f"Expected 'Evolution API nao configurada', got {data}")
             else:
-                log_fail("POST /conversas/:id/mensagens - Wrong error message", f"Expected 'Evolution API nao configurada', got {data}")
+                log_fail("POST /conversas/:id/mensagens - Wrong status", f"Expected 400, got {resp.status_code}: {resp.text}", critical=True)
         else:
-            log_fail("POST /conversas/:id/mensagens - Wrong status", f"Expected 400, got {resp.status_code}: {resp.text}", critical=True)
+            log_fail("C.1 setup", "Tenant sem conversa de seed para testar", critical=True)
+    else:
+        log_fail("C.1 setup", f"Nao foi possivel registrar tenant sem Evolution: {resp.status_code}", critical=True)
     
     # C.2 - POST /conversas/:id/ler - Mark as read (zero nao_lidas)
     print("\nC.2 - POST /conversas/:id/ler - Mark as read...")
