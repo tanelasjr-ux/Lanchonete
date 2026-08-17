@@ -26,7 +26,7 @@ import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEW
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV } from '@/lib/custo'
-import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE } from '@/lib/financeiro'
+import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
 import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
 /* ============================ INFRA: persistencia ========================
@@ -2429,25 +2429,58 @@ async function handler(request, { params }) {
         transacaoRepo.list(ctx.empresa_id),
         pagamentoRepo.list(ctx.empresa_id),
       ])
-      let pedidos = pedidosAll.filter((p) => inRange(p.created_at))
-      if (fPag && fPag !== 'todos') pedidos = pedidos.filter((p) => p.pagamento === fPag)
-      if (fStatus && fStatus !== 'todos') pedidos = pedidos.filter((p) => normPedidoStatus(p.status) === fStatus)
-      if (fTipo && fTipo !== 'todos') pedidos = pedidos.filter((p) => p.tipo === fTipo)
-      const trans = transAll.filter((t) => inRange(t.data))
-      const pags = pagsAll.filter((p) => inRange(p.created_at))
+      /**
+       * Os mesmos filtros da tela aplicados a uma janela qualquer. Existe para
+       * que o periodo anterior seja apurado com regra IDENTICA a do atual —
+       * duplicar os filtros para o comparativo abriria espaco para os dois
+       * lados divergirem e a variacao mentir sem ninguem notar.
+       */
+      const recortar = (de, ate) => {
+        const dentro = (d) => { const x = new Date(d); return x >= de && x <= ate }
+        let peds = pedidosAll.filter((p) => dentro(p.created_at))
+        if (fPag && fPag !== 'todos') peds = peds.filter((p) => p.pagamento === fPag)
+        if (fStatus && fStatus !== 'todos') peds = peds.filter((p) => normPedidoStatus(p.status) === fStatus)
+        if (fTipo && fTipo !== 'todos') peds = peds.filter((p) => p.tipo === fTipo)
+        return {
+          pedidos: peds,
+          trans: transAll.filter((t) => dentro(t.data)),
+          pags: pagsAll.filter((p) => dentro(p.created_at)),
+        }
+      }
 
-      const faturados = pedidos.filter((p) => ['concluido', 'ENTREGUE'].includes(p.status))
-      const cancelados = pedidos.filter((p) => ['cancelado', 'CANCELADO'].includes(p.status))
-      const receitas = round2(trans.filter((t) => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0))
-      const despesas = round2(trans.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0))
-      // `trans` ja veio filtrado pelo periodo da tela.
-      const cmv = computeCMV(trans)
-      const despesasPorCategoria = agruparDespesasPorCategoria(trans)
-      const dre = computeDRE({ cmv, receitaTotal: receitas, despesasPorCategoria })
-      const faturamentoBruto = round2(faturados.reduce((s, p) => s + p.total, 0))
-      const recebidos = round2(pags.filter((p) => p.status === 'approved').reduce((s, p) => s + p.valor, 0))
-      const pendentes = round2(pags.filter((p) => p.status === 'pending').reduce((s, p) => s + p.valor, 0))
-      const reembolsados = round2(pags.filter((p) => ['refunded', 'cancelled'].includes(p.status)).reduce((s, p) => s + p.valor, 0))
+      /** Indicadores de uma janela — usado no periodo atual e no anterior. */
+      const apurar = ({ pedidos, trans, pags }) => {
+        const faturados = pedidos.filter((p) => ['concluido', 'ENTREGUE'].includes(p.status))
+        const cancelados = pedidos.filter((p) => ['cancelado', 'CANCELADO'].includes(p.status))
+        const receitas = round2(trans.filter((t) => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0))
+        const despesas = round2(trans.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0))
+        const cmv = computeCMV(trans)
+        const despesasPorCategoria = agruparDespesasPorCategoria(trans)
+        const dre = computeDRE({ cmv, receitaTotal: receitas, despesasPorCategoria })
+        const faturamentoBruto = round2(faturados.reduce((s, p) => s + p.total, 0))
+        const recebidos = round2(pags.filter((p) => p.status === 'approved').reduce((s, p) => s + p.valor, 0))
+        const pendentes = round2(pags.filter((p) => p.status === 'pending').reduce((s, p) => s + p.valor, 0))
+        const reembolsados = round2(pags.filter((p) => ['refunded', 'cancelled'].includes(p.status)).reduce((s, p) => s + p.valor, 0))
+        return {
+          faturados, cancelados, receitas, despesas, cmv, despesasPorCategoria, dre,
+          faturamentoBruto, recebidos, pendentes, reembolsados,
+          total_pedidos: pedidos.length,
+          ticket_medio: faturados.length ? round2(faturamentoBruto / faturados.length) : 0,
+        }
+      }
+
+      const janelaAtual = recortar(inicio, fim)
+      const pedidos = janelaAtual.pedidos
+      const trans = janelaAtual.trans
+      const pags = janelaAtual.pags
+      const A = apurar(janelaAtual)
+
+      const janelaAnterior = periodoAnterior(inicio, fim)
+      const P = apurar(recortar(janelaAnterior.inicio, janelaAnterior.fim))
+
+      const faturados = A.faturados
+      const cancelados = A.cancelados
+      const { receitas, despesas, cmv, despesasPorCategoria, dre, faturamentoBruto, recebidos, pendentes, reembolsados } = A
 
       // series por dia (limitado a 92 dias)
       const dias = Math.min(92, Math.max(1, Math.ceil((fim - inicio) / 86400000)))
@@ -2477,13 +2510,33 @@ async function handler(request, { params }) {
           faturamento_bruto: faturamentoBruto,
           faturamento_liquido: round2(faturamentoBruto - despesas),
           total_pedidos: pedidos.length,
-          ticket_medio: faturados.length ? round2(faturamentoBruto / faturados.length) : 0,
+          ticket_medio: A.ticket_medio,
           receitas, despesas, saldo: round2(receitas - despesas),
           recebidos, pendentes, cancelados_reembolsados: round2(cancelados.reduce((s, p) => s + p.total, 0) + reembolsados),
         },
         cmv,
         dre,
         despesas_por_categoria: despesasPorCategoria,
+        /**
+         * Comparativo com a janela imediatamente anterior de mesma duracao.
+         * Sem isso todo numero do relatorio e um retrato solto: R$ 40 mil de
+         * faturamento nao diz nada sozinho — diz muito ao lado dos R$ 52 mil
+         * do periodo anterior.
+         */
+        comparativo: {
+          periodo: janelaAnterior,
+          faturamento_bruto: computeVariacao(faturamentoBruto, P.faturamentoBruto),
+          receitas: computeVariacao(receitas, P.receitas),
+          despesas: computeVariacao(despesas, P.despesas),
+          ticket_medio: computeVariacao(A.ticket_medio, P.ticket_medio),
+          total_pedidos: computeVariacao(A.total_pedidos, P.total_pedidos),
+          lucro_liquido: computeVariacao(dre.lucro_liquido, P.dre.lucro_liquido),
+          // CMV% pode ser null dos dois lados (sem custo cadastrado); a
+          // variacao so faz sentido quando ha base nos dois periodos.
+          cmv_percent: cmv.cmv_percent !== null && P.cmv.cmv_percent !== null
+            ? computeVariacao(cmv.cmv_percent, P.cmv.cmv_percent)
+            : null,
+        },
         serie, porFormaPagamento, tabela,
       })
     }

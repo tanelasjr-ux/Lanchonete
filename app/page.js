@@ -271,7 +271,38 @@ function PageHeader({ title, description, action }) {
     </div>
   )
 }
-function Stat({ icon: Icon, label, value, hint, tone = 'primary' }) {
+/**
+ * Variacao contra o periodo anterior, para pendurar num Stat.
+ *
+ * `inverter` existe porque subir nem sempre e boa noticia: faturamento subindo
+ * e verde, despesa subindo e vermelho. Sem isso o relatorio pintaria de verde
+ * um aumento de custo.
+ *
+ * `delta_percent` nulo (periodo anterior zerado) mostra so o valor absoluto —
+ * "+100%" saindo do zero seria numero inventado.
+ */
+function Variacao({ v, inverter = false, formato = brl }) {
+  if (!v || (v.delta === 0 && v.anterior === 0)) return null
+  const subiu = v.delta > 0
+  const bom = inverter ? !subiu : subiu
+  const cor = v.delta === 0
+    ? 'text-muted-foreground'
+    : bom ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+  const Seta = subiu ? TrendingUp : TrendingDown
+  return (
+    <div className={`text-xs flex items-center gap-1 ${cor}`} title={`Periodo anterior: ${formato(v.anterior)}`}>
+      {v.delta !== 0 && <Seta className="h-3 w-3 shrink-0" />}
+      <span className="truncate">
+        {v.delta_percent !== null
+          ? `${subiu ? '+' : ''}${v.delta_percent.toFixed(1).replace('.', ',')}%`
+          : `${subiu ? '+' : ''}${formato(v.delta)}`}
+        <span className="text-muted-foreground"> vs. anterior</span>
+      </span>
+    </div>
+  )
+}
+
+function Stat({ icon: Icon, label, value, hint, tone = 'primary', variacao, variacaoInverter, variacaoFormato }) {
   const tones = { primary: 'text-primary bg-primary/10', emerald: 'text-emerald-500 bg-emerald-500/10', amber: 'text-amber-500 bg-amber-500/10', violet: 'text-violet-500 bg-violet-500/10' }
   return (
     <Card>
@@ -280,6 +311,7 @@ function Stat({ icon: Icon, label, value, hint, tone = 'primary' }) {
         <div className="min-w-0">
           <div className="text-sm text-muted-foreground">{label}</div>
           <div className="text-2xl font-bold truncate">{value}</div>
+          {variacao && <Variacao v={variacao} inverter={variacaoInverter} formato={variacaoFormato} />}
           {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
         </div>
       </CardContent>
@@ -1914,7 +1946,7 @@ function presetRange(p) {
  * So aparece quando ha alguma despesa OU receita no periodo: DRE de um
  * periodo totalmente vazio nao ensina nada e so ocupa espaco.
  */
-function DreCard({ dre, despesasPorCategoria, coberturaCmv }) {
+function DreCard({ dre, despesasPorCategoria, coberturaCmv, comparativo }) {
   if (dre.receita_total === 0 && dre.total_despesas_operacionais === 0) return null
 
   const linha = (label, valor, opts = {}) => (
@@ -1941,6 +1973,7 @@ function DreCard({ dre, despesasPorCategoria, coberturaCmv }) {
           {linha('(–) Despesas variáveis', `– ${brl(dre.despesas_variaveis)}`, { indent: true })}
           {dre.despesas_nao_classificadas > 0 && linha('(–) Despesas não classificadas', `– ${brl(dre.despesas_nao_classificadas)}`, { indent: true })}
           {linha('= Lucro líquido', <span className={dre.lucro_liquido >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{brl(dre.lucro_liquido)}</span>, { total: true })}
+          {comparativo?.lucro_liquido && <div className="mt-2"><Variacao v={comparativo.lucro_liquido} /></div>}
           {dre.margem_liquida_percent !== null && (
             <p className="text-xs text-muted-foreground mt-2">Margem líquida: {dre.margem_liquida_percent.toFixed(1).replace('.', ',')}% da receita</p>
           )}
@@ -2027,6 +2060,27 @@ function Relatorios() {
       rows.push(['Cobertura %', String(rep.cmv.cobertura_percent ?? 0).replace('.', ',')])
       rows.push([])
     }
+    if (rep.comparativo) {
+      const c = rep.comparativo
+      const linha = (rotulo, v) => rows.push([
+        rotulo,
+        String(v.atual).replace('.', ','),
+        String(v.anterior).replace('.', ','),
+        String(v.delta).replace('.', ','),
+        v.delta_percent !== null ? String(v.delta_percent).replace('.', ',') : 'sem base',
+      ])
+      rows.push(['Comparativo com periodo anterior',
+        `${new Date(c.periodo.inicio).toLocaleDateString('pt-BR')} a ${new Date(c.periodo.fim).toLocaleDateString('pt-BR')}`])
+      rows.push(['Indicador', 'Atual', 'Anterior', 'Diferenca', 'Variacao %'])
+      linha('Faturamento bruto', c.faturamento_bruto)
+      linha('Receitas', c.receitas)
+      linha('Despesas', c.despesas)
+      linha('Ticket medio', c.ticket_medio)
+      linha('Total de pedidos', c.total_pedidos)
+      linha('Lucro liquido', c.lucro_liquido)
+      if (c.cmv_percent) linha('CMV %', c.cmv_percent)
+      rows.push([])
+    }
     if (rep.dre) {
       const d = rep.dre
       rows.push(['DRE'])
@@ -2058,6 +2112,7 @@ function Relatorios() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `relatorio-${Date.now()}.csv`; a.click()
   }
   const k = rep?.kpis
+  const cmp = rep?.comparativo
   const maxForma = Math.max(1, ...(rep?.porFormaPagamento || []).map((f) => f.valor))
   return (
     <div className="space-y-6">
@@ -2081,15 +2136,24 @@ function Relatorios() {
       </div>
       {loading || !rep ? <Empty>Gerando relatório…</Empty> : (
         <>
+          {/* Diz QUAL periodo esta atras do "vs. anterior". Sem isso o operador
+              tem que adivinhar se a comparacao e com o mes passado, a semana
+              passada ou o ano passado. */}
+          {cmp?.periodo && (
+            <p className="text-xs text-muted-foreground">
+              Comparando com {new Date(cmp.periodo.inicio).toLocaleDateString('pt-BR')} – {new Date(cmp.periodo.fim).toLocaleDateString('pt-BR')} (mesmo número de dias, logo antes).
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat icon={DollarSign} label="Faturamento bruto" value={brl(k.faturamento_bruto)} tone="emerald" />
+            <Stat icon={DollarSign} label="Faturamento bruto" value={brl(k.faturamento_bruto)} tone="emerald" variacao={cmp?.faturamento_bruto} />
             <Stat icon={Wallet} label="Faturamento líquido" value={brl(k.faturamento_liquido)} tone="primary" />
-            <Stat icon={ShoppingBag} label="Total de pedidos" value={k.total_pedidos} tone="violet" />
-            <Stat icon={TrendingUp} label="Ticket médio" value={brl(k.ticket_medio)} tone="amber" />
+            <Stat icon={ShoppingBag} label="Total de pedidos" value={k.total_pedidos} tone="violet" variacao={cmp?.total_pedidos} variacaoFormato={(n) => String(n)} />
+            <Stat icon={TrendingUp} label="Ticket médio" value={brl(k.ticket_medio)} tone="amber" variacao={cmp?.ticket_medio} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat icon={TrendingUp} label="Receitas" value={brl(k.receitas)} tone="emerald" />
-            <Stat icon={TrendingDown} label="Despesas" value={brl(k.despesas)} tone="amber" />
+            <Stat icon={TrendingUp} label="Receitas" value={brl(k.receitas)} tone="emerald" variacao={cmp?.receitas} />
+            {/* Despesa subindo e ma noticia: `inverter` pinta o aumento de vermelho. */}
+            <Stat icon={TrendingDown} label="Despesas" value={brl(k.despesas)} tone="amber" variacao={cmp?.despesas} variacaoInverter />
             <Stat icon={CheckCircle2} label="Recebidos" value={brl(k.recebidos)} tone="emerald" />
             <Stat icon={Clock} label="Pendentes / Cancelados" value={`${brl(k.pendentes)} / ${brl(k.cancelados_reembolsados)}`} tone="amber" />
           </div>
@@ -2097,11 +2161,11 @@ function Relatorios() {
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Stat icon={TrendingUp} label="Lucro bruto" value={brl(rep.cmv.lucro_bruto)} tone="emerald" />
               <Stat icon={TrendingDown} label="Custo da mercadoria" value={brl(rep.cmv.custo_total)} tone="amber" />
-              <Stat icon={DollarSign} label="CMV" value={`${rep.cmv.cmv_percent.toFixed(1).replace('.', ',')}%`} hint="referência do setor: 28–35%" tone="violet" />
+              <Stat icon={DollarSign} label="CMV" value={`${rep.cmv.cmv_percent.toFixed(1).replace('.', ',')}%`} hint="referência do setor: 28–35%" tone="violet" variacao={cmp?.cmv_percent} variacaoInverter variacaoFormato={(n) => `${Number(n).toFixed(1).replace('.', ',')}%`} />
               <Stat icon={CheckCircle2} label="Cobertura de custo" value={`${(rep.cmv.cobertura_percent ?? 0).toFixed(0)}%`} hint="quanto do faturamento tem custo apurado" tone="primary" />
             </div>
           )}
-          {rep.dre && <DreCard dre={rep.dre} despesasPorCategoria={rep.despesas_por_categoria} coberturaCmv={rep.cmv?.cobertura_percent} />}
+          {rep.dre && <DreCard dre={rep.dre} despesasPorCategoria={rep.despesas_por_categoria} coberturaCmv={rep.cmv?.cobertura_percent} comparativo={cmp} />}
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Faturamento por dia</CardTitle></CardHeader><CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%"><AreaChart data={rep.serie} margin={{ left: -18, right: 8, top: 8 }}>
