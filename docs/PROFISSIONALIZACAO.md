@@ -33,7 +33,7 @@ de spec + plano proprios.
 | # | Item | Trilha | Tam | Status | Commit |
 |---|------|--------|-----|--------|--------|
 | A1 | Consolidar e executar as suites de teste | Confianca | P | ✅ | `b46d88e`,`be8f167`,`f79a46b` |
-| A2 | Eliminar falhas silenciosas na UI | Confianca | P | ⚪ | |
+| A2 | Eliminar falhas silenciosas na UI | Confianca | P | ✅ | `e12abe8` |
 | A3 | Monitoramento de erro em producao | Confianca | M | ⚪ | |
 | A4 | Testes E2E dos fluxos criticos | Confianca | G | ⚪ | |
 | B1 | Feature flags que realmente controlam acesso | Comercial | M | ⚪ | |
@@ -161,6 +161,37 @@ uma falha da UI — esconde da equipe. Este ficou invisivel por semanas.
 
 **Pronto quando:** nenhum `catch` em `page.js` converte falha de rede em estado
 vazio silencioso; os que degradam de proposito tem comentario explicando por que.
+
+---
+
+**✅ CONCLUIDO em 2026-08-18** (`e12abe8`). Varredura completa: 83 ocorrencias
+de `catch` em `page.js`, 25 sem `toast.error` no mesmo bloco. Classificacao:
+
+- **12 legitimos** (falso-positivo do grep de linha unica — `toast.error` na
+  linha seguinte do mesmo bloco — ou padrao ja correto: erro mostrado via
+  estado local renderizado, ou fallback de parse de JSON seguido de
+  `if (!res.ok) throw`)
+- **8 violacoes reais** (zero sinal, nem `console.error`) — corrigidas com
+  `console.error` identificando a chamada, ou `toast.error` onde o impacto
+  justifica interromper o usuario. A mais significativa: as 4 chamadas que
+  populam `PedidoDialog` (produtos/clientes/empresa/mesas) — se qualquer uma
+  falhasse, o operador via um dialog de novo pedido vazio sem saber se era bug
+  ou ausencia real de produto
+- **4 parciais** (ja tinham `console.warn`/comentario, mas nao explicavam
+  o *porque* do degrade silencioso) — ganharam comentario. Todos em polling
+  de 30s (estoque baixo) ou 5s (lista de conversas em Atendimento), onde
+  toast a cada falha seria ruido continuo — nao e falha escondida, e
+  decisao de UX documentada
+- **1 caso deliberadamente nao alterado**: `loadMe()` (App raiz) trata
+  qualquer erro — 401 de token invalido OU 500/rede transitoria — como
+  "sessao invalida" e desloga. Nao e falha silenciosa (efeito visivel: kick
+  pro login), mas a causa raiz exige que `api()` carregue o status HTTP no
+  erro pra distinguir os dois casos. Pertence a trilha **C3** (Supabase Auth
+  + refresh de token), nao a este item — documentado inline no codigo.
+
+**Consequencia para C3:** quando C3 for atacado, ja ha um ponto de entrada
+mapeado (`loadMe()`) e a mudanca estrutural necessaria (status HTTP no erro
+de `api()`) identificada.
 
 ---
 
