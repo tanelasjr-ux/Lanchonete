@@ -1681,13 +1681,16 @@ async function handler(request, { params }) {
       const recentes = [...pedidos].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 6).map(clean)
       const porStatus = ['recebido', 'em_preparo', 'pronto', 'concluido', 'cancelado'].map((s) => ({ status: s, total: pedidos.filter((p) => p.status === s).length }))
 
+      // Mesmo recorte de `receitaHoje`: so o que entrou hoje.
+      const cmv = computeCMV(transacoes.filter((t) => new Date(t.data) >= today))
+
       return json({
         faturamentoHoje: Math.round(receitaHoje * 100) / 100,
         pedidosHoje: pedidosHoje.length,
         ticketMedio: Math.round(ticketMedio * 100) / 100,
         totalClientes: clientes,
         totalProdutos: produtos.length,
-        serie, topProdutos, recentes, porStatus,
+        serie, topProdutos, recentes, porStatus, cmv,
       })
     }
 
@@ -2222,6 +2225,8 @@ async function handler(request, { params }) {
       const cancelados = pedidos.filter((p) => ['cancelado', 'CANCELADO'].includes(p.status))
       const receitas = round2(trans.filter((t) => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0))
       const despesas = round2(trans.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0))
+      // `trans` ja veio filtrado pelo periodo da tela.
+      const cmv = computeCMV(trans)
       const faturamentoBruto = round2(faturados.reduce((s, p) => s + p.total, 0))
       const recebidos = round2(pags.filter((p) => p.status === 'approved').reduce((s, p) => s + p.valor, 0))
       const pendentes = round2(pags.filter((p) => p.status === 'pending').reduce((s, p) => s + p.valor, 0))
@@ -2259,6 +2264,7 @@ async function handler(request, { params }) {
           receitas, despesas, saldo: round2(receitas - despesas),
           recebidos, pendentes, cancelados_reembolsados: round2(cancelados.reduce((s, p) => s + p.total, 0) + reembolsados),
         },
+        cmv,
         serie, porFormaPagamento, tabela,
       })
     }
