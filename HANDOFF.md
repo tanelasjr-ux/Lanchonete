@@ -82,10 +82,13 @@ ac17676 schema: custo em produtos e apuracao congelada em transacoes
 1b2d493 test: suite de integracao de custo e CMV
 ```
 
-**Task 9 (verificacao final, este commit):** suite consolidada
-`tests/run_all.py` (7/7 suites de `tests/`) + suite CMV `backend_test_custo.py`
-(9/9, raiz do projeto — nao coberta pelo glob de `run_all.py`, que so busca
-dentro de `tests/`) rodadas contra o ambiente local, ambas verdes.
+**Task 9 (verificacao final):** suite consolidada `tests/run_all.py` (7/7
+suites) + suite CMV `backend_test_custo.py` (9/9, raiz do projeto — na epoca
+nao coberta pelo glob de `run_all.py`) rodadas contra o ambiente local,
+ambas verdes. **Pos-whole-branch-review:** `backend_test_custo.py` movido
+para `tests/` — `run_all.py` agora descobre e roda as 8 suites (16/16
+testes) automaticamente, fechando o gap de descoberta apontado na revisao
+final.
 
 **Estrutura de workspace SDD:**
 - Ledger: `.superpowers/sdd/2026-08-14-custo-margem-implementation/progress.md`
@@ -394,14 +397,13 @@ f2424d3 plan: Estoque MVP implementation — 12 tasks
 **Roadmap (revisado em 2026-08-14 apos analise de especialista)**
 
 Concluido e no ar: KDS (11/11), Delivery (12/12), Caixa (14/14), Estoque
-(12/12), Cardapio Digital (7/7).
+(12/12), Cardapio Digital (7/7), Custo e Margem/CMV (9/9, ver §0).
 
 | # | Frente | Estado | Por que |
 |---|--------|--------|---------|
-| 1 | **Custo e Margem (CMV)** | 🔵 spec pronta, plano pendente | O sistema sabe quanto entrou e nunca quanto sobrou. Menor esforco, maior retorno. Ver §0 |
-| 2 | **Ficha tecnica (insumos)** | ⚪ nao iniciada | Faz o estoque funcionar para comida preparada, nao so revenda. Fecha o CMV real. **Depende da #1** |
-| 3 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
-| 4 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
+| 1 | **Ficha tecnica (insumos)** | ⚪ nao iniciada | Faz o estoque funcionar para comida preparada, nao so revenda. Fecha o CMV real (hoje o CMV so cobre produtos com custo direto cadastrado). |
+| 2 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
+| 3 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
 
 **Debitos tecnicos conhecidos** — todos catalogados com evidencia, criterio de
 pronto e ordem de ataque em **`docs/PROFISSIONALIZACAO.md`**. Resumo:
