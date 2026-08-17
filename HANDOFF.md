@@ -1,8 +1,8 @@
 # HANDOFF.md — Restaurant OS
 
 Ultima atualizacao: 2026-08-18 (migrations automaticas verificadas em
-producao; alerta global de estoque; DRE + ponto de equilibrio + despesas por
-categoria no relatorio financeiro — ver §0)
+producao; alerta global de estoque; DRE + ponto de equilibrio no relatorio
+financeiro; feature flags passaram a controlar acesso de verdade — ver §0)
 
 ## Como usar este arquivo
 
@@ -120,6 +120,34 @@ restaurante nao tem aluguel". 8 testes novos (`tests/backend_test_dre.py`).
 Sugestoes que ficaram de fora, por decisao de escopo (nao pedidas
 explicitamente): comparativo com periodo anterior, curva ABC de margem por
 produto, margem por canal (balcao/delivery/mesa).
+
+**Feature flags que realmente controlam acesso (B1 — o achado mais importante
+do programa).** As flags existiam desde sempre em `empresas.config.feature_flags`,
+apareciam numa aba "Modulos" com badge Ativo/Em breve, e **nenhum dos 81
+endpoints as consultava**. Desligar "Estoque" na tela nao desligava o Estoque.
+A autorizacao olhava so `can(papel, modulo)` — papel, nunca plano contratado.
+Sem isso nao existe plano Basico e plano Pro, entao este item e pre-requisito
+do billing (B3).
+
+Agora ha um portao real (`lib/modulos.js` + `route.js`), ortogonal ao de papel:
+`temModulo(empresa, 'caixa')` pergunta "a empresa contratou?", `can(papel, ...)`
+pergunta "este usuario pode?" — as duas precisam passar. Verificado na tela:
+desligar "Mesas & Comandas" some da navegacao na hora e `GET /mesas` responde
+403; religar devolve acesso e os dados intactos.
+
+**O perigo era maior que o documentado.** Auditando a producao antes de
+escrever o gate: a unica empresa tinha `estoque: false` e `caixa: false`
+gravados E AO MESMO TEMPO produtos com estoque habilitado e caixas no
+historico. As flags nasceram erradas no signup precisamente porque ninguem as
+lia. Gate ingenuo = o cliente perde os dois modulos no primeiro deploy. Tres
+camadas de defesa: `temModulo` so desliga com `false` explicito (ausente conta
+como ligado); migration `0023` **so liga, nunca desliga** (testada em transacao
+com rollback contra producao antes de commitar); e o signup passou a gravar o
+que o produto entrega.
+
+Modulos "Em breve" continuam sem interruptor de proposito — botao que promete
+ligar o inexistente e a mesma mentira que este item veio remover. 9 testes
+novos (`tests/backend_test_modulos.py`).
 
 ## 📋 Dois backlogs, propositos diferentes
 

@@ -38,7 +38,21 @@ export interface TenantScoped {
   empresa_id: UUID;
 }
 
-/** Modulos futuros ja tem espaco reservado aqui (ver docs/ARCHITECTURE.md ADR-005). */
+/**
+ * Modulos contratados pela empresa (ver docs/ARCHITECTURE.md ADR-005).
+ *
+ * Desde 2026-08-18 estas flags CONTROLAM ACESSO DE VERDADE: `mesas`,
+ * `comandas`, `estoque` e `caixa` sao lidas pelo portao em route.js e
+ * `false` devolve 403. Antes disso eram decorativas — existiam, apareciam na
+ * tela, e nenhum endpoint as consultava.
+ *
+ * Regra de leitura (implementada uma unica vez em lib/modulos.js): so `false`
+ * explicito desliga. Ausente/null conta como LIGADO, para que falta de dado
+ * nunca tire acesso de quem ja usa o modulo.
+ *
+ * As demais continuam sem implementacao: aparecem como "Em breve" e nao tem
+ * interruptor, porque ligar o que nao existe reproduziria a mentira original.
+ */
 export interface EmpresaFeatureFlags {
   mesas: boolean; comandas: boolean; estoque: boolean; crm: boolean;
   campanhas: boolean; fidelidade: boolean; cashback: boolean; billing: boolean;

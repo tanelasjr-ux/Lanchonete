@@ -38,7 +38,7 @@ de spec + plano proprios.
 | A2 | Eliminar falhas silenciosas na UI | Confianca | P | ✅ | `e12abe8` |
 | A3 | Monitoramento de erro em producao | Confianca | M | ⚪ | |
 | A4 | Testes E2E dos fluxos criticos | Confianca | G | ⚪ | |
-| B1 | Feature flags que realmente controlam acesso | Comercial | M | ⚪ | |
+| B1 | Feature flags que realmente controlam acesso | Comercial | M | ✅ | (esta sessao) |
 | B2 | Onboarding de novo restaurante | Comercial | M | ⚪ | |
 | B3 | Billing e assinatura | Comercial | G | ⚪ | |
 | B4 | Emissao fiscal (NFC-e) | Comercial | G | ⚪ | |
@@ -282,6 +282,52 @@ estoque responder 403 e o item sumir da navegacao.
 
 **Cuidado:** o default precisa ser retrocompativel. As 71+ empresas ja
 cadastradas nao podem perder acesso a um modulo que usam hoje.
+
+### ✅ Concluido (2026-08-18)
+
+Portao real implementado em `lib/modulos.js` + `route.js`. Verificado na tela:
+desligar "Mesas & Comandas" some da navegacao na hora (sem F5) e `GET /mesas`
+passa a responder 403 com a mensagem que diz como reverter; religar devolve
+acesso e dados. 9 testes novos (`tests/backend_test_modulos.py`).
+
+**A armadilha da retrocompatibilidade era pior que o previsto.** Auditoria da
+producao antes de escrever qualquer gate:
+
+| | Flag gravada | Uso real |
+|---|---|---|
+| Estoque | `false` | tem produtos com estoque habilitado |
+| Caixa | `false` | tem caixas no historico |
+
+A unica empresa de producao usava os dois modulos com a flag dizendo `false` —
+justamente porque ninguem lia as flags, elas nasceram erradas no signup e
+ninguem notou. Um gate ingenuo teria tirado Estoque e Caixa do cliente no
+primeiro deploy. Tres defesas, em camadas:
+
+1. `temModulo()` so desliga com `false` explicito — ausente/null conta como
+   ligado, para que falta de dado nunca tire acesso.
+2. Migration `0023` liga os quatro modulos entregues hoje em toda empresa
+   existente. **So liga, nunca desliga**: os dois erros nao tem o mesmo peso.
+   Testada numa transacao com `rollback` contra a producao antes de commitar.
+3. Signup passou a gravar `flagsPadraoSignup()` — o que o produto entrega,
+   nao o que se pretende cobrar amanha.
+
+**Decisoes de escopo:**
+- Configuraveis hoje: `mesas` (+`comandas`, mesmo interruptor — uma comanda so
+  existe sobre uma mesa), `estoque`, `caixa`. Sao os que tem endpoint e tela.
+- Os outros seis continuam badge "Em breve" **sem interruptor**: um botao que
+  promete ligar algo inexistente e a mesma classe de mentira que este item veio
+  remover. `PUT /modulos/crm` devolve 404.
+- `GET /produtos/estoque-baixo` com estoque desligado devolve **lista vazia, nao
+  403** — alimenta polling de 30s em toda tela, e 403 viraria toast vermelho a
+  cada meio minuto por um modulo nao contratado.
+- Portao por familia de rota (`seg[0] === 'caixa'`), nao por handler: rota de
+  caixa criada amanha nasce protegida em vez de depender de alguem lembrar.
+- A empresa e carregada sob demanda e memoizada por requisicao — a maioria das
+  rotas nao precisa dela, e cobrar uma consulta a mais de todas seria caro.
+
+**Fica para B3 (billing):** hoje o dono liga e desliga o que quiser. Quando o
+plano mandar, LIGAR vira decisao do plano (o handler passa a recusar o que o
+plano nao cobre); desligar continua sendo do dono.
 
 ---
 

@@ -26,6 +26,8 @@ import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEW
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV } from '@/lib/custo'
+import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE } from '@/lib/financeiro'
+import { MODULOS, MODULOS_EM_BREVE, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
 /* ============================ INFRA: persistencia ========================
  * A escolha do backend (MongoDB ou Supabase) vive inteiramente em
@@ -557,7 +559,11 @@ async function handler(request, { params }) {
         logo: null,
         horario_funcionamento: '',
         config: {
-          feature_flags: { mesas: true, comandas: true, estoque: false, crm: false, campanhas: false, fidelidade: false, cashback: false, billing: false, caixa: false, multiunidade: false },
+          // Ligado = o que o produto entrega hoje. Ate 2026-08-18 esta linha
+          // gravava `estoque: false` e `caixa: false` em empresas que usavam
+          // os dois modulos normalmente — as flags nasciam erradas porque
+          // ninguem as lia. Agora que o portao e real, o default mente caro.
+          feature_flags: flagsPadraoSignup(),
           appearance: { cor_principal: '#4f46e5', cor_secundaria: '#7c3aed', tema: 'dark', nome_exibido: empresa_nome },
           pagamentos: { metodos: { dinheiro: true, pix: true, cartao_debito: true, cartao_credito: true }, taxa_servico_padrao: 10 },
         },
@@ -819,9 +825,88 @@ async function handler(request, { params }) {
     const ctx = { empresa_id: session.empresa_id, usuario_id: session.usuario_id, nome: usuario.nome, papel: usuario.papel }
     const tenant = { empresa_id: ctx.empresa_id } // escopo multitenant obrigatorio
 
+    /**
+     * Portao de PLANO (feature flags), independente do portao de PAPEL (`can`).
+     * As duas checagens sao ortogonais: `can` pergunta "este usuario pode?",
+     * `exigeModulo` pergunta "esta empresa contratou?". Um GERENTE tem
+     * permissao de caixa, mas nao abre caixa numa empresa sem o modulo.
+     *
+     * A empresa e carregada sob demanda e memoizada nesta requisicao: a
+     * maioria das rotas nao precisa dela, e cobrar uma consulta a mais de
+     * TODAS elas para atender um punhado seria pagar caro pelo gate. O cache
+     * vive no escopo do handler, entao nao vaza entre requisicoes.
+     */
+    let _empresaCache
+    const empresaAtual = async () => {
+      if (_empresaCache === undefined) _empresaCache = await empresaRepo.findById(ctx.empresa_id)
+      return _empresaCache
+    }
+    /** Devolve uma resposta 403 se o modulo estiver desligado, ou null se pode seguir. */
+    const exigeModulo = async (modulo) => {
+      if (temModulo(await empresaAtual(), modulo)) return null
+      const label = MODULOS[modulo]?.label || modulo
+      // 403 e nao 404: esconder a existencia do modulo faria o dono achar que
+      // e bug. A mensagem precisa dizer o que fazer, nao so que negou.
+      return err(`Modulo "${label}" desativado para esta empresa. Ative em Empresa > Modulos.`, 403)
+    }
+
     if (route === '/auth/me' && method === 'GET') {
       const empresa = await empresaRepo.findById(ctx.empresa_id)
-      return json({ usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS[usuario.papel] || [], roles: ROLES })
+      // `modulos` vem resolvido do servidor em vez de o front reinterpretar
+      // `config.feature_flags` por conta propria: uma segunda implementacao da
+      // regra de default e uma segunda chance de divergir do portao real.
+      return json({
+        usuario: clean(usuario),
+        empresa: clean(empresa),
+        permissions: PERMISSIONS[usuario.papel] || [],
+        roles: ROLES,
+        modulos: modulosAtivos(empresa),
+      })
+    }
+
+    /* ==================== MODULOS ==================== */
+    // Catalogo para a tela de configuracoes: o que da para ligar/desligar
+    // hoje, com o estado atual, e o que ainda e promessa.
+    if (route === '/modulos' && method === 'GET') {
+      const empresa = await empresaAtual()
+      return json({
+        disponiveis: Object.entries(MODULOS).map(([chave, m]) => ({
+          chave, label: m.label, descricao: m.descricao, ativo: temModulo(empresa, chave),
+        })),
+        em_breve: MODULOS_EM_BREVE.map(([chave, label]) => ({ chave, label })),
+      })
+    }
+
+    /**
+     * PUT /modulos/:chave { ativo: bool } — liga/desliga um modulo.
+     *
+     * Endpoint proprio em vez de PUT /empresa com o config cru: so aqui o
+     * mapa modulo -> flags do registro e aplicado, entao "Mesas & Comandas"
+     * escreve `mesas` E `comandas` sem o front precisar saber disso. Cliente
+     * que escreve config na mao volta a poder criar o estado incoerente que
+     * este trabalho veio eliminar.
+     *
+     * Enquanto nao existe billing (B3), quem decide e o dono. Quando o plano
+     * passar a mandar, LIGAR vira decisao do plano e este handler passa a
+     * recusar o que o plano nao cobre — desligar continua sendo do dono.
+     */
+    if (seg[0] === 'modulos' && seg[1] && method === 'PUT') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      const chave = seg[1]
+      const mod = MODULOS[chave]
+      if (!mod) return err(`Modulo "${chave}" nao pode ser configurado`, 404)
+      const b = (await request.json()) || {}
+      if (typeof b.ativo !== 'boolean') return err('ativo deve ser true ou false')
+
+      const empresa = await empresaRepo.findById(ctx.empresa_id)
+      const config = { ...(empresa?.config || {}) }
+      const flags = { ...(config.feature_flags || {}) }
+      for (const f of mod.flags) flags[f] = b.ativo
+      config.feature_flags = flags
+      await empresaRepo.update(ctx.empresa_id, { config })
+      _empresaCache = undefined // a empresa mudou nesta requisicao; nao servir o estado velho
+      await audit(repos, ctx, b.ativo ? 'ativar_modulo' : 'desativar_modulo', 'empresa', ctx.empresa_id, { modulo: chave })
+      return json({ chave, label: mod.label, ativo: b.ativo })
     }
 
     /* ==================== EMPRESA ==================== */
@@ -1047,6 +1132,12 @@ async function handler(request, { params }) {
      * capturado como se "estoque-baixo" fosse um id.
      */
     if (route === '/produtos/estoque-baixo' && method === 'GET') {
+      // Estoque desligado: lista vazia, nao 403. Este endpoint alimenta um
+      // alerta que faz polling de fundo em TODA tela — devolver erro encheria
+      // a operacao de toast vermelho a cada 30 segundos por um modulo que a
+      // empresa simplesmente nao contratou. "Nada para alertar" e a resposta
+      // honesta aqui; o 403 fica para as rotas que o usuario aciona de proposito.
+      if (!temModulo(await empresaAtual(), 'estoque')) return json({ produtos: [] })
       const produtos = await produtoRepo.listEstoqueBaixo(ctx.empresa_id)
       return json({ produtos: produtos.map(clean) })
     }
@@ -1207,6 +1298,13 @@ async function handler(request, { params }) {
     }
 
     /* ==================== CAIXA ==================== */
+    // Um portao para as cinco rotas de caixa. Vale mais que cinco checagens
+    // espalhadas: rota de caixa criada depois nasce protegida por padrao.
+    if (seg[0] === 'caixa') {
+      const bloqueio = await exigeModulo('caixa')
+      if (bloqueio) return bloqueio
+    }
+
     // GET /caixa/atual — caixa aberto com os parciais calculados, ou null.
     if (seg[0] === 'caixa' && seg[1] === 'atual' && method === 'GET') {
       // Any authenticated user can check their caixa status (not GERENTE-only per spec)
@@ -1686,15 +1784,26 @@ async function handler(request, { params }) {
       const list = await transacaoRepo.listRecentes(ctx.empresa_id, 500)
       return json(list.map(clean))
     }
+    if (route === '/financeiro/categorias-despesa' && method === 'GET') {
+      if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      return json(CATEGORIAS_DESPESA)
+    }
     if (route === '/financeiro/transacoes' && method === 'POST') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
       if (!b.tipo || b.valor === undefined) return err('tipo e valor obrigatorios')
+      // NULL = nao classificada, nunca inventado como 'fixa' ou 'variavel' por
+      // default — mesma regra de nao-adivinhar de produtos.custo (0020) e
+      // cardapio_imagem_url (0021). Uma despesa sem natureza entra no DRE como
+      // "nao classificada", visivel, em vez de distorcer silenciosamente o
+      // ponto de equilibrio.
+      const natureza = ['fixa', 'variavel'].includes(b.natureza) ? b.natureza : null
       const doc = {
         id: uuidv4(),
         empresa_id: ctx.empresa_id,
         tipo: b.tipo,
         categoria: b.categoria || 'Outros',
+        natureza,
         descricao: b.descricao || '',
         valor: Number(b.valor),
         pedido_id: null,
@@ -1855,6 +1964,13 @@ async function handler(request, { params }) {
     }
 
     /* ==================== MESAS (salao) ==================== */
+    // Portao unico de mesas + comandas: as duas superficies sao um modulo so
+    // ("Mesas & Comandas" na tela), e uma comanda so existe sobre uma mesa.
+    if (seg[0] === 'mesas' || seg[0] === 'comandas') {
+      const bloqueio = await exigeModulo('mesas')
+      if (bloqueio) return bloqueio
+    }
+
     if (route === '/mesas' && method === 'GET') {
       if (!can(ctx.papel, 'mesas')) return err('Sem permissao', 403)
       const mesas = await mesaRepo.list(ctx.empresa_id, { ativo: true })
@@ -2319,6 +2435,8 @@ async function handler(request, { params }) {
       const despesas = round2(trans.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0))
       // `trans` ja veio filtrado pelo periodo da tela.
       const cmv = computeCMV(trans)
+      const despesasPorCategoria = agruparDespesasPorCategoria(trans)
+      const dre = computeDRE({ cmv, receitaTotal: receitas, despesasPorCategoria })
       const faturamentoBruto = round2(faturados.reduce((s, p) => s + p.total, 0))
       const recebidos = round2(pags.filter((p) => p.status === 'approved').reduce((s, p) => s + p.valor, 0))
       const pendentes = round2(pags.filter((p) => p.status === 'pending').reduce((s, p) => s + p.valor, 0))
@@ -2357,6 +2475,8 @@ async function handler(request, { params }) {
           recebidos, pendentes, cancelados_reembolsados: round2(cancelados.reduce((s, p) => s + p.total, 0) + reembolsados),
         },
         cmv,
+        dre,
+        despesas_por_categoria: despesasPorCategoria,
         serie, porFormaPagamento, tabela,
       })
     }

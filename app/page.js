@@ -386,7 +386,7 @@ function tocarBipeAlerta() {
  * popup dos mesmos itens viraria ruido e o operador aprenderia a ignorar. Item
  * que se recupera sai da lista e volta a poder alertar se cair de novo.
  */
-function AlertaEstoqueGlobal() {
+function AlertaEstoqueGlobal({ ativo = true }) {
   const [baixos, setBaixos] = useState([])
   const [novos, setNovos] = useState([])
   const [aberto, setAberto] = useState(false)
@@ -407,6 +407,9 @@ function AlertaEstoqueGlobal() {
   }
 
   useEffect(() => {
+    // Empresa sem o modulo de Estoque nao faz o polling de 30s. O backend ja
+    // devolve lista vazia nesse caso; parar aqui evita a chamada inutil.
+    if (!ativo) return
     let vivo = true
     const verificar = async () => {
       let lista
@@ -439,7 +442,7 @@ function AlertaEstoqueGlobal() {
     verificar()
     const id = setInterval(verificar, 30000)
     return () => { vivo = false; clearInterval(id) }
-  }, [])
+  }, [ativo])
 
   if (!aberto) return null
   const destacar = new Set(novos.map((p) => p.id))
@@ -529,7 +532,7 @@ function CmvCards({ cmv }) {
 }
 
 /* ============================ DASHBOARD ============================ */
-function Dashboard() {
+function Dashboard({ temMod = () => true }) {
   const [m, setM] = useState(null)
   useEffect(() => { api('/dashboard/metrics').then(setM).catch((e) => toast.error(e.message)) }, [])
   if (!m) return <Empty>Carregando métricas…</Empty>
@@ -543,7 +546,7 @@ function Dashboard() {
         <Stat icon={Users} label="Clientes" value={m.totalClientes} hint={`${m.totalProdutos} produtos no cardápio`} tone="amber" />
       </div>
       <CmvCards cmv={m.cmv} />
-      <EstoqueBaixoCard />
+      {temMod('estoque') && <EstoqueBaixoCard />}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader><CardTitle className="text-base">Faturamento — últimos 7 dias</CardTitle></CardHeader>
@@ -944,7 +947,7 @@ function Pedidos({ me }) {
       // Aviso nao bloqueante: a venda acontece normalmente mesmo sem caixa
       // aberto (grava caixa_id nulo no backend). Bloquear porque alguem
       // esqueceu de abrir o caixa seria pior que a falha.
-      if (status === 'concluido') {
+      if (status === 'concluido' && me?.modulos?.caixa !== false) {
         try {
           const atual = await api('/caixa/atual')
           if (!atual.caixa) {
@@ -1508,7 +1511,8 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
 }
 
 /* ============================ FINANCEIRO ============================ */
-function Financeiro() {
+function Financeiro({ temMod = () => true }) {
+  const temCaixa = temMod('caixa')
   const [resumo, setResumo] = useState(null)
   const [tx, setTx] = useState([])
   const [dlg, setDlg] = useState(false)
@@ -1534,6 +1538,9 @@ function Financeiro() {
   const save = async (d) => { try { await api('/financeiro/transacoes', { method: 'POST', body: d }); toast.success('Lançamento adicionado'); setDlg(false); load() } catch (e) { toast.error(e.message) } }
 
   const carregarCaixa = useCallback(async () => {
+    // Sem o modulo, as rotas de caixa devolvem 403 — chamar so para mostrar um
+    // toast de erro ao abrir o Financeiro seria ruido puro.
+    if (!temCaixa) return
     try {
       const atual = await api('/caixa/atual')
       setCaixaAtual(atual.caixa)
@@ -1542,7 +1549,7 @@ function Financeiro() {
       const hist = await api('/caixa/historico?limite=10')
       setCaixaHistorico(hist.caixas || [])
     } catch (e) { toast.error(`Falha ao carregar status do caixa: ${e.message}`) }
-  }, [])
+  }, [temCaixa])
   useEffect(() => { carregarCaixa() }, [carregarCaixa])
 
   const abrirDialogMovimento = useCallback((tipo) => {
@@ -1613,7 +1620,7 @@ function Financeiro() {
     <div className="space-y-6">
       <PageHeader title="Financeiro" description="Visão geral, lançamentos e relatórios do restaurante." />
 
-      {caixaAtual ? (
+      {temCaixa && (caixaAtual ? (
         <Card>
           <CardContent className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1646,9 +1653,9 @@ function Financeiro() {
             <Button onClick={() => setDialogAbrirCaixa(true)}>Abrir caixa</Button>
           </CardContent>
         </Card>
-      )}
+      ))}
 
-      {caixaAtual && caixaMovimentos.length > 0 && (
+      {temCaixa && caixaAtual && caixaMovimentos.length > 0 && (
         <Card>
           <CardHeader><CardTitle className="text-base">Movimentos deste caixa</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-sm">
@@ -1668,7 +1675,7 @@ function Financeiro() {
         </Card>
       )}
 
-      <Card>
+      {temCaixa && <Card>
         <CardHeader><CardTitle className="text-base">Caixas anteriores</CardTitle></CardHeader>
         <CardContent>
           {caixaHistorico.length === 0 ? (
@@ -1698,7 +1705,7 @@ function Financeiro() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       <Tabs defaultValue="visao">
         <TabsList><TabsTrigger value="visao">Visão Geral</TabsTrigger><TabsTrigger value="lancamentos">Lançamentos</TabsTrigger><TabsTrigger value="relatorios">Relatórios</TabsTrigger></TabsList>
@@ -2258,6 +2265,80 @@ function UsuarioDialog({ data, roles, onClose, onSave }) {
 }
 
 /* ============================ EMPRESA (config) ============================ */
+/**
+ * Aba "Modulos" — interruptores que realmente ligam e desligam o modulo.
+ *
+ * Ate 2026-08-18 esta aba mostrava badges "Ativo"/"Em breve" que nao faziam
+ * nada: as flags existiam no banco e nenhum endpoint as lia. Agora o
+ * interruptor chama PUT /modulos/:chave, o servidor devolve 403 nas rotas do
+ * modulo desligado, e o item some da navegacao.
+ *
+ * Os modulos sem implementacao continuam como badge, sem interruptor. Dar um
+ * botao que promete ligar algo inexistente reproduziria exatamente a mentira
+ * que este trabalho veio remover.
+ */
+function ModulosTab({ reload }) {
+  const [dados, setDados] = useState(null)
+  const [salvando, setSalvando] = useState(null)
+
+  const load = useCallback(async () => {
+    try { setDados(await api('/modulos')) } catch (e) { toast.error(e.message) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const alternar = async (chave, ativo) => {
+    setSalvando(chave)
+    try {
+      await api(`/modulos/${chave}`, { method: 'PUT', body: { ativo } })
+      toast.success(ativo ? 'Modulo ativado' : 'Modulo desativado')
+      await load()
+      // Recarrega o /auth/me: a navegacao e os cards da tela inteira dependem
+      // do `modulos` que vem de la, entao sem isso a sidebar so mudaria no
+      // proximo F5.
+      reload?.()
+    } catch (e) {
+      toast.error(e.message)
+    } finally { setSalvando(null) }
+  }
+
+  if (!dados) return <Empty>Carregando…</Empty>
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Modulos do seu plano</CardTitle>
+          <CardDescription>Desligar um modulo esconde as telas e bloqueia o acesso no servidor. Os dados continuam salvos e voltam ao religar.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {dados.disponiveis.map((m) => (
+            <div key={m.chave} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{m.label}</div>
+                <div className="text-xs text-muted-foreground">{m.descricao}</div>
+              </div>
+              <Switch checked={m.ativo} disabled={salvando === m.chave} onCheckedChange={(v) => alternar(m.chave, v)} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Em breve</CardTitle>
+          <CardDescription>Ainda nao implementados — sem interruptor porque nao ha o que ligar.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid sm:grid-cols-2 gap-3">
+          {dados.em_breve.map((m) => (
+            <div key={m.chave} className="flex items-center justify-between rounded-lg border p-3">
+              <span className="text-sm text-muted-foreground">{m.label}</span>
+              <Badge variant="outline" className="text-muted-foreground">Em breve</Badge>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 function Empresa({ reload }) {
   const [f, setF] = useState(null)
   useEffect(() => { api('/empresa').then(setF).catch((e) => toast.error(e.message)) }, [])
@@ -2419,7 +2500,6 @@ function Empresa({ reload }) {
   if (!f) return <Empty>Carregando…</Empty>
   const ap = f.config?.appearance || {}
   const met = f.config?.pagamentos?.metodos || {}
-  const flags = f.config?.feature_flags || {}
   return (
     <div className="space-y-6 max-w-3xl">
       <PageHeader title="Configuracoes" description="Personalize os dados, a identidade visual e as formas de pagamento." />
@@ -2555,12 +2635,7 @@ function Empresa({ reload }) {
         </TabsContent>
 
         <TabsContent value="modulos" className="mt-4">
-          <Card><CardHeader><CardTitle className="text-base">Modulos</CardTitle><CardDescription>Arquitetura preparada para ativacao sem refatoracao.</CardDescription></CardHeader>
-          <CardContent className="grid sm:grid-cols-2 gap-3">
-            {[['Mesas & Comandas', 'mesas'], ['Estoque', 'estoque'], ['CRM', 'crm'], ['Campanhas', 'campanhas'], ['Fidelidade', 'fidelidade'], ['Cashback', 'cashback'], ['Caixa', 'caixa'], ['Multiunidades', 'multiunidade'], ['Billing SaaS', 'billing']].map(([n, key]) => (
-              <div key={n} className="flex items-center justify-between rounded-lg border p-3"><span className="text-sm">{n}</span><Badge variant="outline" className={flags[key] ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{flags[key] ? 'Ativo' : 'Em breve'}</Badge></div>
-            ))}
-          </CardContent></Card>
+          <ModulosTab reload={reload} />
         </TabsContent>
 
         <TabsContent value="kds" className="mt-4">
@@ -3261,7 +3336,10 @@ function Atendimento() {
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard' },
   { key: 'pedidos', label: 'Pedidos', icon: ShoppingBag, perm: 'pedidos' },
-  { key: 'mesas', label: 'Mesas', icon: Armchair, perm: 'mesas' },
+  // `modulo` esconde o item quando a empresa nao tem o modulo contratado.
+  // E cosmetico de proposito: o portao que vale e o 403 do servidor. Esconder
+  // sem barrar no backend foi exatamente o bug que este campo veio consertar.
+  { key: 'mesas', label: 'Mesas', icon: Armchair, perm: 'mesas', modulo: 'mesas' },
   { key: 'atendimento', label: 'Atendimento', icon: MessageSquare, perm: 'atendimento' },
   { key: 'cardapio', label: 'Cardápio', icon: UtensilsCrossed, perm: 'cardapio' },
   { key: 'clientes', label: 'Clientes', icon: Users, perm: 'clientes' },
@@ -3355,7 +3433,13 @@ function App() {
 
   const perms = me.permissions || []
   const has = (p) => perms.includes('*') || perms.includes(p)
-  const nav = NAV.filter((n) => has(n.perm))
+  // Resolvido pelo servidor (/auth/me). Reinterpretar feature_flags aqui seria
+  // uma segunda implementacao da regra de default, livre para divergir do
+  // portao real. `?? {}` cobre token emitido antes deste campo existir —
+  // modulo ausente conta como ligado, mesma direcao do backend.
+  const modulos = me.modulos ?? {}
+  const temMod = (m) => modulos[m] !== false
+  const nav = NAV.filter((n) => has(n.perm) && (!n.modulo || temMod(n.modulo)))
   const initials = (me.usuario?.nome || '?').split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()
   const brandName = me.empresa?.config?.appearance?.nome_exibido || me.empresa?.nome_comercial || me.empresa?.nome || 'Restaurant OS'
   const logo = me.empresa?.logo
@@ -3412,13 +3496,13 @@ function App() {
         </header>
 
         <main className="flex-1 overflow-auto ros-scroll p-4 lg:p-6">
-          {view === 'dashboard' && <Dashboard />}
+          {view === 'dashboard' && <Dashboard temMod={temMod} />}
           {view === 'pedidos' && <Pedidos me={me} />}
           {view === 'mesas' && <Mesas />}
           {view === 'atendimento' && <Atendimento />}
           {view === 'cardapio' && <Cardapio />}
           {view === 'clientes' && <Clientes />}
-          {view === 'financeiro' && <Financeiro />}
+          {view === 'financeiro' && <Financeiro temMod={temMod} />}
           {view === 'usuarios' && <Usuarios roles={me.roles} />}
           {view === 'empresa' && <Empresa reload={loadMe} />}
           {view === 'integracoes' && <Integracoes />}
@@ -3426,7 +3510,7 @@ function App() {
           {view === 'kds_concluir' && <CozinhaPendentes apiFetch={api} />}
         </main>
       </div>
-      <AlertaEstoqueGlobal />
+      <AlertaEstoqueGlobal ativo={temMod('estoque')} />
       <Toaster richColors position="top-right" />
     </div>
   )
