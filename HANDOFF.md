@@ -1,8 +1,8 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (C1 concluido — 126 empresas de teste
-removidas de producao com confirmacao do dono; producao agora so tem a
-empresa real — ver §0)
+Ultima atualizacao: 2026-08-18 (🔴 achado critico — migrations 0019/0020/0021
+nunca tinham sido aplicadas em producao; Estoque e CMV estavam quebrados
+desde que "concluidos"; corrigido nesta sessao — ver §0)
 
 ## Como usar este arquivo
 
@@ -18,6 +18,59 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 ---
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
+
+## 🔴 ACHADO CRITICO (2026-08-18) — migrations nao aplicadas em producao
+
+**As migrations `0019_estoque.sql`, `0020_custo.sql` e `0021_cardapio_imagem.sql`
+nunca tinham sido rodadas contra o Supabase de producao**, apesar de Estoque
+(marcado "COMPLETO" em 2026-08-14) e CMV (marcado "completo e em producao" em
+2026-08-17) terem passado por sessoes inteiras de implementacao, revisao e
+"verificacao". O codigo sempre esteve certo; o banco de producao e que nunca
+recebeu as colunas que esse codigo depende (`produtos.custo`,
+`produtos.estoque_habilitado/quantidade/minimo`,
+`transacoes.custo_total/receita_base/receita_com_custo`,
+`empresas.cardapio_imagem_url`).
+
+**Como foi descoberto:** o dono reportou "nao acho o QR code do cardapio" —
+investigacao achou um bug de UI real (ver item 2 abaixo, ja corrigido). Ao
+testar a correcao em producao, o dono bateu num SEGUNDO erro ao clicar
+"Enviar imagem": `Could not find the 'cardapio_imagem_url' column of
+'empresas' in the schema cache`. Isso levou a checar o schema real de
+producao via `psql` — e achar que nao era so essa coluna.
+
+**Por que ninguem notou antes:** migrations neste projeto **nao fazem parte
+do auto-deploy do EasyPanel** — sao aplicadas manualmente via `psql` contra
+`SUPABASE_DB_URL` (ver §5.1). "Testado contra Supabase real" em sessoes
+anteriores quase certamente rodou com `DATABASE_PROVIDER=supabase`
+**localmente** (mesmo projeto que producao — ver a nota sobre C1 abaixo),
+o que explica tanto os dados de teste que poluiram producao quanto a falsa
+sensacao de "ja testamos isso contra o banco real": testou, mas ninguem deu
+o passo manual de aplicar a migration ANTES daquela sessao de teste, entao
+o teste local com Mongo (`DATABASE_PROVIDER=mongo`, que nao usa essas
+colunas da mesma forma) mascarou o problema, e quando rodou contra
+Supabase real por engano, pode ter falhado silenciosamente em pontos que
+ninguem checou a fundo.
+
+**Corrigido nesta sessao:** as 3 migrations sao 100% aditivas
+(`add column if not exists`) — aplicadas em producao via
+`docker run --rm -i postgres:17 psql "$SUPABASE_DB_URL" < supabase/migrations/NNNN.sql`,
+depois `NOTIFY pgrst, 'reload schema';` pra forcar o PostgREST a reconhecer
+as colunas novas sem esperar o refresh automatico. Verificado: schema
+completo (15 colunas em `produtos`, 15 em `transacoes`, 18 em `empresas`) e
+leitura via REST confirmando que o PostgREST ja enxerga as colunas.
+
+**Ainda nao verificado end-to-end:** com o schema corrigido, o codigo
+DEVERIA funcionar, mas ninguem testou Estoque/CMV na tela real de producao
+ainda (so a leitura de schema). **Proxima sessao (ou o proprio dono agora):
+testar cadastro de custo num produto, ver o card de CMV no Dashboard, e
+testar o controle de estoque — os 3 endpoints que dependem dessas colunas.**
+
+**Licao para o processo:** o passo "aplicar migration em producao" precisa
+virar parte explicita e verificada do checklist de "pronto" de qualquer
+feature que mexe em schema — nao pode ficar implicito ou lembrado de
+memoria. Considerar adicionar um passo automatizado (CI/CD) ou, no minimo,
+uma checagem de schema (comparar `information_schema.columns` esperado vs
+real) antes de marcar qualquer feature como "completo e em producao".
 
 ## 📋 Dois backlogs, propositos diferentes
 
@@ -50,6 +103,11 @@ testes inteira passando). Commits: `ac17676`, `3019916`, `488ac50`, `5add47c`,
 `458d2a9`, `917800a`, `75ef358`, `1b2d493`. Codigo no ar nos dois backends:
 MongoDB (dev local) e Supabase (producao EasyPanel, deploy automatico por
 push). Detalhe completo na secao abaixo.
+
+**⚠️ Correcao (2026-08-18):** "codigo no ar" acima estava certo, mas o
+schema de producao NAO estava — a migration `0020_custo.sql` so foi
+aplicada ao Supabase real em 2026-08-18, um dia depois deste paragrafo ter
+sido escrito. Ver achado critico no topo deste arquivo.
 
 **Whole-branch review do CMV encontrou 1 issue importante, corrigida no dia
 seguinte** (`2544610`, 2026-08-18): o bloco `cmv` em `GET /dashboard/metrics`
@@ -471,7 +529,9 @@ f2424d3 plan: Estoque MVP implementation — 12 tasks
 
 Concluido e no ar: KDS (11/11), Delivery (12/12), Caixa (14/14), Estoque
 (12/12), Cardapio Digital (7/7 + imagem/indisponiveis 2026-08-18), Custo e
-Margem/CMV (9/9, ver §0).
+Margem/CMV (9/9, ver §0). "No ar" confirmado de fato em 2026-08-18 para
+Estoque/CMV/Cardapio-imagem — antes disso o codigo estava no ar mas o
+schema de producao nao tinha as colunas (ver achado critico no topo).
 
 | # | Frente | Estado | Por que |
 |---|--------|--------|---------|
@@ -823,7 +883,7 @@ embutidos na imagem.
 | Melhorias de produto (tema/logo/valor) | **No ar** |
 | KDS (11 tasks) | **COMPLETO** (2026-08-13) |
 | Delivery (12 tasks) | **COMPLETO** (2026-08-13) |
-| Estoque (12 tasks) | **COMPLETO** (2026-08-14) ✅ |
+| Estoque (12 tasks) | **COMPLETO** (2026-08-14); migration so aplicada em producao 2026-08-18 — ver achado critico §0 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Storage alem de logo | **Imagem do cardapio** (2026-08-18), bucket `cardapios` proprio |
 | Realtime | **NAO INICIADO** |

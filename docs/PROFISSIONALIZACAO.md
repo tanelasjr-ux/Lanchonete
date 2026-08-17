@@ -47,6 +47,7 @@ de spec + plano proprios.
 | C3 | Supabase Auth + refresh de token | Operacao | G | ⚪ | |
 | C4 | RLS realmente ativa | Operacao | G | ⚪ | |
 | C5 | Integracao iFood / Rappi | Operacao | G | ⚪ | |
+| C6 | Migrations de schema nao fazem parte do deploy | Operacao | M | 🟡 | (sem commit — dado, nao codigo) |
 | D1 | Extrair regra de negocio do route.js | Sustentacao | M | ⚪ | |
 | D2 | Quebrar o page.js em telas | Sustentacao | G | ⚪ | |
 
@@ -468,6 +469,56 @@ de digitacao que vem junto.
 
 **O que fazer:** spec propria, uma plataforma por vez. Comecar pelo iFood, que
 tem a maior participacao.
+
+---
+
+## C6 — Migrations de schema nao fazem parte do deploy `M`
+
+**Evidencia (achado em 2026-08-18):** `0019_estoque.sql`, `0020_custo.sql` e
+`0021_cardapio_imagem.sql` foram escritas, commitadas, e o codigo que
+depende delas foi implementado, revisado e "concluido" em sessoes
+anteriores — mas as 3 migrations **nunca tinham sido aplicadas ao Supabase
+de producao**. O EasyPanel faz auto-deploy do codigo da aplicacao no push,
+mas migrations de schema exigem um passo manual separado
+(`docker run --rm -i postgres:17 psql "$SUPABASE_DB_URL" < arquivo.sql`,
+ver §5.1 do `HANDOFF.md`) que ninguem executou.
+
+Resultado: Estoque (marcado completo 2026-08-14) e CMV (marcado completo
+2026-08-17) ficaram **quebrados em producao** — qualquer leitura/escrita
+tocando `produtos.custo`, `produtos.estoque_*`,
+`transacoes.custo_total/receita_*` teria falhado contra o schema real —
+durante dias, sem ninguem notar, porque a verificacao dessas features
+rodou contra Mongo local ou contra uma sessao que testou "Supabase real"
+mas nunca aplicou a migration antes de testar.
+
+**Como foi descoberto:** o dono reportou nao achar o QR code do cardapio.
+A investigacao achou um bug de UI (endpoint `/entregadores` com formato de
+resposta inconsistente, corrigido em `65a5893`) — mas ao testar a correcao
+em producao, bateu num ERRO DIFERENTE ao tentar subir a imagem do
+cardapio: coluna inexistente. Só aí a auditoria manual do schema real via
+`psql` revelou o problema completo.
+
+**Corrigido nesta sessao:** as 3 migrations pendentes foram aplicadas
+manualmente + `NOTIFY pgrst, 'reload schema'` pra forcar o PostgREST a
+reconhecer as colunas novas. Verificado via `information_schema.columns` e
+leitura de teste via REST.
+
+**O que fazer (a causa raiz, nao so o sintoma):**
+1. Todo "pronto quando" de feature que adiciona/altera schema deve incluir
+   explicitamente "migration aplicada em producao E verificada via
+   `information_schema`" — nao so "codigo commitado e testes passando"
+2. Considerar um passo automatizado no processo de deploy (ou pelo menos um
+   script `scripts/verificar-schema-producao.sh` que compara
+   `information_schema.columns` esperado — derivado dos arquivos de
+   migration — contra o real, e alerta se houver gap) em vez de depender de
+   alguem lembrar
+3. Relacionado a **C1**: a causa mais profunda (nenhum Supabase de staging
+   separado) tambem contribui aqui — nao ha ambiente onde rodar a migration
+   e testar ANTES de decidir se aplica em producao
+
+**Pronto quando:** existe um jeito de saber, sem `psql` manual, se o schema
+de producao esta alinhado com as migrations commitadas — hoje so se
+descobre por acidente (como aconteceu aqui).
 
 ---
 
