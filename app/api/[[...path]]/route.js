@@ -1001,6 +1001,7 @@ async function handler(request, { params }) {
         estoque_habilitado: b.estoque_habilitado === true,
         estoque_quantidade: b.estoque_quantidade !== undefined ? Number(b.estoque_quantidade) : null,
         estoque_minimo: b.estoque_minimo !== undefined ? Number(b.estoque_minimo) : 0,
+        custo: b.custo !== undefined && b.custo !== null ? Number(b.custo) : null,
         created_at: new Date(),
       }
       await produtoRepo.create(doc)
@@ -1030,6 +1031,7 @@ async function handler(request, { params }) {
       if (b.preco !== undefined) upd.preco = Number(b.preco)
       if (b.estoque_quantidade !== undefined) upd.estoque_quantidade = b.estoque_quantidade === null ? null : Number(b.estoque_quantidade)
       if (b.estoque_minimo !== undefined) upd.estoque_minimo = Number(b.estoque_minimo)
+      if (b.custo !== undefined) upd.custo = b.custo === null ? null : Number(b.custo)
       const atualizado = await produtoRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(repos, ctx, 'update', 'produto', seg[1], upd)
       return json(clean(atualizado))

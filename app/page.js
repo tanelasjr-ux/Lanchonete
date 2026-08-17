@@ -421,8 +421,14 @@ function Cardapio() {
 
   const saveProd = async (data) => {
     try {
-      if (data.id) await api(`/produtos/${data.id}`, { method: 'PUT', body: data })
-      else await api('/produtos', { method: 'POST', body: data })
+      const payload = {
+        ...data,
+        custo: data.custo === '' || data.custo === null || data.custo === undefined
+          ? null
+          : Number(data.custo),
+      }
+      if (payload.id) await api(`/produtos/${payload.id}`, { method: 'PUT', body: payload })
+      else await api('/produtos', { method: 'POST', body: payload })
       toast.success('Produto salvo'); setDlg(null); load()
     } catch (e) { toast.error(e.message) }
   }
@@ -516,8 +522,13 @@ function ProdutoDialog({ data, cats, onClose, onSave }) {
         <DialogHeader><DialogTitle>{f.id ? 'Editar produto' : 'Novo produto'}</DialogTitle></DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2"><Label>Nome</Label><Input value={f.nome} onChange={(e) => set('nome', e.target.value)} /></div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div className="space-y-2"><Label>Preço (R$)</Label><Input type="number" step="0.01" value={f.preco} onChange={(e) => set('preco', e.target.value)} /></div>
+            <div className="space-y-2">
+              <Label>Custo (R$)</Label>
+              <Input type="number" min="0" step="0.01" placeholder="opcional"
+                value={f.custo ?? ''} onChange={(e) => set('custo', e.target.value)} />
+            </div>
             <div className="space-y-2"><Label>Categoria</Label>
               <Select value={f.categoria_id || ''} onValueChange={(v) => set('categoria_id', v)}>
                 <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
@@ -525,6 +536,10 @@ function ProdutoDialog({ data, cats, onClose, onSave }) {
               </Select>
             </div>
           </div>
+          <p className="-mt-2 text-xs text-muted-foreground">
+            Custo é quanto você paga para produzir. Deixe vazio se ainda não souber —
+            o produto fica de fora do cálculo de CMV até ser preenchido.
+          </p>
           <div className="space-y-2"><Label>Descrição</Label><Textarea value={f.descricao || ''} onChange={(e) => set('descricao', e.target.value)} rows={2} /></div>
           <div className="flex items-center justify-between rounded-lg border p-3"><Label>Disponível</Label><Switch checked={f.disponivel !== false} onCheckedChange={(v) => set('disponivel', v)} /></div>
 
