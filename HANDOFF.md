@@ -1,6 +1,6 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-14 (5 modulos completos e no ar; spec de Custo/CMV aprovada, plano pendente — ver §0)
+Ultima atualizacao: 2026-08-17 (Custo e Margem/CMV completo, 9/9 tasks — ver §0)
 
 ## Como usar este arquivo
 
@@ -40,28 +40,67 @@ no proprio CMV: `POST/PUT /produtos` gravam a partir de lista explicita de
 campos, e os campos de estoque ficaram semanas fora dela. Detalhes completos no
 proprio `PROFISSIONALIZACAO.md`, item A1.
 
+**Custo e Margem (CMV) concluido em 2026-08-17** — as 9 tasks da execucao SDD
+foram completadas (Tasks 1-8 revisadas e limpas, Task 9 validou a suite de
+testes inteira passando). Commits: `ac17676`, `3019916`, `488ac50`, `5add47c`,
+`458d2a9`, `917800a`, `75ef358`, `1b2d493`. Codigo no ar nos dois backends:
+MongoDB (dev local) e Supabase (producao EasyPanel, deploy automatico por
+push). Detalhe completo na secao abaixo.
+
 ---
 
-## 🔵 EM EXECUÇÃO — Custo e Margem (CMV)
+## ✅ CONCLUÍDO — Custo e Margem (CMV)
 
-**Status atual (2026-08-16):**
-- Spec `b70cea2` + Plano `ba0219d` (corrigido apos achado do A1): ✅ prontos
-- **Execucao via SDD iniciada:**
-  - Task 1 (schema + contratos + Mongo normalize): ✅ **COMPLETE** (commit `ac17676`, review clean)
-  - Task 2 (lib/custo.js + testes puros): ✅ **DONE** (commit `3019916`, 12/12 testes, reviewer despachado)
-  - Tasks 3-9 (integracao, UI, testes): 📋 Briefs prontos, prontos para despacho apos Task 2 review
+**Implementacao completa (2026-08-17):** 9 tasks, todas revisadas e limpas.
 
-**Proximo comando ao retomar:**
+- **Schema:** migration `0020_custo.sql` aplicada — 3 campos novos em
+  `transacoes` (`custo_total`, `receita_com_custo`, `receita_base`) + 1 campo
+  novo em `produtos` (`custo`).
+- **Backend:** apuracao de custo congelada nos 3 pontos de venda (pedido
+  concluido, comanda fechada, comanda dividida com rateio por metodo de
+  pagamento); agregacao `computeCMV` alimentando Dashboard e Relatorio;
+  isolamento multi-tenant verificado.
+- **Frontend:** campo de custo no dialog de cadastro do produto; cards de
+  lucro bruto e CMV no Dashboard; linha de KPIs + export CSV no Relatorio
+  financeiro.
+- **Testes:** suite de 9 testes de integracao (`backend_test_custo.py`, raiz
+  do projeto) cobrindo o fluxo de ponta a ponta — 9/9 passando.
+- **Invariantes travadas:** distincao `null` (produto sem custo cadastrado,
+  fora do calculo) vs `0` (custo zero real, ex. brinde); rateio de custo em
+  comanda dividida por metodo de pagamento; estorno nunca devolve custo;
+  isolamento de dados multi-tenant.
 
-> Task 2 review em andamento (revisor `a2d5f8c7ce1d03249`). Apos passar:
-> - Gerar review package para Task 3
-> - Despachar implementer Task 3 (gravacao de custo nos 3 pontos de venda)
-> - Continuar a cadeia de dispatch para Tasks 4-9 sem parar
+**Commits (Tasks 1-8, implementacao):**
+```
+ac17676 schema: custo em produtos e apuracao congelada em transacoes
+3019916 feat: modulo puro de apuracao de custo e CMV
+488ac50 feat: apura e congela o custo nos tres pontos de venda
+5add47c feat: bloco cmv no dashboard e no relatorio financeiro
+458d2a9 feat: campo de custo no cadastro do produto, persistido nos dois sentidos
+917800a feat: cards de lucro bruto e CMV no dashboard
+75ef358 feat: CMV no relatorio financeiro e no export CSV
+1b2d493 test: suite de integracao de custo e CMV
+```
+
+**Task 9 (verificacao final, este commit):** suite consolidada
+`tests/run_all.py` (7/7 suites de `tests/`) + suite CMV `backend_test_custo.py`
+(9/9, raiz do projeto — nao coberta pelo glob de `run_all.py`, que so busca
+dentro de `tests/`) rodadas contra o ambiente local, ambas verdes.
 
 **Estrutura de workspace SDD:**
 - Ledger: `.superpowers/sdd/2026-08-14-custo-margem-implementation/progress.md`
-- Briefs: `task-{1..9}-brief.md` (todos pre-gerados)
-- Reports: `task-{N}-report.md` (criados durante execucao)
+- Briefs: `task-{1..9}-brief.md`
+- Reports: `task-{1..9}-report.md`
+
+## O que mudou nesta implementação
+
+- **A1 (profissionalizacao, pre-CMV):** 6 bugs reais de producao encontrados e
+  corrigidos ao rodar as suites de teste pela primeira vez — endpoints de
+  estoque, campos de produto e a suite do cardapio digital. Commits `b46d88e`,
+  `be8f167`, `f79a46b`. Detalhes em `docs/PROFISSIONALIZACAO.md`, item A1.
+- **Tasks 1-9 (CMV):** implementacao full-stack completa — schema, modulo
+  puro, gravacao de custo, agregacao, UI (Dashboard + Relatorio + cadastro) e
+  suite de testes de integracao. Todas as 9 tasks revisadas e testadas.
 
 **O que a feature faz:** hoje `Produto` tem `preco` e nao tem custo em lugar
 nenhum — o sistema sabe quanto entrou e nunca quanto sobrou. A feature adiciona
@@ -87,10 +126,10 @@ no Dashboard (dia) e no Relatorio (periodo + CSV).
 produtos, preview de margem ao vivo no dialog, ficha tecnica, custo por media
 ponderada de compras.
 
-**Arquivos previstos** (nenhum criado ainda): migration `0020_custo.sql`,
-`lib/custo.js` + `test_custo_calculo.mjs`, os 4 repositorios (produto e transacao
-nos dois backends), `route.js` (3 pontos de gravacao + 2 endpoints),
-`app/page.js`, `backend_test_custo.py`.
+**Arquivos entregues:** migration `0020_custo.sql`, `lib/custo.js` +
+`test_custo_calculo.mjs`, os 4 repositorios (produto e transacao nos dois
+backends), `route.js` (3 pontos de gravacao + 2 endpoints), `app/page.js`,
+`backend_test_custo.py` (raiz do projeto).
 
 **Por que esta feature primeiro:** analise de especialista feita em 2026-08-14
 apontou 3 lacunas de gestao — ausencia total de custo, estoque por produto em vez
