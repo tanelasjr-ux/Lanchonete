@@ -2106,6 +2106,82 @@ function MargemPorCanalCard({ dados }) {
   )
 }
 
+/**
+ * Ranking de produtos por lucro bruto — o que da dinheiro de verdade, nao so
+ * o que vende mais.
+ *
+ * Usa o custo ATUAL do produto, nao o congelado na venda (diferente do
+ * CMV/DRE do periodo, que usam o custo de quando a venda aconteceu). Por
+ * isso o aviso explicito: sem isso o dono compararia este numero com o
+ * lucro_bruto do DRE, os dois nao baterem, e concluiria (errado) que o
+ * relatorio tem bug.
+ */
+function MargemPorProdutoCard({ dados }) {
+  const [aberto, setAberto] = useState(false)
+  if (!dados || !dados.produtos?.length) return null
+  const lista = aberto ? dados.produtos : dados.produtos.slice(0, 8)
+  const temAlgumCusto = dados.produtos.some((p) => p.margem_percent !== null)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Margem por produto</CardTitle>
+        <CardDescription>
+          O que vende mais nem sempre é o que dá mais lucro. Calculado com o custo cadastrado hoje no Cardápio — não o custo de quando a venda aconteceu.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="py-2 pr-3 font-medium">Produto</th>
+                <th className="py-2 px-3 font-medium text-right">Qtd.</th>
+                <th className="py-2 px-3 font-medium text-right">Receita</th>
+                <th className="py-2 pl-3 font-medium text-right">Lucro bruto</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map((p) => (
+                <tr key={p.produto_id} className="border-b last:border-0">
+                  <td className="py-2 pr-3 font-medium truncate max-w-48">{p.nome}</td>
+                  <td className="py-2 px-3 text-right">{p.quantidade}</td>
+                  <td className="py-2 px-3 text-right">{brl(p.receita)}</td>
+                  <td className="py-2 pl-3 text-right">
+                    {p.lucro_bruto !== null ? (
+                      <>
+                        <span className={p.lucro_bruto >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                          {brl(p.lucro_bruto)}
+                        </span>
+                        <span className="text-xs text-muted-foreground ml-1">({p.margem_percent.toFixed(0)}%)</span>
+                      </>
+                    ) : <span className="text-muted-foreground">sem custo</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {dados.produtos.length > 8 && (
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setAberto((a) => !a)}>
+            {aberto ? 'Mostrar menos' : `Ver todos os ${dados.produtos.length} produtos`}
+          </Button>
+        )}
+        {!temAlgumCusto && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
+            Nenhum produto vendido tem custo cadastrado, então não dá para calcular lucro. Cadastre o custo no Cardápio.
+          </p>
+        )}
+        {dados.itens_sem_produto > 0 && (
+          <p className="text-xs text-muted-foreground mt-3">
+            {dados.itens_sem_produto} unidade(s) vendida(s) como item avulso (sem produto do cardápio vinculado) ficam fora deste ranking.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function Relatorios() {
   const [preset, setPreset] = useState('30d')
   const [custom, setCustom] = useState({ inicio: '', fim: '' })
@@ -2192,6 +2268,16 @@ function Relatorios() {
       }
       rows.push([])
     }
+    if (rep.margem_por_produto?.produtos?.length) {
+      rows.push(['Margem por produto (custo atual, nao o congelado na venda)'])
+      rows.push(['Produto', 'Quantidade', 'Receita', 'Lucro bruto', 'Margem %'])
+      for (const p of rep.margem_por_produto.produtos) {
+        rows.push([p.nome, p.quantidade, String(p.receita).replace('.', ','),
+          p.lucro_bruto !== null ? String(p.lucro_bruto).replace('.', ',') : 'sem custo',
+          p.margem_percent !== null ? String(p.margem_percent).replace('.', ',') : 'sem custo'])
+      }
+      rows.push([])
+    }
     rows.push(['Data', 'Pedido', 'Cliente', 'Pagamento', 'Valor', 'Status', 'Origem'])
     for (const r of rep.tabela) {
       rows.push([new Date(r.data).toLocaleString('pt-BR'), r.numero, r.cliente, r.pagamento, String(r.valor).replace('.', ','), r.status, r.origem])
@@ -2255,7 +2341,10 @@ function Relatorios() {
             </div>
           )}
           {rep.dre && <DreCard dre={rep.dre} despesasPorCategoria={rep.despesas_por_categoria} coberturaCmv={rep.cmv?.cobertura_percent} comparativo={cmp} />}
-          <MargemPorCanalCard dados={rep.margem_por_canal} />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <MargemPorCanalCard dados={rep.margem_por_canal} />
+            <MargemPorProdutoCard dados={rep.margem_por_produto} />
+          </div>
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Faturamento por dia</CardTitle></CardHeader><CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%"><AreaChart data={rep.serie} margin={{ left: -18, right: 8, top: 8 }}>

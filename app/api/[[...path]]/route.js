@@ -25,7 +25,7 @@ import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isS
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
-import { computeCustoVenda, computeCMV, computeMargemPorCanal } from '@/lib/custo'
+import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorProduto } from '@/lib/custo'
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
 import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
@@ -2522,6 +2522,15 @@ async function handler(request, { params }) {
          * pode estar vendendo bem e ganhando pouco.
          */
         margem_por_canal: computeMargemPorCanal({ transacoes: trans, pedidos }),
+        /**
+         * Ranking por produto usa CUSTO ATUAL, nao o congelado na venda — ver
+         * a nota grande em computeMargemPorProduto. `faturados`, no mesmo
+         * criterio do faturamento bruto do periodo.
+         */
+        margem_por_produto: computeMargemPorProduto({
+          pedidos: faturados,
+          produtos: await produtoRepo.list(ctx.empresa_id),
+        }),
         /**
          * Comparativo com a janela imediatamente anterior de mesma duracao.
          * Sem isso todo numero do relatorio e um retrato solto: R$ 40 mil de
