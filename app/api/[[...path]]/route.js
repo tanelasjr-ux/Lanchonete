@@ -21,7 +21,7 @@ import crypto from 'crypto'
 import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evolution'
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations/supabase'
-import { uploadLogo, removeLogo, isStorageConfigured } from '@/lib/integrations/storage'
+import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
@@ -764,14 +764,23 @@ async function handler(request, { params }) {
           imagem: p.imagem,
         }))
 
+      // Indisponiveis hoje: mesmo campo `disponivel` do toggle "Em Falta" ja
+      // existente (nao e campo novo). So nomes — o cliente na mesa nao
+      // precisa de mais que isso para saber o que nao pedir.
+      const indisponiveisHoje = produtos
+        .filter((p) => p.ativo && !p.disponivel)
+        .map((p) => p.nome)
+
       return json({
         empresa: {
           nome: empresa.nome_comercial || empresa.nome,
           logo: empresa.logo,
           cor_principal: empresa.config?.appearance?.cor_principal || null,
+          cardapio_imagem_url: empresa.cardapio_imagem_url || null,
         },
         categorias: categoriasVisiveis,
         produtos: produtosVisiveis,
+        indisponiveis_hoje: indisponiveisHoje,
       })
     }
 
@@ -863,6 +872,42 @@ async function handler(request, { params }) {
       const atualizada = await empresaRepo.update(ctx.empresa_id, { logo: null, updated_at: new Date() })
       await audit(repos, ctx, 'delete', 'empresa', ctx.empresa_id, { campos: ['logo'] })
       return json({ logo: null, empresa: clean(atualizada) })
+    }
+
+    /**
+     * Upload da imagem do cardapio (poster do cardapio impresso, servido no
+     * link/QR publico ja existente). Mesmo padrao de /empresa/logo.
+     */
+    if (route === '/empresa/cardapio-imagem' && method === 'POST') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      if (!isStorageConfigured()) return err('Storage nao configurado no servidor', 503)
+
+      let arquivo
+      try {
+        const form = await request.formData()
+        arquivo = form.get('arquivo')
+      } catch {
+        return err('Envie o arquivo como multipart/form-data no campo "arquivo"')
+      }
+      if (!arquivo || typeof arquivo.arrayBuffer !== 'function') return err('Arquivo ausente')
+
+      try {
+        const buffer = Buffer.from(await arquivo.arrayBuffer())
+        const url = await uploadCardapioImagem(ctx.empresa_id, buffer, arquivo.type)
+        const atualizada = await empresaRepo.update(ctx.empresa_id, { cardapio_imagem_url: url, updated_at: new Date() })
+        await audit(repos, ctx, 'update', 'empresa', ctx.empresa_id, { campos: ['cardapio_imagem_url'], tamanho_bytes: buffer.length })
+        return json({ cardapio_imagem_url: url, empresa: clean(atualizada) })
+      } catch (e) {
+        return err(e.message, 400)
+      }
+    }
+
+    if (route === '/empresa/cardapio-imagem' && method === 'DELETE') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      await removeCardapioImagem(ctx.empresa_id)
+      const atualizada = await empresaRepo.update(ctx.empresa_id, { cardapio_imagem_url: null, updated_at: new Date() })
+      await audit(repos, ctx, 'delete', 'empresa', ctx.empresa_id, { campos: ['cardapio_imagem_url'] })
+      return json({ cardapio_imagem_url: null, empresa: clean(atualizada) })
     }
 
     /* ==================== KDS TOKENS (gestao dos links da TV) ==================== */

@@ -79,6 +79,7 @@ export interface Empresa {
   whatsapp: string;
   email: string;
   logo: string | null;
+  cardapio_imagem_url: string | null;
   horario_funcionamento: string;
   config: EmpresaConfig;
   ativo: boolean;

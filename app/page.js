@@ -2069,6 +2069,46 @@ function Empresa({ reload }) {
       reload?.()
     } catch (e) { toast.error(e.message) } finally { setEnviandoLogo(false) }
   }
+
+  /* --- Imagem do cardapio: mesmo padrao da logo (upload multipart) --- */
+  const [enviandoCardapioImagem, setEnviandoCardapioImagem] = useState(false)
+  const inputCardapioImagemRef = useRef(null)
+  const MAX_CARDAPIO_IMAGEM_MB = 5
+
+  const enviarCardapioImagem = async (file) => {
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      toast.error('Formato nao suportado. Use PNG, JPG ou WEBP.'); return
+    }
+    if (file.size > MAX_CARDAPIO_IMAGEM_MB * 1024 * 1024) {
+      toast.error(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Limite: ${MAX_CARDAPIO_IMAGEM_MB} MB.`); return
+    }
+    setEnviandoCardapioImagem(true)
+    try {
+      const fd = new FormData()
+      fd.append('arquivo', file)
+      const res = await fetch('/api/empresa/cardapio-imagem', { method: 'POST', headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }, body: fd })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Falha ao enviar a imagem')
+      setF((s) => ({ ...s, cardapio_imagem_url: data.cardapio_imagem_url }))
+      toast.success('Imagem do cardapio atualizada')
+      reload?.()
+    } catch (e) { toast.error(e.message) } finally {
+      setEnviandoCardapioImagem(false)
+      if (inputCardapioImagemRef.current) inputCardapioImagemRef.current.value = ''
+    }
+  }
+
+  const removerCardapioImagem = async () => {
+    setEnviandoCardapioImagem(true)
+    try {
+      await api('/empresa/cardapio-imagem', { method: 'DELETE' })
+      setF((s) => ({ ...s, cardapio_imagem_url: null }))
+      toast.success('Imagem do cardapio removida')
+      reload?.()
+    } catch (e) { toast.error(e.message) } finally { setEnviandoCardapioImagem(false) }
+  }
+
   const savePag = async () => { try { await api('/empresa', { method: 'PUT', body: { config: { pagamentos: f.config?.pagamentos } } }); toast.success('Pagamentos atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
   if (!f) return <Empty>Carregando…</Empty>
   const ap = f.config?.appearance || {}
@@ -2249,12 +2289,58 @@ function Empresa({ reload }) {
           </Card>
         </TabsContent>
 
-        <TabsContent value="cardapio" className="mt-4">
+        <TabsContent value="cardapio" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Cardápio Digital</CardTitle>
+              <CardTitle className="text-base">Imagem do cardápio</CardTitle>
               <CardDescription>
-                Link público e código QR para clientes acessarem o cardápio sem fazer login.
+                Suba uma foto ou pôster do seu cardápio. Quem escanear o QR da mesa —
+                ou receber o link pelo delivery — vê essa imagem direto, sem precisar
+                que os produtos estejam todos cadastrados no sistema.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start gap-4 rounded-lg border p-3">
+                <div className="h-24 w-20 shrink-0 rounded-lg border bg-muted grid place-items-center overflow-hidden">
+                  {f.cardapio_imagem_url
+                    ? <img src={f.cardapio_imagem_url} alt="Imagem do cardápio" className="h-full w-full object-cover" />
+                    : <UtensilsCrossed className="h-6 w-6 text-muted-foreground" aria-hidden="true" />}
+                </div>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <input
+                    ref={inputCardapioImagemRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={(e) => enviarCardapioImagem(e.target.files?.[0])}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" disabled={enviandoCardapioImagem} onClick={() => inputCardapioImagemRef.current?.click()}>
+                      {enviandoCardapioImagem
+                        ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enviando…</>
+                        : <>{f.cardapio_imagem_url ? 'Trocar imagem' : 'Enviar imagem'}</>}
+                    </Button>
+                    {f.cardapio_imagem_url && (
+                      <Button type="button" variant="ghost" size="sm" className="text-destructive" disabled={enviandoCardapioImagem} onClick={removerCardapioImagem}>
+                        <Trash2 className="h-4 w-4 mr-2" />Remover
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">PNG, JPG ou WEBP · até {MAX_CARDAPIO_IMAGEM_MB} MB.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Itens marcados como "Em falta" em <span className="font-medium text-foreground">Cardápio</span> aparecem
+                    em destaque acima da imagem, para o cliente saber o que não pedir hoje — sem precisar editar a imagem.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Link e QR Code</CardTitle>
+              <CardDescription>
+                Mesmo link para a mesa (QR) e para delivery (encaminhar manualmente). Mostra a imagem
+                acima quando cadastrada, ou a lista de produtos quando não.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
