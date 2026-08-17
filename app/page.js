@@ -2027,6 +2027,85 @@ function DreCard({ dre, despesasPorCategoria, coberturaCmv, comparativo }) {
   )
 }
 
+/**
+ * Margem bruta por canal de venda.
+ *
+ * O numero consolidado esconde a pergunta que decide contrato de app: o
+ * delivery esta pagando o que custa? Vender muito e ganhar pouco so aparece
+ * quando se separa por canal.
+ *
+ * Deixa explicito que a margem e BRUTA (custo de mercadoria apenas). Aluguel e
+ * folha nao sao rateados por canal — rateio seria regra inventada, e numero
+ * inventado em relatorio financeiro e pior que numero ausente.
+ */
+function MargemPorCanalCard({ dados }) {
+  if (!dados || !dados.canais?.length) return null
+  const temAlgumCusto = dados.canais.some((c) => c.margem_percent !== null)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Margem por canal</CardTitle>
+        <CardDescription>
+          Onde a venda acontece e quanto sobra em cada lugar. Margem bruta — só custo de mercadoria, sem aluguel nem folha rateados.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="py-2 pr-3 font-medium">Canal</th>
+                <th className="py-2 px-3 font-medium text-right">Pedidos</th>
+                <th className="py-2 px-3 font-medium text-right">Receita</th>
+                <th className="py-2 px-3 font-medium text-right">Ticket</th>
+                <th className="py-2 px-3 font-medium text-right">Custo</th>
+                <th className="py-2 pl-3 font-medium text-right">Margem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dados.canais.map((c) => (
+                <tr key={c.canal} className="border-b last:border-0">
+                  <td className="py-2 pr-3">
+                    <div className="font-medium">{c.label}</div>
+                    {c.taxa_entrega > 0 && (
+                      <div className="text-xs text-muted-foreground">+ {brl(c.taxa_entrega)} de taxa de entrega</div>
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right">{c.pedidos}</td>
+                  <td className="py-2 px-3 text-right">{brl(c.receita_base)}</td>
+                  <td className="py-2 px-3 text-right">{brl(c.ticket_medio)}</td>
+                  <td className="py-2 px-3 text-right">{c.margem_percent !== null ? brl(c.custo_total) : '—'}</td>
+                  <td className="py-2 pl-3 text-right">
+                    {c.margem_percent !== null ? (
+                      <span className={c.margem_percent >= 50 ? 'text-emerald-600 dark:text-emerald-400' : c.margem_percent >= 30 ? '' : 'text-amber-600 dark:text-amber-400'}>
+                        {c.margem_percent.toFixed(1).replace('.', ',')}%
+                      </span>
+                    ) : <span className="text-muted-foreground">—</span>}
+                    {c.cobertura_percent !== null && c.cobertura_percent < 90 && (
+                      <div className="text-xs text-muted-foreground">{c.cobertura_percent.toFixed(0)}% com custo</div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!temAlgumCusto && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
+            Nenhum produto vendido tinha custo cadastrado no período, então não dá para calcular margem. Cadastre o custo no Cardápio.
+          </p>
+        )}
+        {dados.receita_sem_canal > 0 && (
+          <p className="text-xs text-muted-foreground mt-3">
+            {brl(dados.receita_sem_canal)} de receita não veio de pedido (lançamento manual) e fica fora desta divisão.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function Relatorios() {
   const [preset, setPreset] = useState('30d')
   const [custom, setCustom] = useState({ inicio: '', fim: '' })
@@ -2103,6 +2182,16 @@ function Relatorios() {
         rows.push([])
       }
     }
+    if (rep.margem_por_canal?.canais?.length) {
+      rows.push(['Margem por canal'])
+      rows.push(['Canal', 'Pedidos', 'Receita', 'Ticket medio', 'Custo', 'Margem %'])
+      for (const c of rep.margem_por_canal.canais) {
+        rows.push([c.label, c.pedidos, String(c.receita_base).replace('.', ','), String(c.ticket_medio).replace('.', ','),
+          c.margem_percent !== null ? String(c.custo_total).replace('.', ',') : 'sem custo',
+          c.margem_percent !== null ? String(c.margem_percent).replace('.', ',') : 'sem custo'])
+      }
+      rows.push([])
+    }
     rows.push(['Data', 'Pedido', 'Cliente', 'Pagamento', 'Valor', 'Status', 'Origem'])
     for (const r of rep.tabela) {
       rows.push([new Date(r.data).toLocaleString('pt-BR'), r.numero, r.cliente, r.pagamento, String(r.valor).replace('.', ','), r.status, r.origem])
@@ -2166,6 +2255,7 @@ function Relatorios() {
             </div>
           )}
           {rep.dre && <DreCard dre={rep.dre} despesasPorCategoria={rep.despesas_por_categoria} coberturaCmv={rep.cmv?.cobertura_percent} comparativo={cmp} />}
+          <MargemPorCanalCard dados={rep.margem_por_canal} />
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Faturamento por dia</CardTitle></CardHeader><CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%"><AreaChart data={rep.serie} margin={{ left: -18, right: 8, top: 8 }}>

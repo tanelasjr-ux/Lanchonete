@@ -25,7 +25,7 @@ import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isS
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
-import { computeCustoVenda, computeCMV } from '@/lib/custo'
+import { computeCustoVenda, computeCMV, computeMargemPorCanal } from '@/lib/custo'
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
 import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
@@ -2517,6 +2517,11 @@ async function handler(request, { params }) {
         cmv,
         dre,
         despesas_por_categoria: despesasPorCategoria,
+        /**
+         * Margem bruta por canal. O total consolidado esconde que o delivery
+         * pode estar vendendo bem e ganhando pouco.
+         */
+        margem_por_canal: computeMargemPorCanal({ transacoes: trans, pedidos }),
         /**
          * Comparativo com a janela imediatamente anterior de mesma duracao.
          * Sem isso todo numero do relatorio e um retrato solto: R$ 40 mil de
