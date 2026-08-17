@@ -1,8 +1,8 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (🔴 achado critico — migrations 0019/0020/0021
-nunca tinham sido aplicadas em producao; Estoque e CMV estavam quebrados
-desde que "concluidos"; corrigido nesta sessao — ver §0)
+Ultima atualizacao: 2026-08-18 (achado critico de schema CORRIGIDO na raiz:
+migrations agora rodam sozinhas no boot do container, verificado em producao;
+alerta global de estoque entregue — ver §0)
 
 ## Como usar este arquivo
 
@@ -65,12 +65,28 @@ ainda (so a leitura de schema). **Proxima sessao (ou o proprio dono agora):
 testar cadastro de custo num produto, ver o card de CMV no Dashboard, e
 testar o controle de estoque — os 3 endpoints que dependem dessas colunas.**
 
-**Licao para o processo:** o passo "aplicar migration em producao" precisa
-virar parte explicita e verificada do checklist de "pronto" de qualquer
-feature que mexe em schema — nao pode ficar implicito ou lembrado de
-memoria. Considerar adicionar um passo automatizado (CI/CD) ou, no minimo,
-uma checagem de schema (comparar `information_schema.columns` esperado vs
-real) antes de marcar qualquer feature como "completo e em producao".
+**✅ CAUSA RAIZ ELIMINADA no mesmo dia** (`8548470`) — o passo manual deixou
+de existir. `docker/entrypoint.sh` roda `scripts/migrate.mjs` no boot do
+container e so entao `exec node server.js`. Migration pendente agora e
+aplicada sozinha no deploy; migration que falha **derruba o boot** em vez de
+subir a app com schema errado. Detalhe tecnico completo no item **C6** do
+`PROFISSIONALIZACAO.md`.
+
+**Verificado em producao (2026-08-18 18:59):** tabela `public.schema_migrations`
+criada com as 21 migrations registradas via baseline automatica. Da proxima
+migration em diante, basta commitar o arquivo em `supabase/migrations/` — o
+deploy aplica.
+
+**Pegadinha que custou algumas idas e vindas:** `SUPABASE_DB_URL` precisou ser
+adicionada nas variaveis do EasyPanel (a app nunca precisou dela, porque usa a
+API REST). Duas armadilhas no caminho, ambas dignas de nota para a proxima vez:
+1. O painel do Supabase oferece a **Direct Connection**
+   (`db.<ref>.supabase.co`), que resolve para IPv6 e nao conecta. O correto e o
+   **Session Pooler** (`aws-0-us-east-2.pooler.supabase.com`) — ja documentado
+   em §5.1, e agora com um caso real por tras.
+2. O painel entrega a string com o literal `[YOUR-PASSWORD]`, que passa
+   despercebido facilmente. Copiar o valor do `.env` local evita os dois
+   problemas de uma vez.
 
 ## 📋 Dois backlogs, propositos diferentes
 

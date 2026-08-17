@@ -561,10 +561,18 @@ exit 1). O primeiro build revelou um bug real que teria derrubado o deploy:
 `NODE_PATH` nao afeta `import` de ESM, so `require()` de CommonJS — o driver
 `pg` precisou ir para dentro de `/app/node_modules`.
 
-**⚠️ Acao necessaria no painel:** `SUPABASE_DB_URL` precisa existir nas
-variaveis de ambiente do EasyPanel. A aplicacao nunca precisou dela (usa a API
-REST via `SUPABASE_URL` + service key), entao provavelmente **nao esta la** — e
-sem ela o runner apenas avisa e segue, sem verificar nada.
+**✅ Confirmado funcionando em producao (2026-08-18 18:59):**
+`public.schema_migrations` criada com as 21 migrations registradas via baseline
+automatica, no boot do container.
+
+`SUPABASE_DB_URL` foi adicionada nas variaveis do EasyPanel (a app nunca
+precisou dela, porque usa a API REST). Duas armadilhas apareceram e valem
+registro:
+1. O painel do Supabase oferece a **Direct Connection** (`db.<ref>.supabase.co`),
+   que resolve para IPv6 e nao conecta — o correto e o **Session Pooler**.
+2. A string vem com o literal `[YOUR-PASSWORD]`, que passa despercebido.
+
+Copiar o valor do `.env` local resolve os dois de uma vez.
 
 **Ainda em aberto:** um comando que compare schema esperado vs. real sem subir
 container (util em CI e para auditoria). O runner cobre o caminho do deploy,
