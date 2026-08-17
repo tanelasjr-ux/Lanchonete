@@ -1771,7 +1771,21 @@ function Relatorios() {
   useEffect(() => { load() }, [load])
   const exportCsv = () => {
     if (!rep) return
-    const rows = [['Data', 'Pedido', 'Cliente', 'Pagamento', 'Valor', 'Status', 'Origem'], ...rep.tabela.map((r) => [new Date(r.data).toLocaleString('pt-BR'), r.numero, r.cliente, r.pagamento, String(r.valor).replace('.', ','), r.status, r.origem])]
+    const rows = []
+    if (rep.cmv && rep.cmv.cmv_percent !== null) {
+      // Resumo de custo antes da tabela: e o que o contador procura primeiro.
+      rows.push(['Resumo de custo'])
+      rows.push(['Custo da mercadoria', String(rep.cmv.custo_total).replace('.', ',')])
+      rows.push(['Receita com custo apurado', String(rep.cmv.receita_com_custo).replace('.', ',')])
+      rows.push(['Lucro bruto', String(rep.cmv.lucro_bruto).replace('.', ',')])
+      rows.push(['CMV %', String(rep.cmv.cmv_percent).replace('.', ',')])
+      rows.push(['Cobertura %', String(rep.cmv.cobertura_percent ?? 0).replace('.', ',')])
+      rows.push([])
+    }
+    rows.push(['Data', 'Pedido', 'Cliente', 'Pagamento', 'Valor', 'Status', 'Origem'])
+    for (const r of rep.tabela) {
+      rows.push([new Date(r.data).toLocaleString('pt-BR'), r.numero, r.cliente, r.pagamento, String(r.valor).replace('.', ','), r.status, r.origem])
+    }
     const csv = rows.map((r) => r.map((c) => `"${String(c ?? '')}"`).join(';')).join('\n')
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `relatorio-${Date.now()}.csv`; a.click()
@@ -1812,6 +1826,14 @@ function Relatorios() {
             <Stat icon={CheckCircle2} label="Recebidos" value={brl(k.recebidos)} tone="emerald" />
             <Stat icon={Clock} label="Pendentes / Cancelados" value={`${brl(k.pendentes)} / ${brl(k.cancelados_reembolsados)}`} tone="amber" />
           </div>
+          {rep.cmv && rep.cmv.cmv_percent !== null && (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Stat icon={TrendingUp} label="Lucro bruto" value={brl(rep.cmv.lucro_bruto)} tone="emerald" />
+              <Stat icon={TrendingDown} label="Custo da mercadoria" value={brl(rep.cmv.custo_total)} tone="amber" />
+              <Stat icon={DollarSign} label="CMV" value={`${rep.cmv.cmv_percent.toFixed(1).replace('.', ',')}%`} hint="referência do setor: 28–35%" tone="violet" />
+              <Stat icon={CheckCircle2} label="Cobertura de custo" value={`${(rep.cmv.cobertura_percent ?? 0).toFixed(0)}%`} hint="quanto do faturamento tem custo apurado" tone="primary" />
+            </div>
+          )}
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Faturamento por dia</CardTitle></CardHeader><CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%"><AreaChart data={rep.serie} margin={{ left: -18, right: 8, top: 8 }}>
