@@ -25,6 +25,7 @@ import { uploadLogo, removeLogo, isStorageConfigured } from '@/lib/integrations/
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
+import { computeCustoVenda, computeCMV } from '@/lib/custo'
 
 /* ============================ INFRA: persistencia ========================
  * A escolha do backend (MongoDB ou Supabase) vive inteiramente em
@@ -266,6 +267,35 @@ async function resumoDoCaixa(repos, empresaId, caixa) {
     transacoes,
     movimentos,
   })
+}
+
+/**
+ * Monta o mapa `produto_id -> custo` para os itens de uma venda.
+ *
+ * Uma leitura de produtos por venda (nao uma por item): a lista inteira sai em
+ * uma query e o filtro acontece em memoria, no mesmo espirito do que a baixa de
+ * estoque ja faz logo abaixo de cada ponto de venda.
+ *
+ * Falha de leitura NAO derruba a venda: devolve mapa vazio, o que faz a
+ * apuracao gravar `custo_total = 0` e `receita_com_custo = 0` mantendo
+ * `receita_base` real. O efeito e a cobertura cair, que e exatamente o sinal
+ * honesto — "esta venda nao teve custo apurado" — em vez de um numero inventado.
+ */
+async function mapaCustoProdutos(repos, ctx, itens) {
+  try {
+    const ids = [...new Set((itens || []).map((i) => i.produto_id).filter(Boolean))]
+    if (ids.length === 0) return {}
+    const todos = await repos.produtoRepo.list(ctx.empresa_id)
+    const mapa = {}
+    for (const p of todos) {
+      if (ids.includes(p.id)) mapa[p.id] = p.custo ?? null
+    }
+    return mapa
+  } catch (e) {
+    console.warn(`Apuracao de custo falhou: ${e.message}`)
+    await audit(repos, ctx, 'custo_erro', 'produto', null, { erro: e.message })
+    return {}
+  }
 }
 
 /* ============================ SEED (demo) ============================= */
@@ -1411,6 +1441,9 @@ async function handler(request, { params }) {
       const totalFinal = upd.total !== undefined ? upd.total : pedido.total
       if (finais.includes(b.status) && !finais.includes(pedido.status)) {
         const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
+        const itensVendidos = upd.itens !== undefined ? upd.itens : (pedido.itens || [])
+        const custoMapa = await mapaCustoProdutos(repos, ctx, itensVendidos)
+        const custo = computeCustoVenda({ itens: itensVendidos, custoPorProduto: custoMapa })
         await transacaoRepo.create({
           id: uuidv4(),
           empresa_id: ctx.empresa_id,
@@ -1421,6 +1454,9 @@ async function handler(request, { params }) {
           pedido_id: pedido.id,
           forma_pagamento: pedido.pagamento || 'dinheiro',
           caixa_id: caixaAberto ? caixaAberto.id : null,
+          custo_total: custo.custo_total,
+          receita_com_custo: custo.receita_com_custo,
+          receita_base: custo.receita_base,
           data: new Date(),
           created_at: new Date(),
         })
@@ -1960,9 +1996,14 @@ async function handler(request, { params }) {
       // fica errado.
       const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
       const pagamentos = comanda.pagamentos || []
+      const custoMapa = await mapaCustoProdutos(repos, ctx, comanda.itens)
 
       if (pagamentos.length > 0) {
         for (const pg of pagamentos) {
+          // Rateio: que fatia desta venda esta transacao representa. A soma dos
+          // rateios e 1, entao a soma dos campos de custo fecha com o total.
+          const rateio = totals.total > 0 ? pg.valor / totals.total : 0
+          const custo = computeCustoVenda({ itens: comanda.itens, custoPorProduto: custoMapa, rateio })
           await transacaoRepo.create({
             id: uuidv4(),
             empresa_id: ctx.empresa_id,
@@ -1974,6 +2015,9 @@ async function handler(request, { params }) {
             comanda_id: comanda.id,
             forma_pagamento: pg.metodo,
             caixa_id: caixaAberto ? caixaAberto.id : null,
+            custo_total: custo.custo_total,
+            receita_com_custo: custo.receita_com_custo,
+            receita_base: custo.receita_base,
             data: new Date(),
             created_at: new Date(),
           })
@@ -1981,6 +2025,7 @@ async function handler(request, { params }) {
       } else {
         // Comanda fechada sem registro de pagamento (fluxo antigo): mantem o
         // comportamento atual, uma transacao unica, assumindo dinheiro.
+        const custoUnico = computeCustoVenda({ itens: comanda.itens, custoPorProduto: custoMapa })
         await transacaoRepo.create({
           id: uuidv4(),
           empresa_id: ctx.empresa_id,
@@ -1992,6 +2037,9 @@ async function handler(request, { params }) {
           comanda_id: comanda.id,
           forma_pagamento: 'dinheiro',
           caixa_id: caixaAberto ? caixaAberto.id : null,
+          custo_total: custoUnico.custo_total,
+          receita_com_custo: custoUnico.receita_com_custo,
+          receita_base: custoUnico.receita_base,
           data: new Date(),
           created_at: new Date(),
         })
