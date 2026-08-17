@@ -148,21 +148,36 @@ def test_religar_devolve_o_acesso_e_os_dados():
 
 
 def test_modulo_sem_implementacao_nao_e_configuravel():
-    """PUT num modulo "Em breve" da 404 — nao existe o que ligar.
+    """PUT num modulo sem implementacao da 404 — nao existe o que ligar.
 
     Aceitar o PUT gravaria uma flag `crm: true` que nao habilita CRM nenhum:
     exatamente a classe de mentira que este trabalho removeu.
     """
-    headers = criar_empresa("Em Breve")
+    headers = criar_empresa("Sem Implementacao")
     r = requests.put(f"{BASE_URL}/modulos/crm", headers=headers, json={"ativo": True})
     assert r.status_code == 404
 
+    # O catalogo lista SO o que da para configurar. A vitrine de "em breve"
+    # saiu da tela e da resposta a pedido do dono.
     catalogo = requests.get(f"{BASE_URL}/modulos", headers=headers).json()
-    configuraveis = {m["chave"] for m in catalogo["disponiveis"]}
-    em_breve = {m["chave"] for m in catalogo["em_breve"]}
-    assert "crm" in em_breve
-    assert "crm" not in configuraveis
-    assert configuraveis == {"mesas", "estoque", "caixa"}
+    assert {m["chave"] for m in catalogo["disponiveis"]} == {"mesas", "estoque", "caixa"}
+    assert "em_breve" not in catalogo
+
+
+def test_modulo_futuro_nasce_fechado_no_signup():
+    """Modulo sem implementacao e gravado como `false`, nao omitido.
+
+    `temModulo` trata flag ausente como LIGADA (para nao tirar acesso de quem
+    ja usa). Se o signup simplesmente nao registrasse `crm`, o dia em que o CRM
+    ganhasse portao ele nasceria aberto para todo mundo. O `false` explicito e
+    o que mantem a porta fechada.
+    """
+    headers = criar_empresa("Futuro Fechado")
+    empresa = requests.get(f"{BASE_URL}/empresa", headers=headers).json()
+    flags = empresa["config"]["feature_flags"]
+
+    for chave in ("crm", "campanhas", "fidelidade", "cashback", "multiunidade", "billing"):
+        assert flags.get(chave) is False, f"{chave} deveria nascer False explicito, veio {flags.get(chave)!r}"
 
 
 def test_modulo_de_uma_empresa_nao_afeta_outra():

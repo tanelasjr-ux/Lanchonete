@@ -2303,39 +2303,23 @@ function ModulosTab({ reload }) {
 
   if (!dados) return <Empty>Carregando…</Empty>
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Modulos do seu plano</CardTitle>
-          <CardDescription>Desligar um modulo esconde as telas e bloqueia o acesso no servidor. Os dados continuam salvos e voltam ao religar.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {dados.disponiveis.map((m) => (
-            <div key={m.chave} className="flex items-center justify-between gap-4 rounded-lg border p-3">
-              <div className="min-w-0">
-                <div className="text-sm font-medium">{m.label}</div>
-                <div className="text-xs text-muted-foreground">{m.descricao}</div>
-              </div>
-              <Switch checked={m.ativo} disabled={salvando === m.chave} onCheckedChange={(v) => alternar(m.chave, v)} />
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Modulos do seu plano</CardTitle>
+        <CardDescription>Desligar um modulo esconde as telas e bloqueia o acesso no servidor. Os dados continuam salvos e voltam ao religar.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {dados.disponiveis.map((m) => (
+          <div key={m.chave} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{m.label}</div>
+              <div className="text-xs text-muted-foreground">{m.descricao}</div>
             </div>
-          ))}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Em breve</CardTitle>
-          <CardDescription>Ainda nao implementados — sem interruptor porque nao ha o que ligar.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-3">
-          {dados.em_breve.map((m) => (
-            <div key={m.chave} className="flex items-center justify-between rounded-lg border p-3">
-              <span className="text-sm text-muted-foreground">{m.label}</span>
-              <Badge variant="outline" className="text-muted-foreground">Em breve</Badge>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
+            <Switch checked={m.ativo} disabled={salvando === m.chave} onCheckedChange={(v) => alternar(m.chave, v)} />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   )
 }
 

@@ -27,7 +27,7 @@ import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV } from '@/lib/custo'
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE } from '@/lib/financeiro'
-import { MODULOS, MODULOS_EM_BREVE, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
+import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
 /* ============================ INFRA: persistencia ========================
  * A escolha do backend (MongoDB ou Supabase) vive inteiramente em
@@ -865,15 +865,22 @@ async function handler(request, { params }) {
     }
 
     /* ==================== MODULOS ==================== */
-    // Catalogo para a tela de configuracoes: o que da para ligar/desligar
-    // hoje, com o estado atual, e o que ainda e promessa.
+    // Catalogo para a tela de configuracoes: so o que da para ligar/desligar
+    // hoje, com o estado atual.
+    //
+    // Nao devolve a lista de modulos "em breve": a tela deixou de exibi-los a
+    // pedido do dono ("pode retirar o que nao estamos usando"), e uma vitrine
+    // de promessas nao ajuda quem so quer conferir o que contratou. As flags
+    // deles CONTINUAM sendo gravadas como `false` no signup — ver
+    // flagsPadraoSignup(): flag ausente conta como ligada, entao apagar o
+    // registro abriria sozinho um modulo futuro no dia em que ele ganhasse
+    // portao.
     if (route === '/modulos' && method === 'GET') {
       const empresa = await empresaAtual()
       return json({
         disponiveis: Object.entries(MODULOS).map(([chave, m]) => ({
           chave, label: m.label, descricao: m.descricao, ativo: temModulo(empresa, chave),
         })),
-        em_breve: MODULOS_EM_BREVE.map(([chave, label]) => ({ chave, label })),
       })
     }
 
