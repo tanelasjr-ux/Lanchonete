@@ -1,8 +1,8 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (A2 concluida — falhas silenciosas na UI
-eliminadas; C1 em progress — audit produzido, aguardando sua confirmacao
-para deletar empresas de teste — ver §0)
+Ultima atualizacao: 2026-08-18 (C1 concluido — 126 empresas de teste
+removidas de producao com confirmacao do dono; producao agora so tem a
+empresa real — ver §0)
 
 ## Como usar este arquivo
 
@@ -28,9 +28,9 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 O programa de profissionalizacao e um **documento vivo com 15 itens**, executavel
 ao longo de varias sessoes, cada um com evidencia no codigo e criterio de pronto.
-Progresso: ✅ A1 (2026-08-16) → ✅ A2 (2026-08-18) → 🔄 C1 (2026-08-18,
-audit feito, aguardando confirmacao) → ⚪ B1 (proximo). Ordem recomendada:
-`A1 → A2 → C1 → B1 → A3 → D1 → B2 → ...`
+Progresso: ✅ A1 (2026-08-16) → ✅ A2 (2026-08-18) → 🟡 C1 (2026-08-18,
+producao limpa, causa raiz sem trava tecnica) → ⚪ B1 (proximo). Ordem
+recomendada: `A1 → A2 → C1 → B1 → A3 → D1 → B2 → ...`
 
 **O achado mais importante que ele registra:** as `feature_flags` existem, tem
 tela de configuracao, e **nenhum dos 81 endpoints as consulta** — desligar
@@ -100,13 +100,24 @@ sem motor. Dois dos tres achados ja avancaram no mesmo dia:
   — decisao do dono, ainda a executar. Arquitetura ja preparada
   (`lib/integrations/n8n.js` ja publica eventos de dominio).
 
-**Item C1 em progress (2026-08-18)** — limpar empresas de teste da producao.
-Audit script produzido (`scratchpad/c1_audit.sh`), lista de empresas com
-padroes de teste gerada (test, teste, demo, temp, sample, qa, staging no nome
-ou email). **Aguardando sua confirmacao EXPLÍCITA antes de deletar** — operacao
-destrutiva, nao procedo sem aprovacao. Proximo passo quando voce der sinal:
-(1) mostrar lista completa, (2) confirmar dele escrito, (3) executar delete com
-cascade, (4) verificar integridade pos-delete.
+**Item C1 concluido em 2026-08-18** — limpeza de empresas de teste em
+producao. Auditoria encontrou 126 de 127 empresas com padrao de teste
+(`@teste.com`, nomes `Restaurante Bella Vista`/`Pizzaria Napolitana`/
+`KDS Teste A/B`/`Caixa Teste`, criadas 2026-08-10 a 2026-08-14). Backup
+completo (todas as colunas) salvo antes de qualquer exclusao; lista
+mostrada e confirmada explicitamente por voce antes da execucao; delete em
+6 lotes via REST (`ON DELETE CASCADE`, remove produtos/pedidos/mesas/
+caixa/conversas de cada empresa junto); pos-delete verificado — producao
+com exatamente 1 empresa (a sua, `Tanelas FooD`), 0 registros orfaos.
+
+**Causa raiz identificada mas nao 100% resolvida:** essas empresas surgiram
+porque o projeto **nao tem um Supabase de staging separado** — e um unico
+projeto multi-tenant, entao rodar as suites com `DATABASE_PROVIDER=supabase`
+localmente escreve direto em producao. Hoje o `.env` local esta seguro
+(`mongo`), mas isso e convencao, nao trava tecnica. Criar um segundo
+projeto Supabase so pra teste e decisao de custo/infra sua, documentada
+como pendente em `PROFISSIONALIZACAO.md` (item C1, marcado 🟡 nao ✅ por
+causa disso).
 
 ---
 
