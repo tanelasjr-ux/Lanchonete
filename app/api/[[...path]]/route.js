@@ -1165,7 +1165,7 @@ async function handler(request, { params }) {
           ctx.empresa_id,
           ativo === 'true' ? true : ativo === 'false' ? false : undefined
         )
-        return json({ entregadores: list })
+        return json(list.map(clean))
       } catch (e) {
         return err(e.message)
       }
@@ -1184,7 +1184,7 @@ async function handler(request, { params }) {
       }
       await entregadorRepo.create(doc)
       await audit(repos, ctx, 'create', 'entregador', doc.id, { nome: b.nome })
-      return json({ entregador: clean(doc) }, 201)
+      return json(clean(doc), 201)
     }
     if (seg[0] === 'entregadores' && seg[1] && method === 'PUT') {
       if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) return err('Sem permissao', 403)
@@ -1195,7 +1195,7 @@ async function handler(request, { params }) {
       for (const k of ['nome', 'telefone', 'ativo']) if (b[k] !== undefined) upd[k] = b[k]
       const atualizado = await entregadorRepo.update(ctx.empresa_id, seg[1], upd)
       await audit(repos, ctx, 'update', 'entregador', seg[1], upd)
-      return json({ entregador: clean(atualizado) })
+      return json(clean(atualizado))
     }
     if (seg[0] === 'entregadores' && seg[1] && method === 'DELETE') {
       if (!['OWNER', 'ADMIN', 'GERENTE'].includes(ctx.papel)) return err('Sem permissao', 403)
