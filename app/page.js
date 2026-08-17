@@ -335,6 +335,53 @@ function EstoqueBaixoCard() {
   )
 }
 
+/**
+ * Lucro bruto e CMV do dia.
+ *
+ * A cobertura aparece junto do numero, nao em nota de rodape: um CMV de 31% com
+ * 40% de cobertura nao e um CMV de 31%, e quem olha precisa ver as duas coisas
+ * no mesmo instante.
+ */
+function CmvCards({ cmv }) {
+  // `cmv_percent` nulo = nenhum produto vendido tinha custo cadastrado. Estado
+  // vazio explicativo em vez de "—": e a unica chance de apresentar a feature a
+  // quem nunca a viu.
+  if (!cmv || cmv.cmv_percent === null) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="p-4 text-sm text-muted-foreground">
+          Cadastre o custo dos produtos no Cardápio para acompanhar sua margem e o CMV.
+        </CardContent>
+      </Card>
+    )
+  }
+  const cobertura = cmv.cobertura_percent ?? 0
+  const tomCobertura = cobertura < 50 ? 'text-red-600' : cobertura < 80 ? 'text-amber-600' : 'text-emerald-600'
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Stat
+        icon={TrendingUp}
+        label="Lucro bruto hoje"
+        value={brl(cmv.lucro_bruto)}
+        hint={`sobre ${brl(cmv.receita_com_custo)} com custo apurado`}
+        tone="emerald"
+      />
+      <Card>
+        <CardContent className="space-y-1 p-4">
+          <div className="text-sm text-muted-foreground">CMV</div>
+          <div className="text-2xl font-semibold">
+            {cmv.cmv_percent.toFixed(1).replace('.', ',')}%
+          </div>
+          <div className="text-xs text-muted-foreground">referência do setor: 28–35%</div>
+          <div className={`text-xs font-medium ${tomCobertura}`}>
+            cobertura: {cobertura.toFixed(0)}%{cobertura < 80 ? ' ⚠' : ''}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 /* ============================ DASHBOARD ============================ */
 function Dashboard() {
   const [m, setM] = useState(null)
@@ -349,6 +396,7 @@ function Dashboard() {
         <Stat icon={TrendingUp} label="Ticket médio" value={brl(m.ticketMedio)} tone="violet" />
         <Stat icon={Users} label="Clientes" value={m.totalClientes} hint={`${m.totalProdutos} produtos no cardápio`} tone="amber" />
       </div>
+      <CmvCards cmv={m.cmv} />
       <EstoqueBaixoCard />
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
