@@ -1,0 +1,24 @@
+# ============================================================================
+# Restaurant OS :: .gitattributes
+# ----------------------------------------------------------------------------
+# O desenvolvimento acontece no Windows (core.autocrlf converte para CRLF na
+# copia de trabalho) e a producao roda em container Linux. Para a maioria dos
+# arquivos isso e indiferente, mas para script shell NAO e: um `entrypoint.sh`
+# com CRLF faz o kernel procurar o interpretador "/bin/sh\r", que nao existe,
+# e o container morre no boot com "bad interpreter" — falha de deploy por
+# caractere invisivel.
+#
+# `eol=lf` forca LF na copia de trabalho tambem, independente da configuracao
+# local de quem clonar.
+# ============================================================================
+
+*.sh text eol=lf
+
+# O Dockerfile e lido pelo daemon Linux; manter LF evita surpresa parecida em
+# instrucoes multi-linha.
+Dockerfile  text eol=lf
+*.Dockerfile text eol=lf
+
+# Certificado: conteudo exato importa (o parser de PEM e sensivel), entao nao
+# deixar o Git reescrever quebra de linha nenhuma.
+*.crt -text

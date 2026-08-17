@@ -47,7 +47,7 @@ de spec + plano proprios.
 | C3 | Supabase Auth + refresh de token | Operacao | G | ⚪ | |
 | C4 | RLS realmente ativa | Operacao | G | ⚪ | |
 | C5 | Integracao iFood / Rappi | Operacao | G | ⚪ | |
-| C6 | Migrations de schema nao fazem parte do deploy | Operacao | M | 🟡 | (sem commit — dado, nao codigo) |
+| C6 | Migrations de schema nao fazem parte do deploy | Operacao | M | ✅ | `scripts/migrate.mjs` + `docker/entrypoint.sh` |
 | D1 | Extrair regra de negocio do route.js | Sustentacao | M | ⚪ | |
 | D2 | Quebrar o page.js em telas | Sustentacao | G | ⚪ | |
 
@@ -519,6 +519,56 @@ leitura de teste via REST.
 **Pronto quando:** existe um jeito de saber, sem `psql` manual, se o schema
 de producao esta alinhado com as migrations commitadas — hoje so se
 descobre por acidente (como aconteceu aqui).
+
+---
+
+**✅ RESOLVIDO em 2026-08-18** (`scripts/migrate.mjs` + `docker/entrypoint.sh`).
+Migrations passaram a rodar **automaticamente no boot do container**, antes do
+servidor subir. O passo manual deixou de existir.
+
+Como funciona:
+- `docker/entrypoint.sh` roda `scripts/migrate.mjs` e so entao `exec node server.js`
+- Tabela `public.schema_migrations` registra o que ja foi aplicado (necessario
+  porque `0018_caixa.sql` usa `CREATE TABLE` sem `IF NOT EXISTS` — reexecutar
+  quebraria)
+- **Baseline automatica:** banco com schema mas sem tabela de controle (o caso
+  de producao, migrada na mao ate agora) tem as migrations atuais marcadas como
+  aplicadas, em vez de reexecutadas. Banco vazio roda tudo do zero.
+- **Advisory lock** (`pg_advisory_lock`) serializa containers subindo juntos
+- Cada migration em transacao propria; arquivo vai inteiro numa query (8 delas
+  tem corpo `$$...$$`, split por `;` quebraria as funcoes atomicas)
+- `notify pgrst, 'reload schema'` ao final — sem isso o PostgREST segue servindo
+  o cache antigo e a coluna nova responde "could not find the column in the
+  schema cache", exatamente o erro que o dono viu
+- **Falha em migration derruba o boot (exit 1)**, de proposito: subir com schema
+  errado foi o bug de origem. Excecao: `SUPABASE_DB_URL` ausente apenas AVISA e
+  segue, para que a introducao deste runner nao derrube um deploy que ainda nao
+  tem a variavel configurada
+- `--dry-run` / `MIGRATE_DRY_RUN=1` inspeciona sem escrever (`yarn migrate:dry`)
+
+**TLS:** o pooler do Supabase usa CA propria, entao a validacao padrao do Node
+falha. Em vez de `rejectUnauthorized: false` (que aceitaria qualquer
+certificado, inclusive de interceptador, numa conexao que carrega a senha do
+banco e todo o dado dos clientes), a CA raiz do Supabase foi **fixada** em
+`supabase/prod-ca-2021.crt` — baixada do endpoint oficial sobre HTTPS validado
+por CA publica e conferida contra a raiz que o servidor apresenta (fingerprint
+SHA-256 identico). Verificacao continua LIGADA.
+
+**Validado antes de subir:** imagem construida localmente; runner exercitado
+dentro do container (dry-run contra o banco real); os tres modos de falha
+testados (sem URL -> avisa e segue; provider mongo -> pula; conexao ruim ->
+exit 1). O primeiro build revelou um bug real que teria derrubado o deploy:
+`NODE_PATH` nao afeta `import` de ESM, so `require()` de CommonJS — o driver
+`pg` precisou ir para dentro de `/app/node_modules`.
+
+**⚠️ Acao necessaria no painel:** `SUPABASE_DB_URL` precisa existir nas
+variaveis de ambiente do EasyPanel. A aplicacao nunca precisou dela (usa a API
+REST via `SUPABASE_URL` + service key), entao provavelmente **nao esta la** — e
+sem ela o runner apenas avisa e segue, sem verificar nada.
+
+**Ainda em aberto:** um comando que compare schema esperado vs. real sem subir
+container (util em CI e para auditoria). O runner cobre o caminho do deploy,
+que era o furo real.
 
 ---
 

@@ -41,6 +41,10 @@ backend_test*.py
 test_result.md
 scripts/
 _*.mjs
+# ...exceto o runner de migrations, que roda no boot do container (entrypoint)
+# antes do servidor subir. Sem esta excecao a imagem sobe sem saber migrar e
+# volta o problema que ele existe para resolver.
+!scripts/migrate.mjs
 
 # --- Documentacao (nao afeta o runtime) ---
 docs/
@@ -50,6 +54,11 @@ docs/
 # --- Infra que nao pertence a imagem do app ---
 docker-compose.yml
 supabase/
+# ...exceto o que o runner de migrations precisa ler em runtime: os proprios
+# arquivos SQL e a CA raiz do Supabase (certificado publico, nao e segredo —
+# permite validar TLS de verdade em vez de desligar a verificacao).
+!supabase/migrations/
+!supabase/prod-ca-2021.crt
 
 # --- Sistema operacional ---
 .DS_Store

@@ -32,6 +32,17 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 RUN yarn build
 
+# Arvore de dependencias so do runner de migrations.
+#
+# Fica separada de proposito: `scripts/migrate.mjs` roda no entrypoint, ANTES e
+# FORA do Next, entao o `pg` nunca seria tracado para dentro do bundle
+# standalone (que so inclui o que o build enxergou). Copiar o node_modules
+# inteiro do stage `deps` resolveria, mas arrastaria centenas de MB para uma
+# imagem que so precisa de um driver Postgres.
+FROM node:20-alpine AS migrator-deps
+WORKDIR /migrator
+RUN npm install --no-package-lock --no-audit --no-fund --omit=dev pg@8
+
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
@@ -45,6 +56,22 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # do bundle e do Tailwind). Se um dia ela existir, reintroduzir esta linha —
 # `COPY` de caminho inexistente falha o build.
 
+# Runner de migrations: driver, script, SQLs e a CA do Supabase.
+# Os SQLs sao lidos em runtime (o script varre o diretorio), entao precisam
+# existir na imagem — nao basta terem sido usados no build.
+#
+# O `pg` entra DENTRO de /app/node_modules, e nao numa arvore paralela com
+# NODE_PATH, porque `migrate.mjs` e ESM — e NODE_PATH so vale para o `require()`
+# do CommonJS, sendo ignorado por `import`. A resolucao ESM sobe de
+# /app/scripts/ ate /app/node_modules e acha o driver ali. O COPY mescla (nao
+# substitui) o diretorio: o standalone nao traz `pg`, entao nao ha colisao.
+COPY --from=migrator-deps --chown=nextjs:nodejs /migrator/node_modules ./node_modules
+COPY --chown=nextjs:nodejs scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --chown=nextjs:nodejs supabase/migrations ./supabase/migrations
+COPY --chown=nextjs:nodejs supabase/prod-ca-2021.crt ./supabase/prod-ca-2021.crt
+COPY --chown=nextjs:nodejs docker/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
@@ -54,4 +81,5 @@ ENV PORT=3000 HOSTNAME=0.0.0.0
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "server.js"]
+# Entrypoint migra o schema e so entao entrega o processo ao servidor.
+CMD ["./entrypoint.sh"]
