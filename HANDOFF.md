@@ -1,6 +1,7 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-17 (Custo e Margem/CMV completo, 9/9 tasks — ver §0)
+Ultima atualizacao: 2026-08-18 (analise competitiva + imagem do cardapio +
+seguranca do webhook do WhatsApp — ver §0)
 
 ## Como usar este arquivo
 
@@ -46,6 +47,43 @@ testes inteira passando). Commits: `ac17676`, `3019916`, `488ac50`, `5add47c`,
 `458d2a9`, `917800a`, `75ef358`, `1b2d493`. Codigo no ar nos dois backends:
 MongoDB (dev local) e Supabase (producao EasyPanel, deploy automatico por
 push). Detalhe completo na secao abaixo.
+
+**Whole-branch review do CMV encontrou 1 issue importante, corrigida no dia
+seguinte** (`2544610`, 2026-08-18): o bloco `cmv` em `GET /dashboard/metrics`
+nao tinha permission gate — ATENDENTE e COZINHA (roles com `dashboard` mas sem
+`relatorios`/`financeiro`) recebiam custo/margem, a classe de dado mais
+sensivel do sistema. Corrigido com o mesmo gate que `/financeiro/relatorio`
+ja usava. Junto (`9d6202d`): `backend_test_custo.py` movido pra `tests/`
+(nao era descoberto por `tests/run_all.py`, que so busca ali) e roadmap deste
+arquivo atualizado.
+
+**Analise competitiva + 2 achados corrigidos em 2026-08-18**
+(`docs/ANALISE-COMPETITIVA.md`) — leitura do codigo (nao suposicao) comparando
+o produto aos lideres do nicho (Anota AI, Saipos, Goomer). Achado central: a
+gestao (KDS/caixa/estoque/CMV/comanda) esta acima da media do mercado, mas as
+duas pontas que o posicionamento promete — WhatsApp e cardapio QR — eram casca
+sem motor. Dois dos tres achados ja avancaram no mesmo dia:
+
+- **Imagem do cardapio digital** (`4d262ce`) — o cardapio publico so exibia
+  lista de produtos, sem carrinho nem link de pedido. Decisao do dono: fase 1
+  (esta) deixa o restaurante subir uma foto/poster do cardapio impresso, com
+  o mesmo link/QR ja existente (mesa + delivery) levando direto pra ela, mais
+  um banner de itens "indisponivel hoje" por cima (reaproveita o toggle
+  `disponivel` ja existente). Carrinho/checkout/pagamento ficam para uma fase
+  2 separada. Migration `0021_cardapio_imagem.sql`, bucket Storage `cardapios`
+  proprio (5MB). 10/10 testes (`tests/backend_test_cardapio.py`).
+- **Webhook do WhatsApp sem verificacao nenhuma** (`14c4050`) — `/whatsapp/webhook`
+  criava cliente+conversa+mensagem so com `?tenant=<empresa_id>` no corpo,
+  diferente do webhook do Mercado Pago (mesmo arquivo, 20 linhas acima) que ja
+  assinava/deduplicava/reconsultava a fonte. Quem obtivesse um `empresa_id`
+  injetava mensagem forjada na caixa de atendimento de qualquer empresa.
+  Corrigido com o mesmo padrao do Mercado Pago: `webhookSecret` gerado
+  automaticamente por empresa, exigido via `?secret=...` (`timingSafeEqual`),
+  dedupe por `key.id`. `tests/backend_test_v3.py` atualizado para o novo
+  contrato. 35/35 testes.
+- **Automacao do WhatsApp** (item restante do achado #1) fica a cargo do n8n
+  — decisao do dono, ainda a executar. Arquitetura ja preparada
+  (`lib/integrations/n8n.js` ja publica eventos de dominio).
 
 ---
 
@@ -394,16 +432,21 @@ f2424d3 plan: Estoque MVP implementation — 12 tasks
 
 ---
 
-**Roadmap (revisado em 2026-08-14 apos analise de especialista)**
+**Roadmap (revisado em 2026-08-18 apos analise competitiva —**
+**`docs/ANALISE-COMPETITIVA.md`)**
 
 Concluido e no ar: KDS (11/11), Delivery (12/12), Caixa (14/14), Estoque
-(12/12), Cardapio Digital (7/7), Custo e Margem/CMV (9/9, ver §0).
+(12/12), Cardapio Digital (7/7 + imagem/indisponiveis 2026-08-18), Custo e
+Margem/CMV (9/9, ver §0).
 
 | # | Frente | Estado | Por que |
 |---|--------|--------|---------|
-| 1 | **Ficha tecnica (insumos)** | ⚪ nao iniciada | Faz o estoque funcionar para comida preparada, nao so revenda. Fecha o CMV real (hoje o CMV so cobre produtos com custo direto cadastrado). |
-| 2 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
-| 3 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
+| 1 | **Cardapio QR com carrinho (fase 2)** | ⚪ nao iniciada | `POST /cardapio/:slug/pedido` publico + cadastro de cliente + pagamento. Imagem/banner (fase 1, ✅) tirou a barreira de entrada; isto fecha o loop de venda de verdade. Ver `ANALISE-COMPETITIVA.md` §2.2/§4 |
+| 2 | **Automacao do WhatsApp via n8n** | ⚪ nao iniciada | Decisao do dono (2026-08-18): atendente automatico fica no n8n, nao no `route.js`. Arquitetura ja publica eventos (`lib/integrations/n8n.js`); falta o fluxo do lado de la. Ver `ANALISE-COMPETITIVA.md` §2.1 |
+| 3 | **Ficha tecnica (insumos)** | ⚪ nao iniciada | Faz o estoque funcionar para comida preparada, nao so revenda. Fecha o CMV real (hoje o CMV so cobre produtos com custo direto cadastrado). |
+| 4 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
+| 5 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
+| 6 | **Rate limiting** | ⚪ nao iniciada | `/auth/login` (forca bruta) e `/auth/register` (criacao ilimitada de tenants) sem limite nenhum. Ver `ANALISE-COMPETITIVA.md` §2.3 |
 
 **Debitos tecnicos conhecidos** — todos catalogados com evidencia, criterio de
 pronto e ordem de ataque em **`docs/PROFISSIONALIZACAO.md`**. Resumo:
@@ -748,7 +791,8 @@ embutidos na imagem.
 | Delivery (12 tasks) | **COMPLETO** (2026-08-13) |
 | Estoque (12 tasks) | **COMPLETO** (2026-08-14) ✅ |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
-| Realtime / Storage alem de logo | **NAO INICIADOS** |
+| Storage alem de logo | **Imagem do cardapio** (2026-08-18), bucket `cardapios` proprio |
+| Realtime | **NAO INICIADO** |
 
 ## 7.1 Baseline de testes
 
