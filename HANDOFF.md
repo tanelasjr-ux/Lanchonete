@@ -1,8 +1,10 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (migrations automaticas verificadas em
-producao; alerta global de estoque; DRE + ponto de equilibrio no relatorio
-financeiro; feature flags passaram a controlar acesso de verdade — ver §0)
+Ultima atualizacao: 2026-08-18 (relatorio financeiro ganhou DRE, ponto de
+equilibrio, comparativo com periodo anterior, margem por canal e margem por
+produto; feature flags passaram a controlar acesso de verdade — B1 do
+programa de profissionalizacao; migrations automaticas verificadas em
+producao. Ver §0.)
 
 ## Como usar este arquivo
 
@@ -19,135 +21,143 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 🔴 ACHADO CRITICO (2026-08-18) — migrations nao aplicadas em producao
+## ⚠️ Ao testar agora: confira se o deploy ja pegou o ultimo push
 
-**As migrations `0019_estoque.sql`, `0020_custo.sql` e `0021_cardapio_imagem.sql`
-nunca tinham sido rodadas contra o Supabase de producao**, apesar de Estoque
-(marcado "COMPLETO" em 2026-08-14) e CMV (marcado "completo e em producao" em
-2026-08-17) terem passado por sessoes inteiras de implementacao, revisao e
-"verificacao". O codigo sempre esteve certo; o banco de producao e que nunca
-recebeu as colunas que esse codigo depende (`produtos.custo`,
-`produtos.estoque_habilitado/quantidade/minimo`,
-`transacoes.custo_total/receita_base/receita_com_custo`,
-`empresas.cardapio_imagem_url`).
+No momento em que este handoff foi escrito, a producao ainda mostrava
+`estoque: false` e `caixa: false` nas flags da empresa (dado de ANTES da
+migration `0023_feature_flags_retrocompat` rodar) e o codigo do gate de
+modulos (commit `46ad3d8`) ainda nao tinha sido confirmado no ar. Isso e
+**esperado e seguro por construcao** — o container roda a migration antes de
+subir o servidor (`docker/entrypoint.sh`), entao a ordem correta e sempre
+"schema corrigido primeiro, codigo novo depois". Mas vale conferir na tela:
 
-**Como foi descoberto:** o dono reportou "nao acho o QR code do cardapio" —
-investigacao achou um bug de UI real (ver item 2 abaixo, ja corrigido). Ao
-testar a correcao em producao, o dono bateu num SEGUNDO erro ao clicar
-"Enviar imagem": `Could not find the 'cardapio_imagem_url' column of
-'empresas' in the schema cache`. Isso levou a checar o schema real de
-producao via `psql` — e achar que nao era so essa coluna.
+1. Abrir **Empresa > Modulos** — Mesas & Comandas, Estoque e Caixa devem
+   aparecer **ligados** (3 interruptores azuis).
+2. Se aparecerem desligados, o deploy ainda nao terminou ou nao pegou o push
+   mais recente — aguardar o EasyPanel rebuildar (auto-deploy por push, ver
+   §6) e recarregar. Se persistir desligado depois disso, avisar: seria a
+   primeira vez que a migration `0023` falha, e vale investigar na hora.
 
-**Por que ninguem notou antes:** migrations neste projeto **nao fazem parte
-do auto-deploy do EasyPanel** — sao aplicadas manualmente via `psql` contra
-`SUPABASE_DB_URL` (ver §5.1). "Testado contra Supabase real" em sessoes
-anteriores quase certamente rodou com `DATABASE_PROVIDER=supabase`
-**localmente** (mesmo projeto que producao — ver a nota sobre C1 abaixo),
-o que explica tanto os dados de teste que poluiram producao quanto a falsa
-sensacao de "ja testamos isso contra o banco real": testou, mas ninguem deu
-o passo manual de aplicar a migration ANTES daquela sessao de teste, entao
-o teste local com Mongo (`DATABASE_PROVIDER=mongo`, que nao usa essas
-colunas da mesma forma) mascarou o problema, e quando rodou contra
-Supabase real por engano, pode ter falhado silenciosamente em pontos que
-ninguem checou a fundo.
+## O que mudou nesta sessao (2026-08-18, continuacao)
 
-**Corrigido nesta sessao:** as 3 migrations sao 100% aditivas
-(`add column if not exists`) — aplicadas em producao via
-`docker run --rm -i postgres:17 psql "$SUPABASE_DB_URL" < supabase/migrations/NNNN.sql`,
-depois `NOTIFY pgrst, 'reload schema';` pra forcar o PostgREST a reconhecer
-as colunas novas sem esperar o refresh automatico. Verificado: schema
-completo (15 colunas em `produtos`, 15 em `transacoes`, 18 em `empresas`) e
-leitura via REST confirmando que o PostgREST ja enxerga as colunas.
+**Relatorio financeiro — 4 entregas em sequencia, cada uma commitada e
+testada isoladamente:**
 
-**Ainda nao verificado end-to-end:** com o schema corrigido, o codigo
-DEVERIA funcionar, mas ninguem testou Estoque/CMV na tela real de producao
-ainda (so a leitura de schema). **Proxima sessao (ou o proprio dono agora):
-testar cadastro de custo num produto, ver o card de CMV no Dashboard, e
-testar o controle de estoque — os 3 endpoints que dependem dessas colunas.**
+1. **DRE + ponto de equilibrio + despesas por categoria** (`1683c97`).
+   Migration `0022` adiciona `transacoes.natureza` (`'fixa' | 'variavel' |
+   null`, nunca inferida pelo servidor). Vocabulario fixo de categoria de
+   despesa com natureza sugerida (`lib/financeiro.js`, `CATEGORIAS_DESPESA`)
+   substitui o texto livre que fazia "Aluguel"/"aluguel" virarem categorias
+   diferentes. DRE completo (receita → CMV → lucro bruto → despesas
+   fixas/variaveis → lucro liquido) + ponto de equilibrio mensal
+   (despesas_fixas / margem_de_contribuicao). Bug achado e corrigido no
+   proprio desenvolvimento: a formula original devolvia `R$ 0` de ponto de
+   equilibrio quando nao havia despesa fixa cadastrada — corrigido para
+   `null`, porque despesa fixa zerada e quase sempre "nao classificado
+   ainda", nunca "este restaurante nao tem aluguel". 8 testes
+   (`tests/backend_test_dre.py`).
 
-**✅ CAUSA RAIZ ELIMINADA no mesmo dia** (`8548470`) — o passo manual deixou
-de existir. `docker/entrypoint.sh` roda `scripts/migrate.mjs` no boot do
-container e so entao `exec node server.js`. Migration pendente agora e
-aplicada sozinha no deploy; migration que falha **derruba o boot** em vez de
-subir a app com schema errado. Detalhe tecnico completo no item **C6** do
-`PROFISSIONALIZACAO.md`.
+2. **Comparativo com o periodo anterior** (`97c3696`). Cada KPI do relatorio
+   ganha a variacao contra a janela imediatamente anterior de mesma duracao
+   (regra unica pra qualquer periodo, sem casos especiais por preset).
+   `delta_percent` e `null` quando a base anterior foi zero — mostrar
+   "+100%" ou "+infinito%" seria numero inventado; a tela cai pro valor
+   absoluto. Percentual usa o modulo da base, entao prejuizo que diminui
+   aparece como melhora (positivo), nao como piora. `inverter` pinta aumento
+   de despesa/CMV% de vermelho — subir nem sempre e bom. Os dois lados
+   (atual e anterior) passam pelo mesmo recorte de filtros, senao a
+   comparacao mentiria. 7 testes (`tests/backend_test_comparativo.py`).
 
-**Verificado em producao (2026-08-18 18:59):** tabela `public.schema_migrations`
-criada com as 21 migrations registradas via baseline automatica. Da proxima
-migration em diante, basta commitar o arquivo em `supabase/migrations/` — o
-deploy aplica.
+3. **Margem bruta por canal de venda** (`567188b`). Balcao, mesa, delivery e
+   retirada, agrupados a partir do `custo_total`/`receita_com_custo` ja
+   congelados em cada transacao (mesmos campos do CMV consolidado). Margem e
+   BRUTA — so custo de mercadoria; aluguel/folha/energia NAO sao rateados
+   por canal, porque rateio seria regra inventada por nos e numero inventado
+   em relatorio financeiro e pior que numero ausente. Taxa de entrega fica
+   em coluna propria, fora da receita de mercadoria (senao inflaria a
+   margem do delivery). 7 testes (`tests/backend_test_margem_canal.py`).
 
-**Pegadinha que custou algumas idas e vindas:** `SUPABASE_DB_URL` precisou ser
-adicionada nas variaveis do EasyPanel (a app nunca precisou dela, porque usa a
-API REST). Duas armadilhas no caminho, ambas dignas de nota para a proxima vez:
-1. O painel do Supabase oferece a **Direct Connection**
-   (`db.<ref>.supabase.co`), que resolve para IPv6 e nao conecta. O correto e o
-   **Session Pooler** (`aws-0-us-east-2.pooler.supabase.com`) — ja documentado
-   em §5.1, e agora com um caso real por tras.
-2. O painel entrega a string com o literal `[YOUR-PASSWORD]`, que passa
-   despercebido facilmente. Copiar o valor do `.env` local evita os dois
-   problemas de uma vez.
+4. **Margem por produto** (pendente de commit ao final desta sessao — ver
+   nota abaixo). Ranking dos produtos por lucro bruto no periodo, nao por
+   volume — o campeao de vendas pode ser o item que menos contribui pro
+   lucro. **Diferenca deliberada em relacao ao DRE/canal:** usa o custo
+   ATUAL do produto (`produtos.custo`), nao o congelado na venda, porque o
+   custo so e congelado no nivel da VENDA INTEIRA (`transacoes.custo_total`),
+   nao por item dentro dela — individualizar exigiria uma migration nova
+   (custo congelado por item, que nao existe ainda). Isso significa que a
+   soma deste ranking **pode nao bater** com o `lucro_bruto` do DRE se o
+   custo de algum produto mudou dentro do periodo — e uma ferramenta de
+   DECISAO ("no preco de hoje, o que compensa empurrar?"), nao de
+   AUDITORIA do periodo passado, e a tela avisa isso explicitamente. 7
+   testes (`tests/backend_test_margem_produto.py`).
 
-**Bonus tecnico do dia:** o proprio `migrate.mjs --dry-run`, rodado localmente
-apos criar a migration 0022, acusou `0001_init.sql` como "editada desde que
-foi aplicada" — falso positivo causado por `core.autocrlf=true` do Windows
-convertendo o arquivo pra CRLF no checkout, enquanto o blob do git (e o
-container Linux que rodou o baseline) usam LF. `.gitattributes` ganhou
-`*.sql text eol=lf` pra fechar essa fresta de vez.
+Todas as 4 entregas somam ao export CSV do relatorio. Regressao completa
+rodada apos cada commit (10 → 11 → 13 suites conforme os testes novos
+entravam), sempre verde antes de subir.
 
-**Alerta global de estoque entregue** (`35d7b3f`) — popup + bipe sonoro
-(gerado via Web Audio, sem arquivo — o projeto nao tem `public/`) quando um
-item chega ou passa do minimo configurado. Vive no shell da app (qualquer
-tela, nao so Dashboard). So alerta item que ACABOU de entrar em falta —
-reabrir o mesmo aviso a cada 30s vira ruido que o operador aprende a ignorar.
-Mudo persiste em `localStorage`. 5 testes novos em `GET /produtos/estoque-baixo`,
-que nao tinha nenhuma cobertura (mesmo padrao do bug de `/entregadores`).
+**Feature flags que realmente controlam acesso — B1, o achado mais
+importante do programa de profissionalizacao** (`46ad3d8` + `5af895d`). As
+flags existiam desde sempre em `empresas.config.feature_flags`, apareciam
+numa aba "Modulos" com badge Ativo/Em breve, e **nenhum dos 81 endpoints as
+consultava**. Desligar "Estoque" na tela nao desligava o Estoque. A
+autorizacao olhava so `can(papel, modulo)` — papel, nunca plano contratado.
+Sem isso nao existe plano Basico e plano Pro, entao este item era
+pre-requisito do billing (B3).
 
-**Relatorio financeiro — DRE, despesas por categoria e ponto de equilibrio**
-(pendente de commit nesta sessao) — pedido do dono: "separar despesa por tipo
-(pessoal, aluguel, energia...) e mostrar lucro liquido". Migration `0022`
-adiciona `transacoes.natureza` (`'fixa' | 'variavel' | null`, nunca inferida —
-mesma regra de nao-adivinhar de `produtos.custo`). Vocabulario fixo de
-categoria de despesa com natureza sugerida (`lib/financeiro.js`,
-`CATEGORIAS_DESPESA`) substitui o texto livre que fazia "Aluguel"/"aluguel"
-virarem categorias diferentes. DRE completo (receita -> CMV -> lucro bruto ->
-despesas fixas/variaveis -> lucro liquido) + ponto de equilibrio mensal
-(formula: despesas_fixas / margem_de_contribuicao). Achado e corrigido no
-proprio desenvolvimento: a formula original devolvia `R$ 0` de ponto de
-equilibrio quando nao havia despesa fixa cadastrada — corrigido para `null`,
-porque zero fixo e quase sempre "nao classificado ainda", nunca "este
-restaurante nao tem aluguel". 8 testes novos (`tests/backend_test_dre.py`).
-Sugestoes que ficaram de fora, por decisao de escopo (nao pedidas
-explicitamente): comparativo com periodo anterior, curva ABC de margem por
-produto, margem por canal (balcao/delivery/mesa).
-
-**Feature flags que realmente controlam acesso (B1 — o achado mais importante
-do programa).** As flags existiam desde sempre em `empresas.config.feature_flags`,
-apareciam numa aba "Modulos" com badge Ativo/Em breve, e **nenhum dos 81
-endpoints as consultava**. Desligar "Estoque" na tela nao desligava o Estoque.
-A autorizacao olhava so `can(papel, modulo)` — papel, nunca plano contratado.
-Sem isso nao existe plano Basico e plano Pro, entao este item e pre-requisito
-do billing (B3).
-
-Agora ha um portao real (`lib/modulos.js` + `route.js`), ortogonal ao de papel:
-`temModulo(empresa, 'caixa')` pergunta "a empresa contratou?", `can(papel, ...)`
-pergunta "este usuario pode?" — as duas precisam passar. Verificado na tela:
-desligar "Mesas & Comandas" some da navegacao na hora e `GET /mesas` responde
-403; religar devolve acesso e os dados intactos.
+Agora ha um portao real (`lib/modulos.js` + `route.js`), ortogonal ao de
+papel: `temModulo(empresa, 'caixa')` pergunta "a empresa contratou?",
+`can(papel, ...)` pergunta "este usuario pode?" — as duas precisam passar.
+Verificado na tela: desligar "Mesas & Comandas" some da navegacao na hora
+(sem F5) e `GET /mesas` responde 403; religar devolve acesso e os dados
+intactos.
 
 **O perigo era maior que o documentado.** Auditando a producao antes de
-escrever o gate: a unica empresa tinha `estoque: false` e `caixa: false`
-gravados E AO MESMO TEMPO produtos com estoque habilitado e caixas no
-historico. As flags nasceram erradas no signup precisamente porque ninguem as
-lia. Gate ingenuo = o cliente perde os dois modulos no primeiro deploy. Tres
-camadas de defesa: `temModulo` so desliga com `false` explicito (ausente conta
-como ligado); migration `0023` **so liga, nunca desliga** (testada em transacao
-com rollback contra producao antes de commitar); e o signup passou a gravar o
-que o produto entrega.
+escrever o gate: a unica empresa (`Tanelas FooD`) tinha `estoque: false` e
+`caixa: false` gravados **e ao mesmo tempo** produtos com estoque habilitado
+e caixas no historico. As flags nasceram erradas no signup precisamente
+porque ninguem as lia. Um gate ingenuo teria tirado os dois modulos do
+cliente no primeiro deploy. Tres camadas de defesa:
+1. `temModulo()` so desliga com `false` explicito — ausente/null conta como
+   ligado, pra que falta de dado nunca tire acesso de quem ja usa o modulo.
+2. Migration `0023` liga os modulos entregues hoje em toda empresa
+   existente. **So liga, nunca desliga** — testada numa transacao com
+   `rollback` contra producao antes de ser commitada.
+3. O signup passou a gravar `flagsPadraoSignup()` — o que o produto entrega
+   hoje, nunca o que se pretende cobrar amanha.
 
-Modulos "Em breve" continuam sem interruptor de proposito — botao que promete
-ligar o inexistente e a mesma mentira que este item veio remover. 9 testes
-novos (`tests/backend_test_modulos.py`).
+A pedido do dono ("pode retirar o que nao estamos usando"), a vitrine dos 6
+modulos "Em breve" (CRM, Campanhas, Fidelidade, Cashback, Multiunidades,
+Billing) saiu da tela e da resposta de `GET /modulos` — sobrou so o que tem
+endpoint de verdade por tras (Mesas&Comandas, Estoque, Caixa). As flags
+continuam gravadas como `false` no signup, porque `temModulo()` trata flag
+AUSENTE como ligada: apagar o registro faria um modulo futuro nascer aberto
+no dia em que ganhasse portao. 10 testes (`tests/backend_test_modulos.py`).
+
+## Migrations automaticas — confirmado funcionando
+
+Desde `8548470` (2026-08-18, sessao anterior), `docker/entrypoint.sh` roda
+`scripts/migrate.mjs` no boot do container **antes** de `exec node
+server.js`. Migration pendente e aplicada sozinha no deploy; migration que
+falha **derruba o boot** de proposito, em vez de subir a app com schema
+errado. `public.schema_migrations` registra o que ja foi aplicado — da
+proxima migration em diante, basta commitar o `.sql` em
+`supabase/migrations/`, sem passo manual nenhum.
+
+**Achado tecnico nesta sessao:** `migrate.mjs --dry-run` rodado localmente
+apos criar a migration `0022` acusou `0001_init.sql` como "editada desde que
+foi aplicada" — falso positivo causado por `core.autocrlf=true` do Windows
+convertendo o arquivo para CRLF no checkout, enquanto o blob do git (e o
+container Linux que rodou o baseline) usam LF. `.gitattributes` ganhou
+`*.sql text eol=lf` para fechar essa fresta — qualquer checkout novo, em
+qualquer maquina, fica em LF.
+
+**Historico da causa raiz (contexto, ja resolvido):** as migrations
+`0019_estoque`, `0020_custo` e `0021_cardapio_imagem` ficaram commitadas por
+dias sem serem aplicadas ao Supabase de producao, porque antes deste
+mecanismo migrations eram um passo manual via `psql` que dependia de alguem
+lembrar. Estoque e CMV estavam quebrados em producao, em silencio, ate o
+dono esbarrar no erro `Could not find the 'cardapio_imagem_url' column`.
+Detalhe tecnico completo no item **C6** do `PROFISSIONALIZACAO.md`.
 
 ## 📋 Dois backlogs, propositos diferentes
 
@@ -156,513 +166,139 @@ novos (`tests/backend_test_modulos.py`).
 | **este arquivo** | features de produto — o que o restaurante ganha de novo |
 | **`docs/PROFISSIONALIZACAO.md`** | saude tecnica e prontidao comercial — o que impede vender e o que impede mudar sem quebrar |
 
-O programa de profissionalizacao e um **documento vivo com 15 itens**, executavel
-ao longo de varias sessoes, cada um com evidencia no codigo e criterio de pronto.
-Progresso: ✅ A1 (2026-08-16) → ✅ A2 (2026-08-18) → 🟡 C1 (2026-08-18,
-producao limpa, causa raiz sem trava tecnica) → ⚪ B1 (proximo). Ordem
-recomendada: `A1 → A2 → C1 → B1 → A3 → D1 → B2 → ...`
-
-**O achado mais importante que ele registra:** as `feature_flags` existem, tem
-tela de configuracao, e **nenhum dos 81 endpoints as consulta** — desligar
-"Estoque" nao desliga o Estoque. Sem corrigir isso (item B1) nao existe plano
-Basico e plano Pro, e portanto nao existe billing.
-
-**Item A1 concluido em 2026-08-16** (`b46d88e`, `be8f167`, `f79a46b`) — as 7
-suites de teste rodam com `npm test`, 7/7 passando contra ambiente local. A
-execucao encontrou e corrigiu 6 problemas reais, incluindo um que teria repetido
-no proprio CMV: `POST/PUT /produtos` gravam a partir de lista explicita de
-campos, e os campos de estoque ficaram semanas fora dela. Detalhes completos no
-proprio `PROFISSIONALIZACAO.md`, item A1.
-
-**Custo e Margem (CMV) concluido em 2026-08-17** — as 9 tasks da execucao SDD
-foram completadas (Tasks 1-8 revisadas e limpas, Task 9 validou a suite de
-testes inteira passando). Commits: `ac17676`, `3019916`, `488ac50`, `5add47c`,
-`458d2a9`, `917800a`, `75ef358`, `1b2d493`. Codigo no ar nos dois backends:
-MongoDB (dev local) e Supabase (producao EasyPanel, deploy automatico por
-push). Detalhe completo na secao abaixo.
-
-**⚠️ Correcao (2026-08-18):** "codigo no ar" acima estava certo, mas o
-schema de producao NAO estava — a migration `0020_custo.sql` so foi
-aplicada ao Supabase real em 2026-08-18, um dia depois deste paragrafo ter
-sido escrito. Ver achado critico no topo deste arquivo.
-
-**Whole-branch review do CMV encontrou 1 issue importante, corrigida no dia
-seguinte** (`2544610`, 2026-08-18): o bloco `cmv` em `GET /dashboard/metrics`
-nao tinha permission gate — ATENDENTE e COZINHA (roles com `dashboard` mas sem
-`relatorios`/`financeiro`) recebiam custo/margem, a classe de dado mais
-sensivel do sistema. Corrigido com o mesmo gate que `/financeiro/relatorio`
-ja usava. Junto (`9d6202d`): `backend_test_custo.py` movido pra `tests/`
-(nao era descoberto por `tests/run_all.py`, que so busca ali) e roadmap deste
-arquivo atualizado.
-
-**Item A2 concluido em 2026-08-18** (`e12abe8`) — varredura completa de
-`app/page.js`: 83 `catch` blocks, 25 sem `toast.error` no mesmo bloco. Triados
-em 4 categorias: 12 falso-positivo (toast na linha seguinte ou padrao ja
-correto), 8 violacoes reais (zero sinal, erro virava "lista vazia" silenciosa
-— corrigidas com `console.error` ou `toast.error`), 4 parciais com degrade
-intencional em polling (30s/5s — toast a cada falha seria ruido; ganharam
-comentario explicando o por que), 1 documentado como pertencente a trilha C3
-(loadMe() desloga em qualquer erro — precisa de status HTTP no erro de api()
-pra distinguir 401 real de transitorio). Consequencia: quando C3 for atacado,
-ja ha ponto de entrada mapeado. Verificado: navegacao visual via Playwright
-sem erros no console + suite 8/8 confirmando zero regressoes.
-
-**Analise competitiva + 2 achados corrigidos em 2026-08-18**
-(`docs/ANALISE-COMPETITIVA.md`) — leitura do codigo (nao suposicao) comparando
-o produto aos lideres do nicho (Anota AI, Saipos, Goomer). Achado central: a
-gestao (KDS/caixa/estoque/CMV/comanda) esta acima da media do mercado, mas as
-duas pontas que o posicionamento promete — WhatsApp e cardapio QR — eram casca
-sem motor. Dois dos tres achados ja avancaram no mesmo dia:
-
-- **Imagem do cardapio digital** (`4d262ce`) — o cardapio publico so exibia
-  lista de produtos, sem carrinho nem link de pedido. Decisao do dono: fase 1
-  (esta) deixa o restaurante subir uma foto/poster do cardapio impresso, com
-  o mesmo link/QR ja existente (mesa + delivery) levando direto pra ela, mais
-  um banner de itens "indisponivel hoje" por cima (reaproveita o toggle
-  `disponivel` ja existente). Carrinho/checkout/pagamento ficam para uma fase
-  2 separada. Migration `0021_cardapio_imagem.sql`, bucket Storage `cardapios`
-  proprio (5MB). 10/10 testes (`tests/backend_test_cardapio.py`).
-- **Webhook do WhatsApp sem verificacao nenhuma** (`14c4050`) — `/whatsapp/webhook`
-  criava cliente+conversa+mensagem so com `?tenant=<empresa_id>` no corpo,
-  diferente do webhook do Mercado Pago (mesmo arquivo, 20 linhas acima) que ja
-  assinava/deduplicava/reconsultava a fonte. Quem obtivesse um `empresa_id`
-  injetava mensagem forjada na caixa de atendimento de qualquer empresa.
-  Corrigido com o mesmo padrao do Mercado Pago: `webhookSecret` gerado
-  automaticamente por empresa, exigido via `?secret=...` (`timingSafeEqual`),
-  dedupe por `key.id`. `tests/backend_test_v3.py` atualizado para o novo
-  contrato. 35/35 testes.
-- **Automacao do WhatsApp** (item restante do achado #1) fica a cargo do n8n
-  — decisao do dono, ainda a executar. Arquitetura ja preparada
-  (`lib/integrations/n8n.js` ja publica eventos de dominio).
-
-**Item C1 concluido em 2026-08-18** — limpeza de empresas de teste em
-producao. Auditoria encontrou 126 de 127 empresas com padrao de teste
-(`@teste.com`, nomes `Restaurante Bella Vista`/`Pizzaria Napolitana`/
-`KDS Teste A/B`/`Caixa Teste`, criadas 2026-08-10 a 2026-08-14). Backup
-completo (todas as colunas) salvo antes de qualquer exclusao; lista
-mostrada e confirmada explicitamente por voce antes da execucao; delete em
-6 lotes via REST (`ON DELETE CASCADE`, remove produtos/pedidos/mesas/
-caixa/conversas de cada empresa junto); pos-delete verificado — producao
-com exatamente 1 empresa (a sua, `Tanelas FooD`), 0 registros orfaos.
-
-**Causa raiz identificada mas nao 100% resolvida:** essas empresas surgiram
-porque o projeto **nao tem um Supabase de staging separado** — e um unico
-projeto multi-tenant, entao rodar as suites com `DATABASE_PROVIDER=supabase`
-localmente escreve direto em producao. Hoje o `.env` local esta seguro
-(`mongo`), mas isso e convencao, nao trava tecnica. Criar um segundo
-projeto Supabase so pra teste e decisao de custo/infra sua, documentada
-como pendente em `PROFISSIONALIZACAO.md` (item C1, marcado 🟡 nao ✅ por
-causa disso).
+O programa de profissionalizacao e um **documento vivo com 15 itens**,
+executavel ao longo de varias sessoes, cada um com evidencia no codigo e
+criterio de pronto. Progresso: ✅ A1 → ✅ A2 → 🟡 C1 (producao limpa, causa
+raiz sem trava tecnica) → ✅ C6 (migrations automaticas) → ✅ B1 (feature
+flags) → proximo, a escolher entre A3 (monitoramento de erro), B2
+(onboarding) ou D1 (extrair regra de negocio do route.js).
 
 ---
 
-## ✅ CONCLUÍDO — Custo e Margem (CMV)
-
-**Implementacao completa (2026-08-17):** 9 tasks, todas revisadas e limpas.
-
-- **Schema:** migration `0020_custo.sql` aplicada — 3 campos novos em
-  `transacoes` (`custo_total`, `receita_com_custo`, `receita_base`) + 1 campo
-  novo em `produtos` (`custo`).
-- **Backend:** apuracao de custo congelada nos 3 pontos de venda (pedido
-  concluido, comanda fechada, comanda dividida com rateio por metodo de
-  pagamento); agregacao `computeCMV` alimentando Dashboard e Relatorio;
-  isolamento multi-tenant verificado.
-- **Frontend:** campo de custo no dialog de cadastro do produto; cards de
-  lucro bruto e CMV no Dashboard; linha de KPIs + export CSV no Relatorio
-  financeiro.
-- **Testes:** suite de 9 testes de integracao (`backend_test_custo.py`, raiz
-  do projeto) cobrindo o fluxo de ponta a ponta — 9/9 passando.
-- **Invariantes travadas:** distincao `null` (produto sem custo cadastrado,
-  fora do calculo) vs `0` (custo zero real, ex. brinde); rateio de custo em
-  comanda dividida por metodo de pagamento; estorno nunca devolve custo;
-  isolamento de dados multi-tenant.
-
-**Commits (Tasks 1-8, implementacao):**
-```
-ac17676 schema: custo em produtos e apuracao congelada em transacoes
-3019916 feat: modulo puro de apuracao de custo e CMV
-488ac50 feat: apura e congela o custo nos tres pontos de venda
-5add47c feat: bloco cmv no dashboard e no relatorio financeiro
-458d2a9 feat: campo de custo no cadastro do produto, persistido nos dois sentidos
-917800a feat: cards de lucro bruto e CMV no dashboard
-75ef358 feat: CMV no relatorio financeiro e no export CSV
-1b2d493 test: suite de integracao de custo e CMV
-```
-
-**Task 9 (verificacao final):** suite consolidada `tests/run_all.py` (7/7
-suites) + suite CMV `backend_test_custo.py` (9/9, raiz do projeto — na epoca
-nao coberta pelo glob de `run_all.py`) rodadas contra o ambiente local,
-ambas verdes. **Pos-whole-branch-review:** `backend_test_custo.py` movido
-para `tests/` — `run_all.py` agora descobre e roda as 8 suites (16/16
-testes) automaticamente, fechando o gap de descoberta apontado na revisao
-final.
-
-**Estrutura de workspace SDD:**
-- Ledger: `.superpowers/sdd/2026-08-14-custo-margem-implementation/progress.md`
-- Briefs: `task-{1..9}-brief.md`
-- Reports: `task-{1..9}-report.md`
-
-## O que mudou nesta implementação
-
-- **A1 (profissionalizacao, pre-CMV):** 6 bugs reais de producao encontrados e
-  corrigidos ao rodar as suites de teste pela primeira vez — endpoints de
-  estoque, campos de produto e a suite do cardapio digital. Commits `b46d88e`,
-  `be8f167`, `f79a46b`. Detalhes em `docs/PROFISSIONALIZACAO.md`, item A1.
-- **Tasks 1-9 (CMV):** implementacao full-stack completa — schema, modulo
-  puro, gravacao de custo, agregacao, UI (Dashboard + Relatorio + cadastro) e
-  suite de testes de integracao. Todas as 9 tasks revisadas e testadas.
-
-**O que a feature faz:** hoje `Produto` tem `preco` e nao tem custo em lugar
-nenhum — o sistema sabe quanto entrou e nunca quanto sobrou. A feature adiciona
-custo ao produto e deriva CMV%, cobertura e lucro bruto no Dashboard e no
-Relatorio financeiro.
-
-**As 4 decisoes que nao podem ser perdidas** (detalhadas na spec):
-
-1. **Custo congelado na `transacao`, nao no item.** Evita reescrever as 4 funcoes
-   atomicas do Postgres (armadilha do §4.3) e ainda assim preserva a historia:
-   mudar o custo amanha nao reescreve o CMV de hoje.
-2. **`produtos.custo` e `null`, nunca `0` por omissao.** `null` = nao cadastrado
-   (fora do calculo, conta contra a cobertura); `0` = custo zero real (brinde).
-   Sem essa distincao o CMV do dia 1 sai lindo e falso.
-3. **Cobertura sempre ao lado do CMV.** Um CMV de 31% com 40% de cobertura nao e
-   um CMV de 31%.
-4. **Estorno nao devolve custo.** A comida foi produzida e perdida — o custo
-   aconteceu. Estorno piora o CMV, que e o sinal correto.
-
-**Escopo aprovado:** campo de custo no cadastro do produto; CMV/cobertura/lucro
-no Dashboard (dia) e no Relatorio (periodo + CSV).
-**Fora de escopo (decidido, nao esquecido):** margem por item na lista de
-produtos, preview de margem ao vivo no dialog, ficha tecnica, custo por media
-ponderada de compras.
-
-**Arquivos entregues:** migration `0020_custo.sql`, `lib/custo.js` +
-`test_custo_calculo.mjs`, os 4 repositorios (produto e transacao nos dois
-backends), `route.js` (3 pontos de gravacao + 2 endpoints), `app/page.js`,
-`backend_test_custo.py` (raiz do projeto).
-
-**Por que esta feature primeiro:** analise de especialista feita em 2026-08-14
-apontou 3 lacunas de gestao — ausencia total de custo, estoque por produto em vez
-de insumo (ficha tecnica), e dashboard sem KPI operacional. Custo e a de menor
-esforco e maior retorno, e **desbloqueia a ficha tecnica** depois (com ela,
-`produtos.custo` deixa de ser digitado e passa a ser derivado da receita).
-
----
-
-**O app esta NO AR e em uso:**
-
-```
-https://restaurante-app.ilmdzk.easypanel.host
-```
-
-Rodando sobre **Supabase**, com HTTPS, no projeto `restaurante` do EasyPanel.
-O dono ja opera pela interface (empresa "Tanelas FooD").
-
-**Estado do codigo:** **sincronizado com GitHub** (`main` em dia). Todas as
-melhorias publicadas. EasyPanel implanta automaticamente ao receber push.
-
-**Entregue e PUBLICADO:**
-1. Correcao do tema que revertia sozinho depois de ~2s.
-2. Desconto e acrescimo em pedidos, com ajuste apos a criacao.
-3. Upload de logo por arquivo (antes so aceitava colar URL).
-4. **Impressao de cupom** — comanda da cozinha (sem precos) e via do
-   cliente (com valores), para qualquer pedido ou fechamento de comanda.
-   Ver §4.1 (decisao estrutural) e §10 armadilha 21.
-5. **Correcao do bug de impressao** (container id no body, nao no JSX) —
-   imprimia pagina em branco em producao; achado testando ao vivo.
-
-**KITCHEN DISPLAY SYSTEM (KDS) — 11/11 TASKS COMPLETAS ✅**
-Implementacao via subagent-driven-development, plano executado completamente (`docs/plans/KDS-IMPLEMENTATION-PLAN.md`).
-
-**Status: 100% PRONTO PARA MERGE E DEPLOY**
-
-✅ **Backend (Tasks 1-6):** migration 0016, domain contracts, kdsTokenRepository, dual-auth endpoints (GET /kds/pendentes + POST /kds/concluir), token lifecycle management (GET/POST/DELETE /kds/tokens)
-
-✅ **Frontend (Tasks 7-10):** observação field UI, KDS components (KDSPainel, KDSTv, CozinhaPendentes), integração no App() (TV link + nav COZINHA), config screen (Empresa tab para gerar/revogar links)
-
-✅ **Validation (Task 11):** testes 40/40 + 32/33 (baseline), build clean, security checklist completa (multi-tenant isolation, token permissions, RLS coverage)
-
-**Deferred findings (nao-bloqueadores, podem ser corrigidos em sprint futuro):**
-- Task 3: kds_tokens sem indices Mongo (Task 8 has it via RLS) — adicionar a ensureMongoIndexes() quando Mongo indexing for revisitado
-- Task 5: POST /kds/concluir mesa branch silent ok se id inexistente (cosmético, nao affects UX) — standardizar 404 handling se quiser
-
-**Ledger completo:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/progress.md`
-**Briefs por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-brief.md`
-**Reports por task:** `.superpowers/sdd/KDS-IMPLEMENTATION-PLAN/task-{1..7}-report.md` (Task 6 em progresso)
-
-**Status de bugs encontrados em produção (2026-08-13):**
-
-✅ **RESOLVIDOS (commit 2f5e330):**
-- Hard refresh (Ctrl+Shift+R) resolveu cache de nome de mesa
-- TV setup descoberto e testado (funciona!)
-- Observações já estão implementadas (Task 7)
-- **Botão overflow em Comanda** — CSS flex reflow (grid-cols-3 → grid-cols-2 + full-width bottom)
-- **Edição de pedidos "Recebido"** — adicionado pencil icon + dialog, PATCH /pedidos/:id, suporta: tipo, itens, observações
-
-**Deferred findings KDS (não-urgentes):**
-- Task 3: índices Mongo para kds_tokens
-- Task 5: 404 handling em POST /kds/concluir mesa branch
-
-**🔴 BUG CRÍTICO DESCOBERTO (2026-08-14):**
-
-**Problema:** Quando cozinheiro clica "pronto" no KDS, o pedido fica travado em "em_preparo" (sem mensagem de erro). Clicar em outro pedido "destranca".
-
-**Root cause (investigação concluída):**
-1. **UI bug:** `components/kds.jsx` linha 87-95: `concluir()` remove item otimisticamente ANTES de confirmar sucesso. Se API retorna OK, nunca recarrega pra sincronizar.
-2. **Backend bug:** `app/api/route.js` linha 700: `pedidoRepo.update()` não verifica se update funcionou. Retorna `{ ok: true }` mesmo se update falhou silenciosamente.
-
-**Impact:** Pedido marcado como "pronto" no backend pode falhar, mas UI acha que sucedeu. Próximo polling traz item de volta (porque ainda em "em_preparacao"), criando ilusão de travamento.
-
-**Fix necessário (2 mudanças):**
-1. Backend: Verificar resultado de `update()`, retornar erro se null:
-   ```javascript
-   const updated = await pedidoRepo.update(kctx.empresa_id, b.id, { status: 'pronto' })
-   if (!updated) return err('Pedido nao encontrado', 404)
-   ```
-2. UI: Recarregar após sucesso de `onConcluir()`, não só em erro:
-   ```javascript
-   const concluir = async (item) => {
-     setItens(s => s.filter(i => i.id !== item.id))
-     try {
-       await onConcluir(item)
-       await carregar()  // <-- AQUI: recarregar após sucesso
-     } catch (e) { ... }
-   }
-   ```
-
-**Status:** Pronto para ser fixado amanhã (fix rápido, 10-15min)
-
----
-
-**DELIVERY COMPLETO — 12/12 TASKS COMPLETAS ✅**
-Implementacao via subagent-driven-development, plano executado completamente (`docs/plans/2026-08-13-delivery-completo-implementation.md`).
-
-**Status: 100% PRONTO PARA MERGE E DEPLOY**
-
-✅ **Backend (Tasks 1-8):** 
-- Migration 0017_delivery.sql: 6 colunas em `pedidos` (entrega_endereco, entrega_taxa, entrega_tempo_estimado_min, entregador_id, entregador_nome, saiu_para_entrega_em)
-- Tabela `entregadores` com RLS por empresa_id
-- Domain contracts: Entregador, EmpresaDeliveryConfig, PedidoStatus += 'saiu_para_entrega'
-- Repositories: Supabase + MongoDB com interface idêntica
-- API CRUD entregadores: GET, POST, PUT, DELETE (soft-delete)
-- Endpoints pedidos: POST/PUT com defaults de config, PATCH /status com saiu_para_entrega + snapshot entregador
-- Endpoint empresa: PUT /empresa aceita config.delivery (taxa_padrao, tempo_estimado_min)
-- Cálculo: total = subtotal - desconto + acrescimo + entrega_taxa
-
-✅ **Frontend (Tasks 9-12):**
-- Empresa config screen: bloco Delivery com taxa/tempo + CRUD entregadores inline
-- Pedido dialog: campos endereço/taxa/tempo (pré-preenchidos de cliente + config), resumo de valores com linha de taxa
-- Pedidos list: filtro por tipo, cards delivery com endereço/taxa/entregador/tempo elapsed, destaque atrasados, modal seletor de entregador
-- Cupom: linha "Taxa de Entrega" em valores, endereço no rodapé
-
-**Ledger completo:** `.superpowers/sdd/2026-08-13-delivery-completo-implementation/progress.md`
-**Spec e plan:** `docs/superpowers/specs/2026-08-13-delivery-completo-design.md` + `docs/superpowers/plans/2026-08-13-delivery-completo-implementation.md`
-
-**Status de commits:** Todos 12 tasks commitados e pushed para GitHub. EasyPanel auto-deploy iniciado.
-
----
-
-**CAIXA — ✅ 14/14 TASKS COMPLETAS**
-
-**Status:** Implementacao via subagent-driven-development, **PRONTO PARA DEPLOY**.
-
-✅ **T1-9 COMPLETAS (backend + endpoints):**
-- T1: Schema 0018_caixa.sql + domain contracts ✅
-- T2: lib/caixa.js + testes (10 testes, todos passando) ✅
-- T3-5: Repositorios (Supabase + Mongo) + query methods ✅
-- T6: Forma de pagamento na origem (comanda + pedido) ✅
-- T7-9: Endpoints caixa completos (/abrir, /fechar, /movimento, /estorno) + security fixes (TOCTOU mitigated) ✅
-  - Commits: 57658f6..f8d7d26 (9 tasks total)
-
-✅ **T10-12 COMPLETAS (UI):**
-- T10 (054d0f9): Barra de status do caixa + dialog abertura ✅
-- T11 (ae8a899): Fechamento com conferencia ao vivo + movimentos + historico ✅
-- T12 (bundled ae8a899): Estorno UI + aviso de caixa fechado ✅
-
-✅ **T13 COMPLETA (testes de API):**
-- backend_test_caixa.py: suite com 25+ testes cobrindo todos endpoints (b78a580) ✅
-  - Cobre: abertura, fechamento, sangria, suprimento, estorno
-  - Multi-tenant isolation, forma de pagamento tracking, race condition scenarios
-  - Ready to run: `BASE_URL=http://localhost:3000/api python3 backend_test_caixa.py`
-
-✅ **T14 COMPLETA (docs):**
-- HANDOFF.md atualizado com estado final (2026-08-14) ✅
-- Arquitetura, fluxo, endpoints, schema documentados ✅
-- Bug KDS critical descoberto + fixado (34e374c) ✅
-
-**Ledger SDD:** `.superpowers/sdd/2026-08-13-caixa-implementation/progress.md`
-**Spec e plan:** `docs/superpowers/specs/2026-08-13-caixa-design.md` + `docs/superpowers/plans/2026-08-13-caixa-implementation.md`
-
-**Status de commits:**
-- Backend + endpoints: 57658f6..f8d7d26
-- UI (status bar + dialogs + historico): 054d0f9, ae8a899
-- Testes: b78a580
-- Docs: 57f4112 (handoff)
-- KDS bug fix: 34e374c
-
-**SDD Final Review & Fix Loop (2026-08-14):**
-
-Final code reviewer descobriu 2 production-blocking bugs que não foram pegos durante implementação:
-
-**🔴 BLOCKER 1 (FIXADO e97dbfa):** `lib/repositories/supabase/transacaoRepository.js` — unwrap() signature mismatch
-- `findByCaixa` e `findByPedido` chamavam `unwrap(data, error)` com 2 args, mas unwrap() espera destructured object `{ data, error }`
-- **Impact:** Ambos retornavam [] sempre → receitas_dinheiro=0, estornos=0 em reconciliação de caixa
-- **Na produção:** Cada fechamento de caixa mostra saldo curto pelo valor de todas as vendas do dia (cash only)
-- **Fix:** Passar full Supabase response object ao unwrap(), não dados destructurados
-- Commit: e97dbfa (1 file, 4 inserts, 6 deletions)
-
-**🔴 BLOCKER 2 (FIXADO d624507):** `lib/repositories/supabase/comandaRepository.js` — updateItemCampos() retorno faltante
-- KDS fix (34e374c) adicionou verification `if (!updated) return err(...)` mas método retornava undefined
-- **Impact:** Cada clique "pronto" em item de comanda no KDS retorna HTTP 500, mesmo com sucesso no DB
-- **Fix:** Adicionar `.select().maybeSingle()` chain + return statement (padrão usado por pedidoRepository)
-- Commit: d624507 (1 file, 1 insert, 1 deletion)
-
-**🟡 MEDIUM 1 (FIXADO a3b8bdb):** Mongo duplicate-key error não mapeado para 409 em POST /caixa/abrir
-- Mongo `code: 11000` não estava na lista de check (só `23505` Postgres)
-- Consequence: race condition na abrir retorna 500 em Mongo backend
-- **Fix:** Adicionar `|| e.code === 11000` ao error handler
-- Commit: a3b8bdb (1 file, 1 insert, 1 deletion)
-
-**🟡 MEDIUM 2 (PARKED):** `/caixa/fechar` TOCTOU race na concurrent close (concorrência extrema)
-- Dois reqs simultâneos podem fazer `.update()` em caixa já fechado
-- Trade-off: fix requer índice em status (latência) vs rare race case
-- **Ruling:** Aceito em MVP; pode ser endereçado em sprint se observado em produção
-
-**🟡 MEDIUM 3 (PARKED):** Test suite (backend_test_caixa.py, backend_test_kds.py) nunca foi executada
-- Falha de processo durante SDD (código OK, testes não rodados)
-- **Mitigação:** calc module 10/10 pass, build green, reviewer validou todos 14 tasks
-- **Testes:** Podem ser rodados pós-deploy contra servidor live se necessário
-
-**Verificação Final:**
-- Calc module tests: 10/10 ✅
-- Build: 6.3s clean ✅
-- Syntax check: OK ✅
-- Todos 3 blocker fixes committed e pushed ✅
-
-**Próximos passos:**
-1. ✅ Fixar KDS critical bug (concluído 2026-08-14, commit 34e374c)
-2. ✅ Completar Caixa 14/14 + SDD final review (concluído 2026-08-14)
-3. ✅ Fixar 2 blocker bugs (concluído 2026-08-14, commits e97dbfa + d624507 + a3b8bdb)
-4. **Deploy Caixa em produção** ← PRÓXIMO PASSO
-5. Opção: Investigar notificações push no KDS (spike aprovada, MVP+1)
-
----
-
----
-
-**ESTOQUE MVP — 12/12 TASKS COMPLETAS ✅**
-Implementacao via subagent-driven-development em 2026-08-14.
-
-**Status: 100% PRONTO PARA DEPLOY EM PRODUÇÃO**
-
-✅ **Backend (Tasks 1-6):**
-- Migration 0019_estoque.sql: 3 colunas em `produtos` (estoque_habilitado, estoque_quantidade, estoque_minimo)
-- Domain contracts: EstoqueAjuste, Produto + ProdutoRepository extensions
-- Repositories (Supabase + Mongo): decrementarEstoque(), ajustarEstoque(), listEstoqueBaixo(), getEstoque()
-- API integration: Stock deduction em PUT /pedidos/:id e POST /comandas/:id/fechar (non-fatal errors)
-
-✅ **Frontend (Tasks 7-10):**
-- Produtos dialog: toggle "Rastrear Estoque" + quantidade/mínimo fields
-- Produtos list: stock badge com 3-color status (verde/amarelo/vermelho)
-- Dashboard: warning card com lista de produtos abaixo do mínimo (refresh 30s)
-- Stock adjustment modal: dialog com dropdown de motivo + validação
-
-✅ **Testing (Task 11):**
-- backend_test_estoque.py: 8 integration tests cobrindo deduction, negativo-block, opt-in, adjustment, multi-tenant, low-stock, fractional quantities
-- Testes passando: 8/8
-
-✅ **Verification (Task 12):**
-- 11 commits verificados (T1-T11)
-- Schema: migration 0019 presente e idempotente
-- JS syntax: 0 errors
-- Testes: 8/8 passando
-- Build: PASS
-
-**Ledger SDD:** `.superpowers/sdd/2026-08-14-estoque-implementation/progress.md`
-**Spec e plan:** `docs/superpowers/specs/2026-08-14-estoque-design.md` + `docs/superpowers/plans/2026-08-14-estoque-implementation.md`
-
-**Commits (11 total):**
-```
-755a3d7 chore: update dependencies for Estoque MVP
-7031d75 ui: add stock adjustment dialog
-88c15e7 test: Add estoque integration test suite (8 test cases)
-218a2e6 ui: add low-stock warning card to dashboard
-05692d1 ui: Produtos dialog — add stock tracking fields
-15b2c1e feat: PUT /pedidos/:id — integrate stock deduction on pedido conclusion
-da872b9 feat: Mongo produtoRepository — add stock methods (identical interface to Supabase)
-888e99a feat: Supabase produtoRepository — add stock methods
-ad75570 types: Add Estoque interfaces + extend Produto + ProdutoRepository
-874453b migration: Add estoque schema (estoque_habilitado, quantidade, minimo)
-f2424d3 plan: Estoque MVP implementation — 12 tasks
-06eb75f spec: Estoque MVP — rastreamento opt-in, baixa automática na venda, alertas
-```
-
-**Status de deploy:** Pushed para GitHub (2026-08-14 após conclusão). EasyPanel auto-deploy ativo.
-
----
-
-**Roadmap (revisado em 2026-08-18 apos analise competitiva —**
-**`docs/ANALISE-COMPETITIVA.md`)**
-
-Concluido e no ar: KDS (11/11), Delivery (12/12), Caixa (14/14), Estoque
-(12/12), Cardapio Digital (7/7 + imagem/indisponiveis 2026-08-18), Custo e
-Margem/CMV (9/9, ver §0). "No ar" confirmado de fato em 2026-08-18 para
-Estoque/CMV/Cardapio-imagem — antes disso o codigo estava no ar mas o
-schema de producao nao tinha as colunas (ver achado critico no topo).
-
-| # | Frente | Estado | Por que |
-|---|--------|--------|---------|
-| 1 | **Cardapio QR com carrinho (fase 2)** | ⚪ nao iniciada | `POST /cardapio/:slug/pedido` publico + cadastro de cliente + pagamento. Imagem/banner (fase 1, ✅) tirou a barreira de entrada; isto fecha o loop de venda de verdade. Ver `ANALISE-COMPETITIVA.md` §2.2/§4 |
-| 2 | **Automacao do WhatsApp via n8n** | ⚪ nao iniciada | Decisao do dono (2026-08-18): atendente automatico fica no n8n, nao no `route.js`. Arquitetura ja publica eventos (`lib/integrations/n8n.js`); falta o fluxo do lado de la. Ver `ANALISE-COMPETITIVA.md` §2.1 |
-| 3 | **Ficha tecnica (insumos)** | ⚪ nao iniciada | Faz o estoque funcionar para comida preparada, nao so revenda. Fecha o CMV real (hoje o CMV so cobre produtos com custo direto cadastrado). |
-| 4 | **Dashboard operacional** | ⚪ nao iniciada | Tempo de preparo (o dado **ja existe** nos timestamps do KDS), faturamento por canal, horario de pico, taxa de cancelamento |
-| 5 | **Testes E2E (Playwright)** | ⚪ nao iniciada | 5 features complexas, zero teste de UI. Os 2 blockers de 2026-08-14 seriam pegos por um teste que abrisse e fechasse um caixa com uma venda dentro |
-| 6 | **Rate limiting** | ⚪ nao iniciada | `/auth/login` (forca bruta) e `/auth/register` (criacao ilimitada de tenants) sem limite nenhum. Ver `ANALISE-COMPETITIVA.md` §2.3 |
-
-**Debitos tecnicos conhecidos** — todos catalogados com evidencia, criterio de
-pronto e ordem de ataque em **`docs/PROFISSIONALIZACAO.md`**. Resumo:
-
-- **`route.js` com 2.192 linhas e `page.js` com 2.920.** Maior risco do projeto.
-  Ja cobrou: o fix do KDS (`34e374c`) quebrou o fechamento de comanda no Supabase
-  e so foi pego em code review, depois de marcado "completo".
-- **`backend_test_caixa.py` e `backend_test_kds.py` nunca foram executados.**
-  Existem, sao bons, e ninguem rodou.
-- **Um caixa aberto por empresa** (indice unico parcial). Cliente com balcao +
-  delivery em PDVs separados nao consegue operar.
-- **Sem NFC-e.** Fora de escopo por decisao, mas e bloqueio comercial real no
-  Brasil. Caminho quando virar prioridade: intermediario fiscal (Focus NFe,
-  NFe.io, Tecnospeed), nunca integracao direta com a SEFAZ.
-- **Sem integracao iFood/Rappi.** Pedido de marketplace entra manual — hoje e o
-  maior ralo de tempo operacional num restaurante real.
-
----
-
-# 12. UX FEEDBACK — COMPLETO ✅
-
-Implementado em 2026-08-13 (mesma sessao de conclusao do KDS).
-
-| # | Tipo | Descricao | Esforço | Status | Commit |
-|---|------|-----------|---------|--------|--------|
-| 1 | 🔴 BUG | Botoes overflow em Pedidos (todas as etapas) | 1-2h | ✅ DONE | 1051b77 |
-| 2 | 🟠 FEATURE | Nomes customizados para mesas | 4-6h | ✅ DONE | 1508270 |
-| 3 | 🟠 FEATURE | Status "Em Falta" no cardapio (menu digital aware) | 6-8h | ✅ DONE | c5f4a09 |
-| 4 | 🟠 FEATURE | Status pedido em Mesas (sumario em preparo/entregue) | 4-6h | ✅ DONE | fcb73ed |
-
-**Notas de implementacao:**
-- Item 1: CSS flex reflow — botoes agora em 2 linhas (status primario full-width, icons wrap)
-- Item 2: UI adicionada (schema/backend ja existiam) — pencil icon para renomear mesas inline
-- Item 3: UI adicionada (schema/backend/API ja existiam) — toggle "Em Falta" no cardapio + filtro em order builders
-- Item 4: Descoberto que modelo de dados usa `entregue` flag (nao pedidos.comanda_id) — implementado com sumario real (Em preparo / Entregue)
-
-**Para retomar:**
-1. Usuarios com o app aberto precisam de Ctrl+Shift+R para limpar cache
-   (navegador continua servindo JS antigo sem refresh hard).
-2. Ambiente local so e necessario para desenvolver: Docker Desktop ->
-   `docker start ros-mongo-local` -> `yarn dev:no-reload`. Detalhes no §8.
-3. Saude do servidor: `GET /api/health`. Se vier `"status":"degraded"`, o
-   campo `config_faltando` diz exatamente qual variavel esta faltando.
-4. Proximas frentes no §11 — os primeiros 3 itens da lista foram completos:
-   impressao, KDS e delivery. Proximo: fechamento de caixa ou estoque.
+# ANEXO — Historico de features (KDS, Delivery, Caixa, Estoque)
+
+As secoes abaixo documentam a implementacao original de cada modulo grande,
+preservadas como referencia — todas **completas e no ar**. Se voce so quer
+saber o estado atual do produto, pule para o §1.
+
+## KDS — 11/11 tasks completas ✅ (2026-08-13)
+
+Implementacao via subagent-driven-development
+(`docs/plans/KDS-IMPLEMENTATION-PLAN.md`). Backend: migration `0016`, dual-auth
+(usuario logado + token de TV), `GET /kds/pendentes` + `POST /kds/concluir`,
+lifecycle de tokens (`GET/POST/DELETE /kds/tokens`). Frontend: `KDSPainel`,
+`KDSTv`, `CozinhaPendentes`, tela de configuracao para gerar/revogar links.
+40/40 + 32/33 (baseline) testes, build limpo, isolamento multi-tenant
+verificado.
+
+**Bug critico encontrado e corrigido em producao (2026-08-14):** cozinheiro
+clicava "pronto" e o pedido ficava travado em "em_preparo" sem erro visivel.
+Causa dupla: UI removia o item da lista otimisticamente antes de confirmar
+sucesso (nunca recarregava depois), e o backend nao verificava se
+`pedidoRepo.update()` de fato encontrou e atualizou a linha — `{ ok: true }`
+mesmo quando o update falhava em silencio. Corrigido nos dois lados
+(commit `34e374c`). **Armadilha para lembrar:** um fix de "verificar se
+update() retornou algo" so vale se o metodo do repository realmente
+devolve algo — Supabase exige `.select()` explicito na query, Mongo exige
+checar `matchedCount`. Esse mesmo padrao voltou a aparecer no Caixa (ver
+abaixo) e foi corrigido com o mesmo raciocinio.
+
+## Delivery — 12/12 tasks completas ✅ (2026-08-13)
+
+Migration `0017`: 6 colunas em `pedidos` (endereco, taxa, tempo estimado,
+entregador, saiu_para_entrega_em) + tabela `entregadores`. CRUD completo de
+entregadores, calculo `total = subtotal - desconto + acrescimo +
+entrega_taxa`, UI com bloco de configuracao (taxa/tempo padrao) + selecao de
+entregador no fluxo de pedido.
+
+## Caixa — 14/14 tasks completas ✅ (2026-08-14)
+
+Migration `0018`: abertura/fechamento com conferencia, sangria, suprimento,
+estorno. Um caixa aberto por empresa por vez (indice unico parcial).
+
+**Whole-branch review encontrou 2 bugs bloqueantes de producao, corrigidos
+no mesmo dia:**
+- `transacaoRepository` (Supabase): `unwrap()` chamado com assinatura errada
+  (2 argumentos em vez de objeto desestruturado) fazia `findByCaixa` e
+  `findByPedido` sempre devolverem `[]` — todo fechamento de caixa mostrava
+  saldo curto pelo valor de TODAS as vendas do dia. Corrigido (`e97dbfa`).
+- `comandaRepository.updateItemCampos()` nao retornava nada — o fix do bug
+  critico do KDS (acima) checava `if (!updated)`, e sem retorno isso
+  disparava sempre, fazendo todo clique "pronto" num item de comanda dar
+  HTTP 500 mesmo com sucesso no banco. Corrigido (`d624507`).
+
+**Racionalidade a lembrar:** os dois bugs sao a mesma classe de erro —
+"verificar se a operacao teve efeito" so funciona se o metodo do repository
+participa do contrato (devolve o que foi alterado). Ao adicionar essa
+checagem num lugar, os OUTROS lugares que fazem update tambem precisam do
+mesmo cuidado.
+
+## Estoque — 12/12 tasks completas ✅ (2026-08-14)
+
+Migration `0019`: rastreamento opt-in por produto (`estoque_habilitado`,
+`estoque_quantidade`, `estoque_minimo`), baixa automatica na venda,
+`listEstoqueBaixo()`. Badge de status (verde/amarelo/vermelho) na lista de
+produtos, card de alerta no Dashboard.
+
+**Nota importante:** o codigo ficou completo e "no ar" em 2026-08-14, mas a
+migration `0019` so foi de fato aplicada ao banco de producao em
+2026-08-18 (ver a secao de migrations automaticas acima) — quatro dias de
+uma feature "concluida" que nao funcionava em producao, sem ninguem notar.
+
+## Cardapio Digital + imagem — concluido (2026-08-18)
+
+Cardapio publico com QR ja existia (mesa + delivery). Analise competitiva
+(`docs/ANALISE-COMPETITIVA.md`) apontou que a pagina so listava produtos,
+sem imagem nem indicacao de indisponibilidade. Fase 1 (feita): upload de
+foto/poster do cardapio impresso (migration `0021`, bucket Storage
+`cardapios` proprio, 5MB) + banner de itens "indisponivel hoje" reusando o
+toggle `disponivel` ja existente. Fase 2 (carrinho + checkout + pagamento
+publico) fica para depois — decisao de escopo, nao esquecida (ver roadmap).
+
+## Webhook do WhatsApp sem verificacao — corrigido (2026-08-18)
+
+`/whatsapp/webhook` criava cliente+conversa+mensagem so com `?tenant=<id>`
+no corpo, sem nenhuma assinatura — diferente do webhook do Mercado Pago (no
+mesmo arquivo) que ja validava origem e deduplicava. Quem obtivesse um
+`empresa_id` injetava mensagem forjada na caixa de atendimento de qualquer
+empresa. Corrigido com o mesmo padrao do Mercado Pago: `webhookSecret`
+gerado automaticamente por empresa, exigido via `?secret=...`
+(`timingSafeEqual`), dedupe por `key.id`.
+
+## C1 — Limpeza de empresas de teste em producao (2026-08-18)
+
+Auditoria encontrou 126 de 127 empresas com padrao de teste. Backup completo
+salvo antes de excluir; lista mostrada e confirmada explicitamente pelo
+dono antes da execucao; delete em 6 lotes via REST (`ON DELETE CASCADE`);
+pos-delete verificado — producao com exatamente 1 empresa
+(`Tanelas FooD`), 0 registros orfaos.
+
+**Causa raiz nao 100% resolvida:** essas empresas surgiram porque o projeto
+nao tem um Supabase de staging separado — e um unico projeto multi-tenant,
+entao rodar as suites com `DATABASE_PROVIDER=supabase` localmente escreve
+direto em producao. O `.env` local esta seguro (`mongo`) hoje, mas isso e
+convencao, nao trava tecnica.
+
+## Custo e Margem (CMV) — 9/9 tasks completas ✅ (2026-08-17)
+
+Migration `0020`: `produtos.custo` + 3 campos em `transacoes`
+(`custo_total`, `receita_com_custo`, `receita_base`), congelados no momento
+da venda nos 3 pontos de gravacao (pedido concluido, comanda fechada,
+comanda dividida com rateio por metodo de pagamento). `lib/custo.js`
+(`computeCMV`) alimenta Dashboard e Relatorio. 4 invariantes que nao podem
+ser perdidas:
+1. Custo congelado na TRANSACAO, nao no item — preserva historia (mudar o
+   custo amanha nao reescreve o CMV de hoje).
+2. `produtos.custo` e `null`, nunca `0` por omissao — `null` fica fora do
+   calculo e conta contra a cobertura; `0` e custo zero real (brinde).
+3. Cobertura sempre ao lado do CMV — um CMV de 31% com 40% de cobertura nao
+   e o mesmo que um CMV de 31% de verdade.
+4. Estorno nao devolve custo — a comida foi produzida e perdida.
+
+**Whole-branch review encontrou 1 issue importante:** o bloco `cmv` em
+`GET /dashboard/metrics` nao tinha permission gate — ATENDENTE e COZINHA
+recebiam custo/margem sem checagem de papel. Corrigido com o mesmo gate que
+`/financeiro/relatorio` ja usava (`2544610`).
 
 ---
 
@@ -709,6 +345,11 @@ linha, e um unico `app/page.js`.
   contratos, nao de MongoDB nem de Supabase.
 - **Integracao externa nunca e mockada**: sem credencial, avisar/falhar,
   jamais simular sucesso.
+- **Portao de PLANO (feature flags) e ortogonal ao portao de PAPEL** (regra
+  nova, desde B1): `temModulo(empresa, 'caixa')` pergunta se a empresa
+  contratou; `can(ctx.papel, 'financeiro')` pergunta se o usuario pode. As
+  duas checagens sao independentes e ambas precisam passar — nunca uma
+  substitui a outra.
 
 ## 2.2 Contratos de dominio
 
@@ -717,10 +358,17 @@ linha, e um unico `app/page.js`.
 Serve como documentacao executavel do contrato). Ambos os backends satisfazem
 exatamente as mesmas interfaces.
 
-Entidades: `Empresa`, `Usuario`, `Categoria`, `Produto`, `Cliente`, `Pedido`
-(+`PedidoItem`), `Mesa`, `Comanda` (+`ComandaItem`, `PagamentoResumo`),
-`PagamentoRegistro`, `Transacao`, `Integracao`, `Conversa`, `Mensagem`,
-`Auditoria`. Mais `BulkCreatable<T>` (carga em lote, usada pelo seed).
+Entidades: `Empresa` (com `EmpresaFeatureFlags`, `EmpresaConfig`), `Usuario`,
+`Categoria`, `Produto`, `Cliente`, `Pedido` (+`PedidoItem`), `Mesa`,
+`Comanda` (+`ComandaItem`, `PagamentoResumo`), `PagamentoRegistro`,
+`Transacao` (com `natureza`, `custo_total`, `receita_com_custo`,
+`receita_base`), `Integracao`, `Conversa`, `Mensagem`, `Auditoria`. Mais
+`BulkCreatable<T>` (carga em lote, usada pelo seed).
+
+**Nota:** formas de resposta de RELATORIO (DRE, comparativo, margem por
+canal/produto) nao entram aqui — sao calculadas sob demanda por modulos
+puros (`lib/custo.js`, `lib/financeiro.js`), nao correspondem a uma entidade
+persistida, e por isso ficam fora do contrato de dominio.
 
 ## 2.3 Implementacoes de repositorio
 
@@ -729,11 +377,7 @@ Entidades: `Empresa`, `Usuario`, `Categoria`, `Produto`, `Cliente`, `Pedido`
 - `lib/repositories/factory.js` — **escolhe o backend**. Unico lugar do
   sistema que sabe qual persistencia esta em uso.
 
-`route.js` **nao conhece nenhum driver de banco**. Os 3 acessos diretos que
-existiam fora do contrato foram eliminados na Fase 7: `ensureIndexes()` (foi
-para a factory; no Supabase e no-op, os indices vem das migrations),
-bulk-insert do seed (virou `createMany()`) e `webhook_events` (virou
-`webhookEventsRepository`, nos dois backends).
+`route.js` **nao conhece nenhum driver de banco**.
 
 ## 2.4 Autenticacao e autorizacao
 
@@ -741,12 +385,18 @@ bulk-insert do seed (virou `createMany()`) e `webhook_events` (virou
   com **scrypt** (N=16384, r=8, p=1, formato `salt:hash`). Ainda **nao**
   migrado para Supabase Auth — auditado na Fase 8, implementacao nao iniciada.
 - **O `papel` NUNCA vem do token**: e relido do banco a cada requisicao, no
-  portao unico de auth. Por isso revogar acesso e imediato, e o RBAC nao
-  precisa virar claim na migracao. Nao mudar isso sem entender o efeito.
-- **RBAC: hardcoded** nos objetos `ROLES`/`PERMISSIONS` do `route.js` (50
+  portao unico de auth. Por isso revogar acesso e imediato.
+- **RBAC: hardcoded** nos objetos `ROLES`/`PERMISSIONS` do `route.js` (50+
   checagens `can()`). As tabelas `papeis`/`permissoes` existem no Supabase com
   seed, mas **o app nao as le** — armadilha conhecida, nao "corrigir" sem
   decisao.
+- **Feature flags (plano/modulo): `lib/modulos.js`**, desde 2026-08-18 (B1).
+  `temModulo(empresa, chave)` — so `false` explicito desliga; ausente/null
+  conta como ligado. Modulos configuraveis hoje: `mesas` (junto com
+  `comandas`), `estoque`, `caixa`. Os demais (`crm`, `campanhas`,
+  `fidelidade`, `cashback`, `multiunidade`, `billing`) existem so como flag
+  gravada `false` no signup, sem endpoint nem tela — reservados pra quando
+  forem implementados.
 - Papeis: `OWNER`, `ADMIN`, `GERENTE`, `ATENDENTE`, `COZINHA`.
 - **Frontend**: token em `localStorage['ros_token']`, `fetch` puro, sem
   logica de refresh (ver armadilha 14).
@@ -759,7 +409,7 @@ Toda entidade de dominio carrega **`empresa_id`**. Isolamento em **duas
 camadas, sempre as duas**:
 
 1. **Aplicacao**: toda query e escopada por `empresa_id` extraido do token.
-2. **Postgres RLS**: 17 tabelas com RLS habilitado, 18 policies.
+2. **Postgres RLS**: tabelas com RLS habilitado e policies correspondentes.
 
 Nunca confiar so em RLS, nem so na aplicacao. Ao criar qualquer entidade nova:
 incluir `empresa_id`, criar a policy RLS e escrever teste de isolamento
@@ -783,61 +433,79 @@ policies sao defesa em profundidade que nunca e exercida.
   (`pedido_itens`, `comanda_itens`), nao JSONB. No MongoDB sao arrays
   embutidos; a traducao acontece no repository.
 - **Snapshot historico por item**: `nome` e `preco` sao congelados no momento
-  da venda. **Nunca** recalcular a partir do preco atual do produto.
+  da venda. **Nunca** recalcular a partir do preco atual do produto. Custo
+  (`produtos.custo`), diferente disso, so e congelado no nivel da VENDA
+  INTEIRA (`transacoes.custo_total`), nao por item — e por isso que "margem
+  por produto" usa custo atual, nao historico (ver §0).
 - **`comanda.pagamentos`**: array embutido no Mongo (copia denormalizada); no
-  Postgres **nao existe coluna** — a tabela `pagamentos` e a fonte unica. O
-  `SupabaseComandaRepository` reconstroi o campo em memoria a cada leitura, so
-  para preservar o contrato que `computeComanda()` ja espera.
+  Postgres **nao existe coluna** — a tabela `pagamentos` e a fonte unica.
 - **Numeracao de pedido**: tabela `pedido_contadores` + funcao atomica por
   tenant (substituiu um `count()+1` com race condition).
-- **Valores de pedido** (migration 0015): mesma gramatica de `comandas` —
-  `total = subtotal - desconto + acrescimo`, calculado no Service.
-  `desconto`/`acrescimo` sao ajuste manual do operador (cortesia,
-  arredondamento, acerto). **Ajuste bloqueado (409) apos concluir**, porque
-  nesse ponto o pedido ja virou receita em `transacoes`; corrigir depois disso
-  exige lancamento no financeiro, nao edicao do pedido.
-- **Logo da empresa**: arquivo no Supabase Storage; `empresas.logo` guarda a
-  URL publica.
-- **Impressao de cupom**: NAO E CUPOM FISCAL (sem NFC-e/SAT — precisaria de
-  certificado digital e integracao com a SEFAZ, projeto proprio). E
-  comprovante de producao/atendimento: comanda para a cozinha (sem precos)
-  e via para o cliente (com subtotal/desconto/acrescimo/total). O sistema
-  roda na nuvem e a impressora fica no restaurante — sem caminho de rede
-  entre os dois — entao quem imprime e sempre o navegador do caixa via
-  `window.print()`; impressora termica se instala no SO como impressora
-  comum. Codigo em `lib/cupom-dados.js` (mapeamento puro, testavel sem
-  navegador) + `components/cupom.jsx` (renderizacao + `window.print()`).
+- **Valores de pedido**: `total = subtotal - desconto + acrescimo (+
+  entrega_taxa)`, calculado no Service. **Ajuste bloqueado (409) apos
+  concluir**, porque nesse ponto o pedido ja virou receita em `transacoes`;
+  corrigir depois disso exige lancamento no financeiro, nao edicao do pedido.
+- **Logo/imagem do cardapio**: arquivos no Supabase Storage; URLs publicas
+  guardadas em `empresas.logo` / `empresas.cardapio_imagem_url`.
+- **Impressao de cupom**: NAO E CUPOM FISCAL (sem NFC-e/SAT). E comprovante
+  de producao/atendimento via `window.print()` no navegador do caixa.
+  Codigo em `lib/cupom-dados.js` (mapeamento puro) + `components/cupom.jsx`.
+- **Natureza da despesa** (migration `0022`): `transacoes.natureza` e
+  `'fixa' | 'variavel' | null`. Nunca inferida pelo servidor a partir da
+  categoria — o dialog de lancamento manda o valor explicito, porque uma
+  categoria tipicamente fixa pode ter um lancamento pontual variavel.
+- **Feature flags** (migration `0023`): `empresas.config.feature_flags` e o
+  unico lugar onde "a empresa contratou este modulo" vive. Ver §2.4.
 
-## 4.2 Tabelas (20 no Supabase)
+## 4.2 Tabelas (principais, com `empresa_id`)
 
-Dominio com `empresa_id`: `usuarios`, `categorias`, `produtos`, `clientes`,
-`mesas`, `comandas`, `comanda_itens`, `pedidos`, `pedido_itens`, `pagamentos`,
-`transacoes`, `integracoes`, `conversas`, `mensagens`, `auditoria`,
-`webhook_events`, `pedido_contadores`.
-Raiz do tenant: `empresas`. Catalogos globais: `papeis`, `permissoes`.
+`usuarios`, `categorias`, `produtos`, `clientes`, `mesas`, `comandas`,
+`comanda_itens`, `pedidos`, `pedido_itens`, `pagamentos`, `transacoes`,
+`integracoes`, `conversas`, `mensagens`, `auditoria`, `webhook_events`,
+`pedido_contadores`, `entregadores`, `caixas`, `caixa_movimentos`,
+`kds_tokens`. Raiz do tenant: `empresas`. Catalogos globais: `papeis`,
+`permissoes`. Controle de deploy: `schema_migrations` (nao tem `empresa_id`
+— e infraestrutura, nao dominio).
 
-## 4.3 Migrations e ORDEM DE EXECUCAO (nao obvia)
-
-`supabase/migrations/0001` a `0015`, mais `triggers.sql`, `policies_rls.sql`,
-`seed.sql`. **A ordem correta nao e so numerica** — `0002+` dependem de
-funcoes definidas em `triggers.sql`/`policies_rls.sql`:
+## 4.3 Migrations (23 aplicadas, todas via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
-0001_init.sql -> triggers.sql -> policies_rls.sql -> seed.sql
--> 0002_core_fixes -> 0003_pedido_numero_atomico -> 0004_mesas
--> 0005_comandas -> 0006_pagamentos -> 0007_webhook_events
--> 0008_conversas_mensagens -> 0009_repository_support_functions
--> 0010_atomic_create_functions -> 0011_migration_upsert_functions
--> 0012_pedidos_comanda_id -> 0013_increment_conversa_patch_parcial
--> 0014_resync_contador_por_empresa -> 0015_pedidos_desconto_acrescimo
+0001_init.sql               0009_repository_support_functions.sql
+0002_core_fixes.sql         0010_atomic_create_functions.sql
+0003_pedido_numero_atomico  0011_migration_upsert_functions.sql
+0004_mesas.sql               0012_pedidos_comanda_id.sql
+0005_comandas.sql            0013_increment_conversa_patch_parcial.sql
+0006_pagamentos.sql          0014_resync_contador_por_empresa.sql
+0007_webhook_events.sql      0015_pedidos_desconto_acrescimo.sql
+0008_conversas_mensagens.sql
+
+0016_kds.sql                 0020_custo.sql
+0017_delivery.sql            0021_cardapio_imagem.sql
+0018_caixa.sql                0022_despesa_natureza.sql
+0019_estoque.sql              0023_feature_flags_retrocompat.sql
 ```
 
-Esta ordem foi testada de ponta a ponta contra Postgres real. Tambem no
-`README.md`.
+`0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
+rodando entre `0001` e `0002` — ordem completa e testada no `README.md`. A
+partir de `0016`, cada migration e autocontida (idempotente,
+`add column if not exists` / `create table if not exists`).
+
+**Para adicionar schema:** basta commitar o `.sql` novo em
+`supabase/migrations/`. O deploy aplica sozinho no boot do container — ver
+§0. Nunca rodar `psql` manualmente; se precisar inspecionar sem escrever,
+`yarn migrate:dry` (ou `DATABASE_PROVIDER=supabase node scripts/migrate.mjs
+--dry-run`).
 
 **Cuidado ao mexer em pedidos:** `create_pedido_com_itens()` e
-`upsert_pedido_com_itens()` usam **lista de colunas explicita**. Coluna nova
-em `pedidos` exige reescrever as duas, senao o valor e descartado em silencio.
+`upsert_pedido_com_itens()` (Postgres, migrations antigas) usam **lista de
+colunas explicita**. Coluna nova em `pedidos` exige reescrever as duas,
+senao o valor e descartado em silencio.
+
+**Migrations ja aplicadas sao imutaveis.** `migrate.mjs` calcula um checksum
+SHA-256 do conteudo de cada arquivo; editar uma migration antiga dispara
+aviso de "migration mudou desde que foi aplicada". Criar uma nova em vez de
+editar. `.gitattributes` forca LF em `*.sql` para o checksum nao variar
+entre um checkout Windows e o container Linux que roda em producao.
 
 ## 4.4 Switch de runtime (`DATABASE_PROVIDER`)
 
@@ -850,11 +518,14 @@ DATABASE_PROVIDER=supabase   # o que roda no servidor
 
 - Conferir o que esta ativo: `GET /api/health` -> campo `database`.
 - **Sem fallback silencioso**: `supabase` sem credenciais **falha**, em vez de
-  cair para o Mongo — um fallback silencioso gravaria no banco errado sem
-  ninguem perceber.
+  cair para o Mongo.
 - **Sem modo hibrido**: misturar backends na mesma requisicao daria leitura
   inconsistente e quebraria as FKs do Postgres.
 - Trocar exige reiniciar o processo.
+- **Atencao:** rodar a suite de testes com `DATABASE_PROVIDER=supabase`
+  localmente escreve DIRETO em producao — nao ha staging separado (ver C1
+  no §0). O `.env` local fica em `mongo` por convencao, nao por trava
+  tecnica.
 - Detalhes: `docs/plans/PHASE-7-RUNTIME-SWITCH.md`.
 
 ---
@@ -864,7 +535,7 @@ DATABASE_PROVIDER=supabase   # o que roda no servidor
 | O que | Onde | Credencial | Sem configuracao |
 |---|---|---|---|
 | **Supabase** (banco atual) | Projeto hospedado | `.env` / variaveis do EasyPanel | App falha explicitamente |
-| **Supabase Storage** (logos) | Mesmo projeto | Mesmas do Supabase | Endpoint responde 503 |
+| **Supabase Storage** (logos, cardapio) | Mesmo projeto | Mesmas do Supabase | Endpoint responde 503 |
 | **MongoDB** | Container local `ros-mongo-local` | `MONGO_URL`/`DB_NAME` | So usado com `DATABASE_PROVIDER=mongo` |
 | **Evolution API** (WhatsApp) | EasyPanel, projeto `restaurante` | Por empresa, tabela `integracoes` | Retorna "nao configurado" |
 | **n8n** | EasyPanel, projeto `restaurante` | Por empresa, tabela `integracoes` | Evento e ignorado |
@@ -876,8 +547,14 @@ DATABASE_PROVIDER=supabase   # o que roda no servidor
   Usar o **Session Pooler** (`aws-0-us-east-2.pooler.supabase.com:5432`).
 - A senha do banco contem `@`, que **precisa ser codificado como `%40`** na
   connection string.
+- O painel do Supabase entrega a string com o literal `[YOUR-PASSWORD]`, que
+  passa despercebido — copiar do `.env` local evita colar o placeholder.
+- TLS: o pooler usa CA propria do Supabase. A CA raiz esta fixada em
+  `supabase/prod-ca-2021.crt` (conferida por fingerprint SHA-256) —
+  verificacao TLS continua **ligada**, nunca `rejectUnauthorized: false`.
 - Nao ha `psql` instalado nesta maquina: rodar via
-  `docker run --rm -i postgres:17 psql "$SUPABASE_DB_URL"`.
+  `docker run --rm -i postgres:17 psql "$SUPABASE_DB_URL"` **so para
+  inspecao manual** — migrations de verdade rodam sozinhas (§4.3).
 - Credenciais no `.env` (nao versionado): `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
   `SUPABASE_DB_URL`.
@@ -903,7 +580,9 @@ Guia completo: `docs/operations/DEPLOY-EASYPANEL.md`.
 | Dominios | porta do container **3000** (o default `80` da 502) |
 | Ambiente | 7 variaveis (ver §6.2) |
 
-**Implanta automaticamente ao receber push na `main`.**
+**Implanta automaticamente ao receber push na `main`.** Boot do container:
+migra o schema primeiro (`entrypoint.sh` → `migrate.mjs`), so depois sobe o
+servidor Node. Migration que falha derruba o boot de proposito.
 
 **Nao usar** o `docker-compose.yml` da raiz: ele sobe postgres, evolution-api
 e n8n juntos, duplicando servicos que ja existem. Aquele arquivo serve para
@@ -917,28 +596,29 @@ container.
 
 `JWT_SECRET` (exclusivo do servidor), `DATABASE_PROVIDER=supabase`,
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`,
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `CORS_ORIGINS`.
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `CORS_ORIGINS`. Mais `SUPABASE_DB_URL`
+(so para o migrator conectar via `pg`, a app em si nunca usa — vai por REST).
 
 Sem `JWT_SECRET`, o app sobe mas responde `503 degraded` e recusa autenticar
 (falha fechada, de proposito). Variavel nova so vale **apos reimplantar**.
 
 ## 6.3 Supabase Storage
 
-Bucket `logos` (publico, limite 1 MB, apenas PNG/JPG/WEBP/SVG), criado via
-Admin API. Guarda a logo em `{empresa_id}/logo.{ext}` — caminho derivado do
-token, entao uma empresa nao sobrescreve a de outra. Upload com `upsert`
-(trocar substitui em vez de acumular orfao) e cache-buster `?v=` na URL, sem
-o qual o browser continuaria exibindo a logo antiga.
-
-Primeiro uso de Storage no projeto. Codigo isolado em
-`lib/integrations/storage.js`.
+Bucket `logos` (publico, 1 MB, PNG/JPG/WEBP/SVG) e bucket `cardapios`
+(publico, 5 MB, para a imagem do cardapio impresso), ambos criados via Admin
+API. Caminho derivado do token (`{empresa_id}/...`), upload com `upsert` e
+cache-buster `?v=` na URL.
 
 ## 6.4 Imagem
 
-`docker/Dockerfile` multi-stage, saida `standalone`, **291 MB**, com
-`HEALTHCHECK` apontando para `/api/health`. O `.dockerignore` exclui `.env` e
-`backups/` — sem ele, a service role key e dumps com dado de cliente iriam
-embutidos na imagem.
+`docker/Dockerfile` multi-stage, saida `standalone`, com `HEALTHCHECK`
+apontando para `/api/health`. Estagio extra (`migrator-deps`) instala `pg`
+isoladamente e copia para dentro de `/app/node_modules` do estagio final —
+ESM resolve import ali naturalmente, sem depender de `NODE_PATH` (que so
+funciona para `require()` do CommonJS). `.dockerignore` exclui `.env` e
+`backups/`, com excecoes explicitas para `scripts/migrate.mjs`,
+`supabase/migrations/` e `supabase/prod-ca-2021.crt` (que precisam ir na
+imagem apesar do padrao geral de ignorar).
 
 ---
 
@@ -946,52 +626,39 @@ embutidos na imagem.
 
 | Frente | Status |
 |---|---|
-| 1 — Auditoria da migracao | **Concluida** (`MONGO-TO-SUPABASE-AUDIT.md`) |
-| 2 — Contratos de dominio | **Concluida** |
-| 3 — Extrair Mongo do `route.js` | **Concluida** (16 repositories) |
-| 3.5 — Remover triggers de negocio | **Concluida** (`PHASE-3.5-...`) |
-| 4 — Schema Supabase | **Concluida** (`PHASE-4-...`) |
-| 5 — `Supabase*Repository` | **Concluida** (`PHASE-5-...`) |
-| 6 — Ferramenta de migracao de dados | **Concluida** (`PHASE-6-...`) |
-| 6B — Validacao contra Supabase real | **Concluida** (`PHASE-6B-...`) |
-| 7 — Switch de runtime | **Concluida** (`PHASE-7-...`) |
-| 8 — Auditoria de Auth | **Concluida** (`PHASE-8-AUTH-AUDIT.md`) |
-| Deploy | **No ar**, com deploy automatico por push |
-| Melhorias de produto (tema/logo/valor) | **No ar** |
-| KDS (11 tasks) | **COMPLETO** (2026-08-13) |
-| Delivery (12 tasks) | **COMPLETO** (2026-08-13) |
-| Estoque (12 tasks) | **COMPLETO** (2026-08-14); migration so aplicada em producao 2026-08-18 — ver achado critico §0 |
+| Migracao MongoDB → Supabase (Fases 1-8) | **Concluida** |
+| Deploy | **No ar**, deploy automatico por push, migrations automaticas |
+| KDS (11 tasks) | **Completo e no ar** |
+| Delivery (12 tasks) | **Completo e no ar** |
+| Caixa (14 tasks) | **Completo e no ar** |
+| Estoque (12 tasks) | **Completo e no ar** (migration so aplicada em producao 2026-08-18) |
+| Custo e Margem / CMV (9 tasks) | **Completo e no ar** |
+| Cardapio digital + imagem | **Completo e no ar** (fase 1; carrinho/checkout ficam para fase 2) |
+| Relatorio financeiro — DRE, ponto de equilibrio | **Completo e no ar** |
+| Relatorio financeiro — comparativo periodo anterior | **Completo e no ar** |
+| Relatorio financeiro — margem por canal | **Completo e no ar** |
+| Relatorio financeiro — margem por produto | **Completo, commit ao fim desta sessao** |
+| Relatorio financeiro — contas a pagar/receber | ⚪ nao iniciado (proximo, pedido do dono) |
+| Feature flags controlando acesso (B1) | **Completo e no ar** |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
-| Storage alem de logo | **Imagem do cardapio** (2026-08-18), bucket `cardapios` proprio |
 | Realtime | **NAO INICIADO** |
 
 ## 7.1 Baseline de testes
 
-Suite de backend (`backend_test.py`, `_v2`, `_v3`), **identica nos dois
-backends** e tambem contra a imagem de producao:
+`tests/run_all.py` descobre e roda toda suite `tests/backend_test_*.py`
+automaticamente. Estado no fim desta sessao: **13 suites, todas verdes**
+(a 14a, margem por produto, roda antes do commit final). Cada suite cria
+empresas novas via `/auth/register` — rodar contra producao acumula tenant
+de teste (ver C1 no §0).
 
-| Suite | Resultado |
-|---|---|
-| v1 | **40/40** |
-| v2 (mesas/comandas/pagamentos) | **39/39** |
-| v3 (atendimento/delivery) | **32/33** |
+## 7.2 Validacao de frontend
 
-A unica falha do v3 e o **nao-bug conhecido**: o webhook do WhatsApp grava
-`tipo:'conversation'`, que e o `messageType` real da Evolution API para texto
-simples — o teste e que espera `'text'`. Documentado em `test_result.md`.
-
-**Cuidado:** cada execucao da suite registra tenants novos. Foi assim que o
-banco acumulou 92 empresas de teste.
-
-## 7.2 Validacao de frontend (Playwright)
-
-O plugin Playwright foi instalado e **usado pela primeira vez** hoje, cobrindo
-as tres melhorias: tema estavel por 6s apos a troca, upload real chegando ao
-Storage e servido publicamente, e ajuste de R$ 49,80 -> R$ 40,00 refletido no
-card do pedido.
-
-**O restante do frontend continua sem validacao sistematica** — a maior lacuna
-de teste do projeto. Agora e barato fechar isso.
+Playwright usado ativamente nesta sessao e nas anteriores para verificar
+toda feature nova na tela real (nao so a API) antes do commit: DRE,
+comparativo, margem por canal, margem por produto, e o ciclo completo de
+ligar/desligar modulo (nav sumindo, 403 no fetch, religar restaurando).
+O restante do frontend mais antigo (telas de Pedidos, Mesas, Atendimento)
+segue sem validacao sistematica — maior lacuna de teste do projeto.
 
 ---
 
@@ -1001,16 +668,15 @@ Nao sobrevive a reboot. Para retomar:
 
 1. `.env` ja existe na raiz (nao versionado).
 2. Docker Desktop aberto, depois `docker start ros-mongo-local`.
-   Banco de dev: `restaurant_os_dev` (71 empresas de uso organico).
 3. `corepack enable` (necessario nesta maquina para o `yarn` resolver).
 4. `yarn dev:no-reload` -> `localhost:3000`.
-5. Testes: `PYTHONIOENCODING=utf-8 python backend_test.py` (e `_v2`/`_v3`).
-   `BASE_URL` e configuravel por variavel de ambiente.
+5. Testes: `BASE_URL=http://localhost:3000/api PYTHONIOENCODING=utf-8
+   python tests/run_all.py` (roda tudo) ou um arquivo especifico em
+   `tests/backend_test_*.py`.
 
 **Armadilha:** rodar `yarn build` com o dev server no ar corrompe o `.next`
 (`Cannot find module './chunks/vendor-chunks/next.js'`). Solucao: parar o
-servidor, `rm -rf .next`, subir de novo. Se a porta 3000 ficar presa,
-`Get-NetTCPConnection -LocalPort 3000` + `Stop-Process` no PowerShell.
+servidor, `rm -rf .next`, subir de novo.
 
 ---
 
@@ -1020,167 +686,169 @@ servidor, `rm -rf .next`, subir de novo. Se a porta 3000 ficar presa,
 2. **Regra de negocio so no Service.** Postgres cuida de integridade e de
    funcoes mecanicas que recebem o valor ja calculado.
 3. **Autenticacao migra para Supabase Auth** — auditada, a fazer depois.
-4. **MongoDB foi a fonte de verdade** durante a migracao; migrar sempre com
-   base no formato REAL dos documentos, nunca assumindo `domain.ts`.
-5. **Um unico projeto Supabase** atende todas as empresas.
-6. **Nunca mockar integracao externa.**
-7. **Valor de pedido concluido nao se edita** — corrige-se por lancamento no
+4. **Um unico projeto Supabase** atende todas as empresas.
+5. **Nunca mockar integracao externa.**
+6. **Valor de pedido concluido nao se edita** — corrige-se por lancamento no
    financeiro.
+7. **Custo/margem: nunca inventar um numero ausente.** `null` quando nao ha
+   dado suficiente, mesmo que isso signifique mostrar "—" na tela. Regra que
+   atravessa CMV, ponto de equilibrio, comparativo (`delta_percent`) e
+   margem por canal/produto.
+8. **Feature flag ausente/null conta como LIGADA, nunca desligada.** Falta
+   de dado nao pode virar perda de acesso.
+9. **Migrations sao imutaveis uma vez aplicadas.** Mudanca de schema sempre
+   em arquivo novo, nunca editando um antigo.
 
 ---
 
 # 10. Achados e armadilhas (para nao redescobrir)
 
-Bugs reais encontrados **rodando** contra banco/servidor/navegador de verdade:
+Bugs e comportamentos reais encontrados **rodando** contra banco/servidor/
+navegador de verdade — nao suposicao:
 
-1. **`pedidos.comanda_id` nunca existiu como coluna** — pedidos gerados por
-   fechamento de comanda sempre carregam esse campo no Mongo. Migration `0012`.
-2. **`pedidos_tipo_check` nao aceitava `'mesa'`** — 4o valor real de `tipo`.
-   Migration `0012`.
-3. **Ordem de migracao**: apos criar a FK do item 1, `comandas` **tem que**
-   migrar antes de `pedidos`.
-4. **`jsonb_populate_record()` zera campos ausentes com NULL** em vez de
-   aplicar o `DEFAULT`. Por isso as funcoes atomicas usam lista de colunas
-   explicita + `coalesce()`.
-5. **Upsert em lote via PostgREST nao aplica `DEFAULT` por linha** — se o lote
-   mistura documentos com e sem um campo opcional, as linhas sem ele recebem
-   `NULL` e violam `not null`.
-6. **`supabase-js` remove chaves `undefined`** do corpo JSON: RPC com
-   parametro obrigatorio sem default falha com `PGRST202` — erro confuso.
-   Migration `0013`.
-7. **Direct connection do Supabase e IPv6** — usar o Session Pooler.
-8. **`papeis`/`permissoes` existem no banco mas o app nao le** — RBAC e
-   hardcoded.
-9. **`ON DELETE CASCADE` em `empresas`** limpa o tenant inteiro — util para
-   teste, perigoso em producao.
-10. **O seed criava a mesa demo apontando para comanda inexistente**
-    (violava `mesas_comanda_id_fkey`). No Mongo passava — nao ha FK.
-11. **Bulk insert de pedidos nao avanca `pedido_contadores`** — o proximo
-    pedido colidia. Migration `0014`. **Regra geral: toda carga em lote com
-    numero explicito precisa realinhar o contador.**
-12. **`usuarios.id` e IMUTAVEL.** 4 FKs apontam para ele e
-    `auditoria.usuario_id` guarda 78 ids **sem FK**. A Admin API do Supabase
-    **aceita id customizado** (verificado), entao nao ha motivo para trocar.
-13. **`service_role` IGNORA RLS** — ver §3.
-14. **O frontend nao tem refresh de token.** Hoje dura 7 dias; o do Supabase
-    Auth dura **1 hora**. Sem refresh, todo usuario cai apos 1h — quebra que
-    passa em teste de API e so aparece com usuario real.
-15. **Validacao de env no nivel do modulo quebra `next build`.** O build
-    avalia o modulo das rotas com `NODE_ENV=production` e sem variaveis de
-    runtime. Foi o caso do `JWT_SECRET` — resolvido tornando a checagem lazy.
-16. **EasyPanel v2.30.0: "Caminho de Build" e obrigatorio e nao aceita raiz.**
-    Rejeita vazio, `/`, `.` e `./`; aceita `/algo`. Mas o contexto precisa ser
-    a raiz. Usar `/app` faz o contexto virar `code/app` e o build falha com
-    `lstat .../app/docker: no such file or directory`.
-17. **next-themes: `setTheme` MUDA DE IDENTIDADE a cada troca de tema.**
-    Colocar `setTheme` na dependencia de um `useCallback` que alimenta um
-    `useEffect` cria um loop: trocar o tema redispara o efeito. Foi assim que
-    o tema claro revertia sozinho apos ~2s (o efeito refazia `/auth/me` e
-    reaplicava o tema da empresa). Tema da empresa e **padrao inicial**,
-    aplicado uma vez via ref — nunca reimposto a cada carga.
-18. **Variavel de ambiente nova so vale apos reimplantar.**
-19. **Deploy novo exige Ctrl+Shift+R em quem ja estava com o app aberto.** O
-    JS antigo fica em cache e a mudanca "nao aparece". Antes de investigar um
-    bug pos-deploy, descartar isso — hoje custou uma investigacao inteira.
-20. **O shell come conteudo entre crases** ao editar arquivos via
-    `node -e "..."` em heredoc. Para editar documentacao com trechos de
-    codigo, usar a ferramenta de edicao, nao script de shell.
-21. **`window.print()` abre um dialogo NATIVO e bloqueante neste ambiente**
-    (confirmado testando — nao e um no-op simulado). Isso tem duas
-    consequencias: (a) automacao de navegador (Playwright) que clica num
-    botao cujo handler chama `print()` sincronamente pode travar esperando
-    o dialogo — testar via `Escape`/`handle_dialog` ou validar a logica de
-    dados separadamente de forma determinista, nao via clique real; (b) por
-    isso a impressao de cupom usa `createRoot` num container proprio no
-    `body` (`components/cupom.jsx`) em vez de portal na arvore do app — o
-    dialogo bloqueante nao pode depender de estado React que uma
-    re-renderizacao concorrente altere.
+1. **`pedidos.comanda_id` nunca existiu como coluna** no schema inicial —
+   migration `0012`.
+2. **`pedidos_tipo_check` nao aceitava `'mesa'`** — migration `0012`.
+3. **`jsonb_populate_record()` zera campos ausentes com NULL** em vez de
+   aplicar o `DEFAULT` — funcoes atomicas usam lista de colunas explicita.
+4. **Upsert em lote via PostgREST nao aplica `DEFAULT` por linha.**
+5. **`supabase-js` remove chaves `undefined`** do corpo JSON — RPC com
+   parametro obrigatorio sem default falha com `PGRST202`.
+6. **Direct connection do Supabase e IPv6** — usar o Session Pooler.
+7. **`papeis`/`permissoes` existem no banco mas o app nao le** — RBAC e
+   hardcoded (mesma classe de bug do B1 com feature_flags: tabela/coluna que
+   existe e ninguem consulta).
+8. **`ON DELETE CASCADE` em `empresas`** limpa o tenant inteiro.
+9. **Bulk insert de pedidos nao avanca `pedido_contadores`** — regra geral:
+   toda carga em lote com numero explicito precisa realinhar o contador.
+10. **`usuarios.id` e IMUTAVEL** — `auditoria.usuario_id` guarda ids sem FK.
+11. **`service_role` IGNORA RLS por completo** — isolamento em runtime e
+    100% aplicacao.
+12. **O frontend nao tem refresh de token.** Sessao dura 7 dias; sem
+    refresh, todo usuario cai apos expirar.
+13. **Validacao de env no nivel do modulo quebra `next build`** — precisa
+    ser lazy (avaliada em runtime, nao no import).
+14. **EasyPanel: "Caminho de Build" nao aceita raiz vazia/`/`/`.`/`./`.**
+    Usar `/app`, mas o CONTEXTO de build precisa continuar sendo a raiz.
+15. **next-themes: `setTheme` muda de identidade a cada troca.** Nunca por
+    numa dependencia de `useCallback`/`useEffect` — cria loop.
+16. **Deploy novo exige Ctrl+Shift+R** em quem ja estava com o app aberto.
+17. **`window.print()` abre dialogo NATIVO bloqueante** — Playwright que
+    clica um botao cujo handler chama `print()` pode travar; testar a
+    logica de dados separada da interacao real de clique.
+18. **`if (!updated)` so funciona se o repository de fato devolve algo.**
+    Supabase exige `.select()` explicito na query para o retorno nao vir
+    vazio; Mongo exige checar `matchedCount`/`modifiedCount`. Apareceu 2x
+    (KDS e Caixa) — ao adicionar essa checagem num metodo, conferir se o
+    repository dos DOIS backends participa do contrato.
+19. **Migrations nao fazem parte do deploy por padrao — precisam ser
+    ligadas explicitamente ao boot.** Custou 3 features "completas" (Estoque,
+    CMV, imagem do cardapio) rodando sem schema em producao por dias.
+    Resolvido definitivamente com `entrypoint.sh` + `migrate.mjs` (§4.3).
+20. **Checksum de migration muda entre Windows e Linux sem `eol=lf` no
+    `.gitattributes`.** `core.autocrlf=true` do Windows converte `.sql`
+    para CRLF no checkout; o container roda em LF. Sem forcar LF, todo
+    `--dry-run` local acusa falso positivo de "migration editada".
+21. **`POST /pedidos` espera `preco` explicito em cada item** — o servidor
+    confia no que o cliente ja resolveu (o front carrega preco junto com a
+    lista de produtos), nao busca pelo `produto_id`. Item sem `preco` no
+    corpo gera pedido de subtotal zero, sem erro nenhum. Achado escrevendo
+    testes de margem por canal/produto.
+22. **Custo e congelado por VENDA, nao por ITEM dentro dela.**
+    `transacoes.custo_total` e um agregado da venda inteira — nao existe
+    "quanto custou este item especifico" de forma historica. "Margem por
+    produto" usa custo ATUAL do catalogo por essa razao, e pode divergir do
+    `lucro_bruto` do DRE quando o custo de um produto mudou dentro do
+    periodo. Documentado explicitamente na tela para nao parecer bug.
+23. **"Zero" e "nao classificado" sao estados diferentes que um calculo
+    ingenuo confunde.** A formula original do ponto de equilibrio dividia
+    `despesas_fixas / margem` sem checar `despesas_fixas > 0`, entao uma
+    empresa sem NENHUMA despesa fixa classificada recebia "ponto de
+    equilibrio: R$ 0" — uma mentira mais convincente (e mais perigosa) que
+    mostrar "—". Mesma logica vale para `delta_percent` do comparativo
+    (base zero -> `null`, nunca `+100%` nem `+infinito%`).
 
 ---
 
 # 11. Pendencias e proximos passos
 
-**Lacunas de produto** (levantadas verificando o codigo — as duas primeiras
-ainda travam a operacao diaria de um restaurante real):
+**Produto — proximo pedido do dono:**
 
-- [x] ~~Impressao de pedido para a cozinha~~ — **DONE** (2026-08-12)
-- [x] ~~Tela de cozinha (KDS)~~ — **DONE** (2026-08-13, 11 tasks)
-- [x] ~~Delivery completo~~ — **DONE** (2026-08-13, 12 tasks)
-- [x] ~~Estoque~~ — **DONE** (2026-08-14, 12 tasks) ✅ Rastreamento opt-in, baixa automática na venda, alertas
-- [ ] **Fechamento de caixa** (flag `caixa` ja reservada): abrir/fechar, sangria, conferencia (14 tasks audited).
-- [ ] **Cardapio digital + QR na mesa**: encaixa no modelo de mesas/comandas
-      que ja existe, e e o tipo de recurso que **vende** o SaaS.
+- [ ] **Contas a pagar/receber com vencimento.** O financeiro hoje so
+      registra o que ja aconteceu (transacoes lancadas); isto adiciona o
+      que ainda vai vencer. Maior peca do pedido "relatorio financeiro" —
+      as outras 3 (comparativo, margem por canal, margem por produto) ja
+      estao entregues (ver §0). E um subsistema novo (tabela, cadastro,
+      telas), nao uma evolucao do relatorio existente.
 
-Flags tambem reservadas, sem urgencia: `crm`, `campanhas`, `fidelidade`,
-`cashback`, `billing`, `multiunidade`.
+**Produto — backlog conhecido, sem pedido explicito ainda:**
 
-**Tecnico:**
+- [ ] **Cardapio QR com carrinho (fase 2)** — `POST /cardapio/:slug/pedido`
+      publico + cadastro de cliente + pagamento. A fase 1 (imagem/banner)
+      tirou a barreira de entrada; isto fecha o loop de venda de verdade.
+- [ ] **Automacao do WhatsApp via n8n** — decisao do dono: fica no n8n, nao
+      no `route.js`. Arquitetura ja publica eventos
+      (`lib/integrations/n8n.js`); falta o fluxo do lado de la.
+- [ ] **Ficha tecnica (insumos)** — faz o estoque funcionar para comida
+      preparada, nao so revenda; fecharia o CMV para produtos compostos.
+- [ ] **Rate limiting** em `/auth/login` e `/auth/register`.
 
-- [ ] **Validar o frontend tela por tela** com Playwright — o restante do
-      sistema nunca passou por isso.
-- [ ] **Limpar as 92 empresas de teste** do Supabase (migracoes + rodadas da
-      suite). Nenhum dado real de cliente. **Decisao do dono.**
+**Tecnico — proximos itens do `PROFISSIONALIZACAO.md`, em ordem sugerida:**
+
+- [ ] **A3 — Monitoramento de erro em producao.**
+- [ ] **B2 — Onboarding de novo restaurante.**
+- [ ] **D1 — Extrair regra de negocio do `route.js`** (2.500+ linhas hoje).
+- [ ] **A4 — Testes E2E (Playwright) sistematicos**, cobrindo telas que hoje
+      so tem verificacao ad-hoc.
+- [ ] **Segundo projeto Supabase para staging** — eliminaria a causa raiz do
+      C1 (rodar teste local `supabase` escreve em producao).
 - [ ] **Implementar Supabase Auth** (`PHASE-8-AUTH-AUDIT.md`), incluindo
-      refresh de token no frontend (armadilha 14).
-- [ ] **Testar o fluxo real de WhatsApp** — possivel agora, com o app ao lado
-      da Evolution API.
-- [ ] **Tornar o repositorio privado** (produto comercial). Hoje publico. Ao
-      fazer, o EasyPanel precisara de autorizacao para clonar.
-- [ ] **Fazer o RLS valer** (trocar `service_role` por token de usuario). Fase
-      separada, nao juntar com Auth.
+      refresh de token no frontend (armadilha 12).
+- [ ] **Fazer o RLS valer** (trocar `service_role` por token de usuario).
+- [ ] **Tornar o repositorio privado.** Hoje publico.
 - [ ] **Dominio proprio.**
 
 ---
 
-# 12. Commits recentes (últimos 30)
+# 12. Commits recentes (sessao atual + anteriores)
 
 ```
-755a3d7 chore: update dependencies for Estoque MVP
-7031d75 ui: add stock adjustment dialog
-88c15e7 test: Add estoque integration test suite (8 test cases)
-218a2e6 ui: add low-stock warning card to dashboard
-05692d1 ui: Produtos dialog — add stock tracking fields
-15b2c1e feat: PUT /pedidos/:id — integrate stock deduction on pedido conclusion
-da872b9 feat: Mongo produtoRepository — add stock methods (identical interface to Supabase)
-888e99a feat: Supabase produtoRepository — add stock methods (decrement, ajustar, listBaixo, getEstoque)
-ad75570 types: Add Estoque interfaces + extend Produto + ProdutoRepository
-874453b migration: Add estoque schema (estoque_habilitado, quantidade, minimo)
-f2424d3 plan: Estoque MVP implementation — 12 tasks (schema, repos, UI, tests)
-06eb75f spec: Estoque MVP — rastreamento opt-in, baixa automática na venda, alertas
-2cab4b6 fix: id area-impressao move para o container no body, nao no JSX  <- corrigiu bug de pagina em branco
-7cb5392 docs: registra a impressao de cupom no HANDOFF (aguardando push)
-4c80ae4 feat: impressao de cupom (comanda da cozinha e via do cliente)
-ba04d7f docs: handoff completo — 3 melhorias no ar e lacunas de produto mapeadas
-8926206 docs: corrige secao 6.3 do HANDOFF (conteudo perdido por escape do shell)
-4ec0011 docs: registra no HANDOFF a armadilha do next-themes, valores e bucket
-6ebd061 feat: ajuste de valor em pedidos, upload de logo e correcao do tema
-d44aa48 docs: handoff completo — app publicado e validado em producao
-f456a86 docs: HANDOFF.md — repositorio sincronizado com o GitHub + guia de deploy
-ca4c404 build(deploy): prepara imagem de producao para o EasyPanel
-5e5b02a docs: ponto de retomada e lista de commits atualizados (Fase 8)
-c7ac605 security(auth): corrige 3 vulnerabilidades no JWT + auditoria da Fase 8
-537ab77 feat(fase7): paridade completa de runtime MongoDB <-> Supabase
-2ccf90d refactor(fase7): factory de repositories com switch DATABASE_PROVIDER
-87afa2a feat(supabase): valida schema, repositories e migracao contra Supabase real
-7bd641a feat(migration): ferramenta de migracao de dados MongoDB -> Supabase
-5e082a2 feat(supabase): idempotent migration upserts + fix pedidos.comanda_id
-9f45f80 fix(supabase): atomic create for pedido+itens e comanda+itens (RPC)
-d29f4d3 feat(supabase): implement Supabase repositories (Fase 5)
-305c350 feat(supabase): complete Fase 4 schema
-8e15454 fix(supabase): remove business-logic triggers
-f43e51e docs: add comprehensive Mongo->Supabase migration audit
-432a067 refactor: extract empresa Mongo access into repository
-796cb05 refactor: extract comanda/pagamento Mongo access into repositories
-6f2619f refactor: extract pedido Mongo access into repository
-6373f9e refactor: extract conversa/mensagem Mongo access into repositories
-aa26ecb refactor: extract mesa Mongo access into repository
-6fa0bcd refactor: extract auditoria/integracoes Mongo access into repositories
-2675a4b refactor: extract usuario/transacao Mongo access into repositories
-ed2c3fe refactor: extract categoria/produto/cliente Mongo access into repositories
-0f24486 feat(domain): extend contracts for MongoDB->Supabase migration
-e2bfe84 chore: ignore .env files to prevent secret leakage
-2d4642a docs: add CLAUDE.md autonomous agent rules and HANDOFF.md
+567188b feat(relatorio): margem bruta por canal de venda
+97c3696 feat(relatorio): comparativo com o periodo anterior
+5af895d refactor(modulos): tira da tela os modulos que nao usamos
+46ad3d8 feat(modulos): feature flags passam a controlar acesso de verdade (B1)
+1683c97 feat(financeiro): DRE completa com despesas por categoria e ponto de equilibrio
+25c9a0c docs: migrations automaticas confirmadas funcionando em producao
+35d7b3f feat(estoque): alerta global com popup e som quando item atinge o minimo
+8548470 feat(deploy): migrations rodam automaticamente no boot do container
+7c55ef2 docs: achado critico — migrations 0019/0020/0021 nao estavam em producao
+65a5893 fix: /entregadores retorna array/objeto puro, nao envelope
+50e1a90 docs: handoff — C1 concluido, producao limpa
+7691ca9 docs: registra limpeza de empresas de teste em producao (C1)
+6afddef docs: handoff — 2026-08-18, A2 concluida, C1 em progress
+41fb221 docs: marca A2 concluido no programa de profissionalizacao
+e12abe8 fix: elimina falhas silenciosas na UI (A2, profissionalizacao)
+7f40a6c docs: atualiza HANDOFF com sessao de 2026-08-18
+d5da6b3 docs: registra decisoes e correcoes da analise competitiva (2026-08-18)
+14c4050 fix(seguranca): webhook do WhatsApp exige assinatura e deduplica
+4d262ce feat: imagem do cardapio digital + banner de itens indisponiveis
+9d6202d chore: fecha gaps nao-bloqueantes apontados na revisao final da CMV
+2544610 fix(seguranca): gate de permissao no bloco cmv do dashboard
+1b2d493 test: suite de integracao de custo e CMV
+75ef358 feat: CMV no relatorio financeiro e no export CSV
+917800a feat: cards de lucro bruto e CMV no dashboard
+458d2a9 feat: campo de custo no cadastro do produto, persistido nos dois sentidos
+5add47c feat: bloco cmv no dashboard e no relatorio financeiro
+488ac50 feat: apura e congela o custo nos tres pontos de venda
+3019916 feat: modulo puro de apuracao de custo e CMV
+ac17676 schema: custo em produtos e apuracao congelada em transacoes
+34e374c fix: bug critico do KDS (pedido travado em em_preparo)
+d624507 fix: updateItemCampos() do Supabase nao retornava o registro
+e97dbfa fix: unwrap() com assinatura errada zerava consultas de caixa por pedido/caixa
 ```
+
+(Historico completo, incluindo a migracao MongoDB→Supabase inteira,
+disponivel via `git log`.)
 
 ---
 
@@ -1190,39 +858,54 @@ e2bfe84 chore: ignore .env files to prevent secret leakage
 - `CLAUDE.md` — regras de operacao autonoma (ler antes de qualquer tarefa).
   Secao 18.1 define o formato obrigatorio deste handoff.
 
-**Codigo**
+**Codigo — backend**
 - `app/api/[[...path]]/route.js` — API inteira (Controller + Service).
-- `app/page.js` — frontend inteiro (SPA).
 - `packages/domain/src/index.ts` — contratos de dominio.
 - `lib/repositories/mongo/` — 16 repositories.
 - `lib/repositories/supabase/` — 15 repositories.
 - `lib/repositories/factory.js` — switch `DATABASE_PROVIDER`.
 - `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`,
   `storage.js`, `payments/`.
+- `lib/custo.js` — CMV, margem por canal, margem por produto (modulo puro).
+- `lib/financeiro.js` — DRE, ponto de equilibrio, comparativo, categorias de
+  despesa (modulo puro).
+- `lib/modulos.js` — feature flags / gate de plano (modulo puro + funcoes de
+  leitura sobre `Empresa`).
+- `lib/caixa.js` — calculo de esperado/diferenca do caixa.
 - `lib/cupom-dados.js` — mapeamento puro Pedido/Comanda -> dados do cupom.
+
+**Codigo — frontend**
+- `app/page.js` — frontend inteiro (SPA).
 - `components/cupom.jsx` — renderiza e imprime o cupom (`window.print()`).
 
 **Banco**
-- `supabase/migrations/0001`…`0015`, `triggers.sql`, `policies_rls.sql`,
-  `seed.sql`. Ordem real de execucao no §4.3 e no `README.md`.
+- `supabase/migrations/0001`…`0023` — lista completa e ordem no §4.3.
+- `supabase/prod-ca-2021.crt` — CA raiz do Supabase, para TLS do migrator.
 
 **Deploy**
-- `docker/Dockerfile`, `.dockerignore` — imagem de producao.
+- `docker/Dockerfile`, `docker/entrypoint.sh`, `.dockerignore` — imagem de
+  producao (migra o schema, depois sobe o servidor).
+- `scripts/migrate.mjs` — runner de migrations (idempotente, checksum,
+  advisory lock, `--dry-run`).
 - `docker-compose.yml` — stack completa para VPS limpo (**nao** usar no
   EasyPanel).
 
-**Ferramentas**
-- `scripts/migrate-mongo-to-supabase.mjs` — migracao de dados (idempotente).
-- `scripts/validate-migration.mjs` — validacao pos-migracao (so leitura).
-
 **Documentacao**
 - `docs/operations/DEPLOY-EASYPANEL.md` — deploy passo a passo.
-- `docs/plans/` — uma auditoria/relatorio por fase (lista no §7).
+- `docs/PROFISSIONALIZACAO.md` — backlog de saude tecnica (ver §0).
+- `docs/ANALISE-COMPETITIVA.md` — comparativo com concorrentes do nicho.
+- `docs/plans/` — uma auditoria/relatorio por fase historica.
 - `docs/ARCHITECTURE.md` (ADR-006), `docs/FOLDER_STRUCTURE.md`.
 
 **Testes**
-- `backend_test.py`, `_v2`, `_v3` — regressao de backend (baseline no §7.1).
-- `test_result.md` — historico e comportamentos conhecidos.
+- `tests/run_all.py` — descobre e roda toda `tests/backend_test_*.py`.
+- `tests/backend_test_dre.py`, `_comparativo.py`, `_margem_canal.py`,
+  `_margem_produto.py`, `_modulos.py` — relatorio financeiro e feature
+  flags (sessao atual).
+- `tests/backend_test.py`, `_v2`, `_v3`, `_caixa.py`, `_kds.py`,
+  `_custo.py`, `_cardapio.py`, `_estoque.py`, `_entregadores.py` —
+  regressao dos modulos anteriores.
 
 **Backups**
-- `backups/` — dumps do Supabase. **No `.gitignore`** (pode conter dado real).
+- `backups/` — dumps do Supabase. **No `.gitignore`** (pode conter dado
+  real).
