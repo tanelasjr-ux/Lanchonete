@@ -9,6 +9,7 @@ import {
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
   Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX, AlertCircle,
+  Volume2, VolumeX, AlertTriangle,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -336,6 +337,147 @@ function EstoqueBaixoCard() {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+const ALERTA_ESTOQUE_MUDO_KEY = 'ros_alerta_estoque_mudo'
+
+/**
+ * Bipe de alerta gerado em runtime (Web Audio), sem arquivo de som.
+ *
+ * Um .mp3 exigiria pasta public/ — que este projeto nao tem (ver Dockerfile) —
+ * e entraria no bundle. Dois tons curtos e descendentes cortam melhor o ruido
+ * de cozinha do que um bipe unico, e nao soam como notificacao de celular.
+ */
+function tocarBipeAlerta() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    const ctx = new Ctx()
+    const agora = ctx.currentTime
+    ;[[880, 0], [660, 0.18]].forEach(([hz, atraso]) => {
+      const osc = ctx.createOscillator()
+      const vol = ctx.createGain()
+      osc.type = 'square'
+      osc.frequency.value = hz
+      // Envelope curto: sem o fade o corte seco vira um "clique" desagradavel.
+      vol.gain.setValueAtTime(0.0001, agora + atraso)
+      vol.gain.exponentialRampToValueAtTime(0.25, agora + atraso + 0.01)
+      vol.gain.exponentialRampToValueAtTime(0.0001, agora + atraso + 0.15)
+      osc.connect(vol).connect(ctx.destination)
+      osc.start(agora + atraso)
+      osc.stop(agora + atraso + 0.16)
+    })
+    setTimeout(() => ctx.close().catch(() => {}), 800)
+  } catch {
+    // Navegador bloqueia audio antes da primeira interacao do usuario. O popup
+    // continua aparecendo — o som e reforco, nao o canal principal do aviso.
+  }
+}
+
+/**
+ * Alerta global de estoque no minimo ou abaixo dele.
+ *
+ * Fica no shell da aplicacao, nao no Dashboard: quem esta lancando pedido
+ * precisa saber que acabou o item AGORA, e nao na proxima vez que abrir o
+ * Dashboard. O card do Dashboard continua existindo como painel de consulta.
+ *
+ * So dispara em item que ACABOU de entrar em falta — a cada 30s reabrir o mesmo
+ * popup dos mesmos itens viraria ruido e o operador aprenderia a ignorar. Item
+ * que se recupera sai da lista e volta a poder alertar se cair de novo.
+ */
+function AlertaEstoqueGlobal() {
+  const [baixos, setBaixos] = useState([])
+  const [novos, setNovos] = useState([])
+  const [aberto, setAberto] = useState(false)
+  const [mudo, setMudo] = useState(false)
+  const conhecidos = useRef(null)
+
+  // Lido depois da montagem: localStorage nao existe no render do servidor.
+  useEffect(() => {
+    setMudo(localStorage.getItem(ALERTA_ESTOQUE_MUDO_KEY) === '1')
+  }, [])
+
+  const alternarMudo = () => {
+    setMudo((m) => {
+      const proximo = !m
+      localStorage.setItem(ALERTA_ESTOQUE_MUDO_KEY, proximo ? '1' : '0')
+      return proximo
+    })
+  }
+
+  useEffect(() => {
+    let vivo = true
+    const verificar = async () => {
+      let lista
+      try {
+        const data = await api('/produtos/estoque-baixo')
+        lista = data.produtos || []
+      } catch (e) {
+        // Polling de 30s: toast a cada falha seria ruido continuo. Ver A2.
+        console.warn('Alerta de estoque: falha ao consultar', e.message)
+        return
+      }
+      if (!vivo) return
+      setBaixos(lista)
+
+      const idsAgora = new Set(lista.map((p) => p.id))
+      // Primeira passada: tudo que ja esta em falta conta como novidade — quem
+      // abriu o sistema ainda nao viu esses itens hoje.
+      const anteriores = conhecidos.current
+      const entraram = anteriores === null
+        ? lista
+        : lista.filter((p) => !anteriores.has(p.id))
+      conhecidos.current = idsAgora
+
+      if (entraram.length > 0) {
+        setNovos(entraram)
+        setAberto(true)
+        if (localStorage.getItem(ALERTA_ESTOQUE_MUDO_KEY) !== '1') tocarBipeAlerta()
+      }
+    }
+    verificar()
+    const id = setInterval(verificar, 30000)
+    return () => { vivo = false; clearInterval(id) }
+  }, [])
+
+  if (!aberto) return null
+  const destacar = new Set(novos.map((p) => p.id))
+
+  return (
+    <Dialog open onOpenChange={() => setAberto(false)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="h-5 w-5" />
+            {novos.length === 1 ? 'Item chegou ao estoque mínimo' : `${novos.length} itens chegaram ao estoque mínimo`}
+          </DialogTitle>
+          <DialogDescription>
+            Estes produtos estão na quantidade mínima configurada, ou abaixo dela.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-72 overflow-auto ros-scroll space-y-2">
+          {baixos.map((p) => (
+            <div
+              key={p.id}
+              className={`flex items-center justify-between rounded-lg border p-2.5 text-sm ${destacar.has(p.id) ? 'border-amber-500/50 bg-amber-500/10' : ''}`}
+            >
+              <span className="font-medium">{p.nome}</span>
+              <span className="text-muted-foreground">
+                {p.estoque_quantidade} <span className="text-xs">(mín. {p.estoque_minimo})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+        <DialogFooter className="sm:justify-between gap-2">
+          <Button variant="ghost" size="sm" onClick={alternarMudo} className="gap-2">
+            {mudo ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+            {mudo ? 'Som desativado' : 'Som ativado'}
+          </Button>
+          <Button onClick={() => setAberto(false)}>Entendi</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -3127,6 +3269,7 @@ function App() {
           {view === 'kds_concluir' && <CozinhaPendentes apiFetch={api} />}
         </main>
       </div>
+      <AlertaEstoqueGlobal />
       <Toaster richColors position="top-right" />
     </div>
   )

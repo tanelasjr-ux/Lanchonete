@@ -258,6 +258,68 @@ def main():
         except Exception as e:
             log_fail("Fractional stock", str(e))
 
+        # ===== Test 9: GET /produtos/estoque-baixo =====
+        # Endpoint que alimenta o card do Dashboard E o alerta global (popup +
+        # som) adicionado em 2026-08-18. Estava sem nenhuma cobertura ate
+        # entao — mesmo padrao que deixou o bug de /entregadores passar cinco
+        # dias sem ser notado.
+        print("\n[TEST 9] GET /produtos/estoque-baixo")
+        try:
+            headers_c, _ = criar_empresa("Estoque Baixo QA")
+
+            # A regra do alerta e "no minimo OU abaixo", entao o caso de
+            # igualdade exata e o que mais importa travar: um `<` no lugar de
+            # `<=` deixaria de avisar justamente no ponto de virada.
+            p_igual = criar_produto(headers_c, "No Minimo Exato", 10.0,
+                                    estoque_habilitado=True, estoque_quantidade=5, estoque_minimo=5)
+            p_abaixo = criar_produto(headers_c, "Abaixo do Minimo", 10.0,
+                                     estoque_habilitado=True, estoque_quantidade=1, estoque_minimo=3)
+            p_ok = criar_produto(headers_c, "Estoque Folgado", 10.0,
+                                 estoque_habilitado=True, estoque_quantidade=50, estoque_minimo=5)
+            # Sem controle de estoque: quantidade baixa nao significa nada aqui,
+            # e alertar sobre ele seria alarme falso permanente.
+            p_sem = criar_produto(headers_c, "Sem Controle", 10.0,
+                                  estoque_habilitado=False, estoque_quantidade=0, estoque_minimo=99)
+
+            resp = requests.get(f"{BASE_URL}/produtos/estoque-baixo", headers=headers_c)
+            if resp.status_code != 200:
+                log_fail("GET /produtos/estoque-baixo", f"Status {resp.status_code}: {resp.text}", critical=True)
+            else:
+                nomes = [p["nome"] for p in resp.json().get("produtos", [])]
+
+                if "No Minimo Exato" in nomes:
+                    log_pass("estoque-baixo inclui produto EXATAMENTE no minimo")
+                else:
+                    log_fail("estoque-baixo no minimo exato",
+                             f"'No Minimo Exato' (qtd=5, min=5) deveria alertar; veio {nomes}", critical=True)
+
+                if "Abaixo do Minimo" in nomes:
+                    log_pass("estoque-baixo inclui produto abaixo do minimo")
+                else:
+                    log_fail("estoque-baixo abaixo do minimo", f"esperado na lista, veio {nomes}", critical=True)
+
+                if "Estoque Folgado" not in nomes:
+                    log_pass("estoque-baixo ignora produto com estoque acima do minimo")
+                else:
+                    log_fail("estoque-baixo folgado", "produto com estoque suficiente nao deveria alertar")
+
+                if "Sem Controle" not in nomes:
+                    log_pass("estoque-baixo ignora produto com controle desabilitado")
+                else:
+                    log_fail("estoque-baixo sem controle",
+                             "produto com estoque_habilitado=false nao deveria alertar")
+
+            # Isolamento: alerta de uma empresa nunca pode vazar para outra.
+            resp_b = requests.get(f"{BASE_URL}/produtos/estoque-baixo", headers=headers_b)
+            nomes_b = [p["nome"] for p in resp_b.json().get("produtos", [])]
+            if "No Minimo Exato" not in nomes_b and "Abaixo do Minimo" not in nomes_b:
+                log_pass("estoque-baixo isolado por empresa (multi-tenant)")
+            else:
+                log_fail("estoque-baixo multi-tenant",
+                         f"empresa B enxergou produto da empresa C: {nomes_b}", critical=True)
+        except Exception as e:
+            log_fail("GET /produtos/estoque-baixo", str(e), critical=True)
+
         # ===== Summary =====
         print_section("TEST SUMMARY")
         print(f"✅ Passed: {len(results['passed'])}")
