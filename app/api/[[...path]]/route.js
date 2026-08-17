@@ -1692,7 +1692,8 @@ async function handler(request, { params }) {
         ticketMedio: Math.round(ticketMedio * 100) / 100,
         totalClientes: clientes,
         totalProdutos: produtos.length,
-        serie, topProdutos, recentes, porStatus, cmv,
+        serie, topProdutos, recentes, porStatus,
+        cmv: (can(ctx.papel, 'relatorios') || can(ctx.papel, 'financeiro')) ? cmv : null,
       })
     }
 
