@@ -1,8 +1,8 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (achado critico de schema CORRIGIDO na raiz:
-migrations agora rodam sozinhas no boot do container, verificado em producao;
-alerta global de estoque entregue — ver §0)
+Ultima atualizacao: 2026-08-18 (migrations automaticas verificadas em
+producao; alerta global de estoque; DRE + ponto de equilibrio + despesas por
+categoria no relatorio financeiro — ver §0)
 
 ## Como usar este arquivo
 
@@ -87,6 +87,39 @@ API REST). Duas armadilhas no caminho, ambas dignas de nota para a proxima vez:
 2. O painel entrega a string com o literal `[YOUR-PASSWORD]`, que passa
    despercebido facilmente. Copiar o valor do `.env` local evita os dois
    problemas de uma vez.
+
+**Bonus tecnico do dia:** o proprio `migrate.mjs --dry-run`, rodado localmente
+apos criar a migration 0022, acusou `0001_init.sql` como "editada desde que
+foi aplicada" — falso positivo causado por `core.autocrlf=true` do Windows
+convertendo o arquivo pra CRLF no checkout, enquanto o blob do git (e o
+container Linux que rodou o baseline) usam LF. `.gitattributes` ganhou
+`*.sql text eol=lf` pra fechar essa fresta de vez.
+
+**Alerta global de estoque entregue** (`35d7b3f`) — popup + bipe sonoro
+(gerado via Web Audio, sem arquivo — o projeto nao tem `public/`) quando um
+item chega ou passa do minimo configurado. Vive no shell da app (qualquer
+tela, nao so Dashboard). So alerta item que ACABOU de entrar em falta —
+reabrir o mesmo aviso a cada 30s vira ruido que o operador aprende a ignorar.
+Mudo persiste em `localStorage`. 5 testes novos em `GET /produtos/estoque-baixo`,
+que nao tinha nenhuma cobertura (mesmo padrao do bug de `/entregadores`).
+
+**Relatorio financeiro — DRE, despesas por categoria e ponto de equilibrio**
+(pendente de commit nesta sessao) — pedido do dono: "separar despesa por tipo
+(pessoal, aluguel, energia...) e mostrar lucro liquido". Migration `0022`
+adiciona `transacoes.natureza` (`'fixa' | 'variavel' | null`, nunca inferida —
+mesma regra de nao-adivinhar de `produtos.custo`). Vocabulario fixo de
+categoria de despesa com natureza sugerida (`lib/financeiro.js`,
+`CATEGORIAS_DESPESA`) substitui o texto livre que fazia "Aluguel"/"aluguel"
+virarem categorias diferentes. DRE completo (receita -> CMV -> lucro bruto ->
+despesas fixas/variaveis -> lucro liquido) + ponto de equilibrio mensal
+(formula: despesas_fixas / margem_de_contribuicao). Achado e corrigido no
+proprio desenvolvimento: a formula original devolvia `R$ 0` de ponto de
+equilibrio quando nao havia despesa fixa cadastrada — corrigido para `null`,
+porque zero fixo e quase sempre "nao classificado ainda", nunca "este
+restaurante nao tem aluguel". 8 testes novos (`tests/backend_test_dre.py`).
+Sugestoes que ficaram de fora, por decisao de escopo (nao pedidas
+explicitamente): comparativo com periodo anterior, curva ABC de margem por
+produto, margem por canal (balcao/delivery/mesa).
 
 ## 📋 Dois backlogs, propositos diferentes
 

@@ -19,6 +19,15 @@
 Dockerfile  text eol=lf
 *.Dockerfile text eol=lf
 
+# scripts/migrate.mjs calcula um checksum SHA-256 do CONTEUDO EM BYTES de cada
+# migration para detectar edicao pos-aplicacao (ver script). Sem esta linha,
+# um checkout no Windows converte para CRLF (core.autocrlf=true), o checksum
+# muda, e o runner acusa falsamente "migration editada" mesmo quando o SQL e
+# byte-a-byte identico ao que rodou em producao (Linux, LF). Descoberto
+# rodando `migrate.mjs --dry-run` localmente logo apos criar 0022: acusou
+# 0001_init.sql como "mudada" so por causa da quebra de linha.
+*.sql text eol=lf
+
 # Certificado: conteudo exato importa (o parser de PEM e sensivel), entao nao
 # deixar o Git reescrever quebra de linha nenhuma.
 *.crt -text

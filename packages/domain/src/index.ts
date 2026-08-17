@@ -197,6 +197,14 @@ export interface Transacao extends TenantScoped {
   receita_com_custo: number;
   /** Receita de TODOS os itens. Denominador da cobertura. */
   receita_base: number;
+  /**
+   * Natureza da despesa para o DRE/ponto de equilibrio (migration 0022).
+   * `null` = nao classificada (inclui toda transacao anterior a 0022, e
+   * receitas — o campo so tem sentido para tipo='despesa'). Nunca inferida a
+   * partir da categoria no servidor: mesma regra de "nao adivinhar" de
+   * `custo_total`/`cardapio_imagem_url` — ver lib/financeiro.js.
+   */
+  natureza: 'fixa' | 'variavel' | null;
 }
 
 /**

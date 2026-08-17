@@ -1898,6 +1898,95 @@ function presetRange(p) {
   if (p === 'mes_ant') return [d0(new Date(now.getFullYear(), now.getMonth() - 1, 1)), new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)]
   return [start, end]
 }
+
+/**
+ * DRE simplificado (Demonstrativo de Resultado): a cascata receita -> CMV ->
+ * lucro bruto -> despesas operacionais -> lucro liquido, mais o ponto de
+ * equilibrio. A formula vive em lib/financeiro.js — este componente so exibe.
+ *
+ * So aparece quando ha alguma despesa OU receita no periodo: DRE de um
+ * periodo totalmente vazio nao ensina nada e so ocupa espaco.
+ */
+function DreCard({ dre, despesasPorCategoria, coberturaCmv }) {
+  if (dre.receita_total === 0 && dre.total_despesas_operacionais === 0) return null
+
+  const linha = (label, valor, opts = {}) => (
+    <div className={`flex items-center justify-between py-1.5 ${opts.total ? 'border-t mt-1 pt-2 font-semibold' : ''} ${opts.indent ? 'pl-4 text-muted-foreground' : ''}`}>
+      <span className={opts.total ? '' : 'text-sm'}>{label}</span>
+      <span className={opts.total ? '' : 'text-sm'}>{valor}</span>
+    </div>
+  )
+
+  const NATUREZA_LABEL = { fixa: 'Fixa', variavel: 'Variável', mista: 'Mista', null: 'Não classificada' }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">DRE — Demonstrativo de Resultado</CardTitle>
+          <CardDescription>Receita até lucro líquido, o número que diz se o período fechou no azul.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {linha('Receita', brl(dre.receita_total))}
+          {linha('(–) Custo da mercadoria (CMV)', `– ${brl(dre.custo_mercadoria)}`, { indent: true })}
+          {linha('= Lucro bruto', brl(dre.lucro_bruto), { total: true })}
+          {linha('(–) Despesas fixas', `– ${brl(dre.despesas_fixas)}`, { indent: true })}
+          {linha('(–) Despesas variáveis', `– ${brl(dre.despesas_variaveis)}`, { indent: true })}
+          {dre.despesas_nao_classificadas > 0 && linha('(–) Despesas não classificadas', `– ${brl(dre.despesas_nao_classificadas)}`, { indent: true })}
+          {linha('= Lucro líquido', <span className={dre.lucro_liquido >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{brl(dre.lucro_liquido)}</span>, { total: true })}
+          {dre.margem_liquida_percent !== null && (
+            <p className="text-xs text-muted-foreground mt-2">Margem líquida: {dre.margem_liquida_percent.toFixed(1).replace('.', ',')}% da receita</p>
+          )}
+          {dre.despesas_nao_classificadas > 0 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+              {brl(dre.despesas_nao_classificadas)} em despesas sem natureza definida (fixa/variável) — não entram no ponto de equilíbrio abaixo. Edite o lançamento para classificar.
+            </p>
+          )}
+          <div className="mt-4 rounded-lg border p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium flex items-center gap-1.5"><Percent className="h-4 w-4" />Ponto de equilíbrio (mensal)</span>
+              <span className="font-semibold">{dre.ponto_equilibrio !== null ? brl(dre.ponto_equilibrio) : '—'}</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {dre.ponto_equilibrio !== null
+                ? 'Receita mínima no período para cobrir custos fixos e variáveis, sem lucro nem prejuízo.'
+                : 'Precisa de despesa fixa cadastrada e receita no período para calcular.'}
+            </p>
+            {coberturaCmv !== undefined && coberturaCmv !== null && coberturaCmv < 90 && dre.ponto_equilibrio !== null && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                Apenas {coberturaCmv.toFixed(0)}% da receita tem custo de mercadoria cadastrado — este número tende a ficar mais preciso conforme mais produtos tiverem custo cadastrado.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Despesas por categoria</CardTitle>
+          <CardDescription>Onde o dinheiro saiu — pessoal, aluguel, insumo, energia, o que for.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {(!despesasPorCategoria || despesasPorCategoria.length === 0) ? (
+            <p className="text-sm text-muted-foreground">Nenhuma despesa no período.</p>
+          ) : (
+            <div className="space-y-2">
+              {despesasPorCategoria.map((d) => (
+                <div key={d.categoria} className="flex items-center justify-between text-sm border-b pb-2 last:border-0">
+                  <div>
+                    <div className="font-medium">{d.categoria}</div>
+                    <div className="text-xs text-muted-foreground">{NATUREZA_LABEL[d.natureza ?? 'null']}</div>
+                  </div>
+                  <span className="font-medium">{brl(d.valor)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 function Relatorios() {
   const [preset, setPreset] = useState('30d')
   const [custom, setCustom] = useState({ inicio: '', fim: '' })
@@ -1930,6 +2019,28 @@ function Relatorios() {
       rows.push(['CMV %', String(rep.cmv.cmv_percent).replace('.', ',')])
       rows.push(['Cobertura %', String(rep.cmv.cobertura_percent ?? 0).replace('.', ',')])
       rows.push([])
+    }
+    if (rep.dre) {
+      const d = rep.dre
+      rows.push(['DRE'])
+      rows.push(['Receita', String(d.receita_total).replace('.', ',')])
+      rows.push(['(-) Custo da mercadoria', String(d.custo_mercadoria).replace('.', ',')])
+      rows.push(['= Lucro bruto', String(d.lucro_bruto).replace('.', ',')])
+      rows.push(['(-) Despesas fixas', String(d.despesas_fixas).replace('.', ',')])
+      rows.push(['(-) Despesas variáveis', String(d.despesas_variaveis).replace('.', ',')])
+      rows.push(['(-) Despesas não classificadas', String(d.despesas_nao_classificadas).replace('.', ',')])
+      rows.push(['= Lucro líquido', String(d.lucro_liquido).replace('.', ',')])
+      rows.push(['Margem líquida %', String(d.margem_liquida_percent ?? '').replace('.', ',')])
+      rows.push(['Ponto de equilíbrio (mensal)', d.ponto_equilibrio !== null ? String(d.ponto_equilibrio).replace('.', ',') : 'nao calculavel'])
+      rows.push([])
+      if (rep.despesas_por_categoria?.length) {
+        rows.push(['Despesas por categoria'])
+        rows.push(['Categoria', 'Natureza', 'Valor'])
+        for (const c of rep.despesas_por_categoria) {
+          rows.push([c.categoria, c.natureza ?? 'nao classificada', String(c.valor).replace('.', ',')])
+        }
+        rows.push([])
+      }
     }
     rows.push(['Data', 'Pedido', 'Cliente', 'Pagamento', 'Valor', 'Status', 'Origem'])
     for (const r of rep.tabela) {
@@ -1983,6 +2094,7 @@ function Relatorios() {
               <Stat icon={CheckCircle2} label="Cobertura de custo" value={`${(rep.cmv.cobertura_percent ?? 0).toFixed(0)}%`} hint="quanto do faturamento tem custo apurado" tone="primary" />
             </div>
           )}
+          {rep.dre && <DreCard dre={rep.dre} despesasPorCategoria={rep.despesas_por_categoria} coberturaCmv={rep.cmv?.cobertura_percent} />}
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Faturamento por dia</CardTitle></CardHeader><CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%"><AreaChart data={rep.serie} margin={{ left: -18, right: 8, top: 8 }}>
@@ -2026,8 +2138,26 @@ function Relatorios() {
   )
 }
 function TxDialog({ onClose, onSave }) {
-  const [f, setF] = useState({ tipo: 'despesa', categoria: '', descricao: '', valor: '' })
+  const [f, setF] = useState({ tipo: 'despesa', categoria: '', natureza: '', descricao: '', valor: '' })
+  const [categorias, setCategorias] = useState([])
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+
+  useEffect(() => { api('/financeiro/categorias-despesa').then(setCategorias).catch(() => {}) }, [])
+
+  // Trocar de categoria pre-preenche a natureza sugerida — mas so se o dono
+  // ainda nao tiver escolhido nada nesta sessao do dialog. Sobrescrever uma
+  // escolha manual toda vez que a categoria muda seria irritante, e o dono
+  // pode legitimamente discordar do padrao (ver comentario em lib/financeiro.js).
+  const [naturezaTocada, setNaturezaTocada] = useState(false)
+  const setCategoria = (v) => {
+    set('categoria', v)
+    if (!naturezaTocada) {
+      const sugerida = categorias.find((c) => c.valor === v)?.natureza_sugerida
+      set('natureza', sugerida || '')
+    }
+  }
+  const setNatureza = (v) => { setNaturezaTocada(true); set('natureza', v) }
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent>
@@ -2035,9 +2165,36 @@ function TxDialog({ onClose, onSave }) {
         <div className="space-y-4">
           <div className="space-y-2"><Label>Tipo</Label><Select value={f.tipo} onValueChange={(v) => set('tipo', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="receita">Receita</SelectItem><SelectItem value="despesa">Despesa</SelectItem></SelectContent></Select></div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2"><Label>Categoria</Label><Input value={f.categoria} onChange={(e) => set('categoria', e.target.value)} placeholder="Ex: Insumos" /></div>
+            <div className="space-y-2">
+              <Label>Categoria</Label>
+              {f.tipo === 'despesa' ? (
+                <Select value={f.categoria} onValueChange={setCategoria}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {categorias.filter((c) => c.valor !== 'Estorno').map((c) => (
+                      <SelectItem key={c.valor} value={c.valor}>{c.valor}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={f.categoria} onChange={(e) => set('categoria', e.target.value)} placeholder="Ex: Vendas" />
+              )}
+            </div>
             <div className="space-y-2"><Label>Valor (R$)</Label><Input type="number" step="0.01" value={f.valor} onChange={(e) => set('valor', e.target.value)} /></div>
           </div>
+          {f.tipo === 'despesa' && (
+            <div className="space-y-2">
+              <Label>Natureza</Label>
+              <Select value={f.natureza} onValueChange={setNatureza}>
+                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixa">Fixa — acontece independente de vender (aluguel, salário)</SelectItem>
+                  <SelectItem value="variavel">Variável — só existe porque vendeu (insumo, comissão)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Usada no ponto de equilíbrio do relatório. Sem isso, a despesa ainda entra no total, só fica fora desse cálculo.</p>
+            </div>
+          )}
           <div className="space-y-2"><Label>Descrição</Label><Input value={f.descricao} onChange={(e) => set('descricao', e.target.value)} /></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={() => onSave(f)}>Salvar</Button></DialogFooter>
