@@ -1,7 +1,8 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (analise competitiva + imagem do cardapio +
-seguranca do webhook do WhatsApp — ver §0)
+Ultima atualizacao: 2026-08-18 (A2 concluida — falhas silenciosas na UI
+eliminadas; C1 em progress — audit produzido, aguardando sua confirmacao
+para deletar empresas de teste — ver §0)
 
 ## Como usar este arquivo
 
@@ -27,7 +28,9 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 O programa de profissionalizacao e um **documento vivo com 15 itens**, executavel
 ao longo de varias sessoes, cada um com evidencia no codigo e criterio de pronto.
-Comece pelo primeiro `⚪ pendente` da ordem recomendada (`A1 → A2 → C1 → B1 → ...`).
+Progresso: ✅ A1 (2026-08-16) → ✅ A2 (2026-08-18) → 🔄 C1 (2026-08-18,
+audit feito, aguardando confirmacao) → ⚪ B1 (proximo). Ordem recomendada:
+`A1 → A2 → C1 → B1 → A3 → D1 → B2 → ...`
 
 **O achado mais importante que ele registra:** as `feature_flags` existem, tem
 tela de configuracao, e **nenhum dos 81 endpoints as consulta** — desligar
@@ -57,6 +60,18 @@ ja usava. Junto (`9d6202d`): `backend_test_custo.py` movido pra `tests/`
 (nao era descoberto por `tests/run_all.py`, que so busca ali) e roadmap deste
 arquivo atualizado.
 
+**Item A2 concluido em 2026-08-18** (`e12abe8`) — varredura completa de
+`app/page.js`: 83 `catch` blocks, 25 sem `toast.error` no mesmo bloco. Triados
+em 4 categorias: 12 falso-positivo (toast na linha seguinte ou padrao ja
+correto), 8 violacoes reais (zero sinal, erro virava "lista vazia" silenciosa
+— corrigidas com `console.error` ou `toast.error`), 4 parciais com degrade
+intencional em polling (30s/5s — toast a cada falha seria ruido; ganharam
+comentario explicando o por que), 1 documentado como pertencente a trilha C3
+(loadMe() desloga em qualquer erro — precisa de status HTTP no erro de api()
+pra distinguir 401 real de transitorio). Consequencia: quando C3 for atacado,
+ja ha ponto de entrada mapeado. Verificado: navegacao visual via Playwright
+sem erros no console + suite 8/8 confirmando zero regressoes.
+
 **Analise competitiva + 2 achados corrigidos em 2026-08-18**
 (`docs/ANALISE-COMPETITIVA.md`) — leitura do codigo (nao suposicao) comparando
 o produto aos lideres do nicho (Anota AI, Saipos, Goomer). Achado central: a
@@ -84,6 +99,14 @@ sem motor. Dois dos tres achados ja avancaram no mesmo dia:
 - **Automacao do WhatsApp** (item restante do achado #1) fica a cargo do n8n
   — decisao do dono, ainda a executar. Arquitetura ja preparada
   (`lib/integrations/n8n.js` ja publica eventos de dominio).
+
+**Item C1 em progress (2026-08-18)** — limpar empresas de teste da producao.
+Audit script produzido (`scratchpad/c1_audit.sh`), lista de empresas com
+padroes de teste gerada (test, teste, demo, temp, sample, qa, staging no nome
+ou email). **Aguardando sua confirmacao EXPLÍCITA antes de deletar** — operacao
+destrutiva, nao procedo sem aprovacao. Proximo passo quando voce der sinal:
+(1) mostrar lista completa, (2) confirmar dele escrito, (3) executar delete com
+cascade, (4) verificar integridade pos-delete.
 
 ---
 
