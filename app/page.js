@@ -133,7 +133,7 @@ function ClientePicker({ value, onChange }) {
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [novo, setNovo] = useState({ nome: '', telefone: '', endereco: '' })
-  const load = useCallback(() => api('/clientes').then(setClientes).catch(() => {}), [])
+  const load = useCallback(() => api('/clientes').then(setClientes).catch((e) => console.error('Falha ao carregar clientes no picker:', e.message)), [])
   useEffect(() => { load() }, [load])
   const selected = clientes.find((c) => c.id === value)
   const filtered = clientes.filter((c) => c.nome.toLowerCase().includes(q.toLowerCase()) || (c.telefone || '').includes(q)).slice(0, 6)
@@ -300,6 +300,10 @@ function EstoqueBaixoCard() {
         const data = await api('/produtos/estoque-baixo')
         setProdutos(data.produtos || [])
       } catch (e) {
+        // Degrade de proposito: card de dashboard com polling de 30s, um
+        // toast a cada falha seria ruido continuo. console.warn garante que
+        // a falha fica visivel no devtools em vez de indistinguivel de
+        // "sem produtos em falta".
         console.warn('Erro ao carregar estoque baixo:', e.message)
         setProdutos([])
       } finally {
@@ -787,7 +791,7 @@ function Pedidos({ me }) {
 
   const load = useCallback(() => {
     api('/pedidos').then(setPedidos).catch((e) => toast.error(e.message))
-    api('/entregadores').then(setEntregadores).catch(() => {})
+    api('/entregadores').then(setEntregadores).catch((e) => console.error('Falha ao carregar entregadores:', e.message))
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -1147,10 +1151,13 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    api('/produtos').then(setProds).catch(() => {})
-    api('/clientes').then(setClientes).catch(() => {})
-    api('/empresa').then(setEmpresaConfig).catch(() => {})
-    if (!isEditing) api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {})
+    // Falha aqui nao pode virar "lista vazia" indistinguivel de "sem produtos
+    // cadastrados" — o operador precisa saber que o carregamento quebrou, nao
+    // so ver um dialog de pedido sem nada pra escolher.
+    api('/produtos').then(setProds).catch((e) => console.error('Falha ao carregar produtos no dialog de pedido:', e.message))
+    api('/clientes').then(setClientes).catch((e) => console.error('Falha ao carregar clientes no dialog de pedido:', e.message))
+    api('/empresa').then(setEmpresaConfig).catch((e) => console.error('Falha ao carregar config da empresa no dialog de pedido:', e.message))
+    if (!isEditing) api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch((e) => console.error('Falha ao carregar mesas no dialog de pedido:', e.message))
   }, [isEditing])
 
   // Pre-fill delivery fields when tipo changes or cliente changes
@@ -1392,7 +1399,7 @@ function Financeiro() {
       setCaixaMovimentos(atual.movimentos || [])
       const hist = await api('/caixa/historico?limite=10')
       setCaixaHistorico(hist.caixas || [])
-    } catch (e) { console.error(e) }
+    } catch (e) { toast.error(`Falha ao carregar status do caixa: ${e.message}`) }
   }, [])
   useEffect(() => { carregarCaixa() }, [carregarCaixa])
 
@@ -1969,7 +1976,7 @@ function Empresa({ reload }) {
       setTaxaPadrao(deliveryConfig.taxa_padrao || '')
       setTempoEstimadoPadrao(deliveryConfig.tempo_estimado_min || '')
       // Carregar lista de entregadores
-      api('/entregadores').then(setEntregadores).catch(() => {})
+      api('/entregadores').then(setEntregadores).catch((e) => console.error('Falha ao carregar entregadores:', e.message))
     }
   }, [f])
 
@@ -2812,17 +2819,24 @@ function Atendimento() {
       if (q) qs.set('q', q)
       const [c, m] = await Promise.all([api(`/conversas?${qs}`), api('/conversas/metrics')])
       setConvs(c); setMetrics(m)
-    } catch (e) { /* silent on poll */ }
+    } catch (e) {
+      // Degrade de proposito: poll de 5s (linha abaixo), toast a cada falha
+      // seria ruido continuo. console.error mantem a falha visivel no
+      // devtools em vez de indistinguivel de "sem conversas".
+      console.error('Falha ao atualizar lista de conversas:', e.message)
+    }
   }, [fStatus, fPedido, q])
   const loadConversa = useCallback(async (id) => {
     try {
       const [detail, mm] = await Promise.all([api(`/conversas/${id}`), api(`/conversas/${id}/mensagens`)])
       setCtx(detail); setMsgs(mm)
-      api(`/conversas/${id}/ler`, { method: 'POST' }).catch(() => {})
+      // Marcar como lida e best-effort: se falhar, so o contador de
+      // nao-lidas fica desatualizado — nao afeta a conversa exibida.
+      api(`/conversas/${id}/ler`, { method: 'POST' }).catch((e) => console.error('Falha ao marcar conversa como lida:', e.message))
     } catch (e) { toast.error(e.message) }
   }, [])
   useEffect(() => { loadList() }, [loadList])
-  useEffect(() => { const t = setInterval(() => { loadList(); if (sel) api(`/conversas/${sel}/mensagens`).then(setMsgs).catch(() => {}) }, 5000); return () => clearInterval(t) }, [loadList, sel])
+  useEffect(() => { const t = setInterval(() => { loadList(); if (sel) api(`/conversas/${sel}/mensagens`).then(setMsgs).catch((e) => console.error('Falha ao atualizar mensagens:', e.message)) }, 5000); return () => clearInterval(t) }, [loadList, sel])
   useEffect(() => { if (sel) loadConversa(sel) }, [sel, loadConversa])
 
   const enviar = async () => {
@@ -3013,7 +3027,14 @@ function App() {
       setMe(data)
       applyBranding(data.empresa)
       aplicarTemaInicial(data.empresa)
-    } catch { localStorage.removeItem(TOKEN_KEY); setMe(null) }
+    } catch {
+      // Efeito visivel (kick pra tela de login), nao falha silenciosa — mas
+      // trata qualquer erro (401 de token invalido OU 500/rede transitorio)
+      // como "sessao invalida". Corrigir exige que api() carregue o status
+      // HTTP no erro pra distinguir os casos; pertence a trilha C3 (Supabase
+      // Auth + refresh de token), nao a este item. Ver PROFISSIONALIZACAO.md.
+      localStorage.removeItem(TOKEN_KEY); setMe(null)
+    }
   }, [applyBranding, aplicarTemaInicial])
   useEffect(() => { loadMe() }, [loadMe])
 
