@@ -24,6 +24,7 @@ import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations
 import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { capturarErro } from '@/lib/integrations/monitoring'
+import { checarLimite, ipDoCliente } from '@/lib/rateLimit'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorProduto } from '@/lib/custo'
@@ -573,6 +574,24 @@ async function handler(request, { params }) {
 
     /* ==================== AUTH ==================== */
     if (route === '/auth/register' && method === 'POST') {
+      // 5 cadastros por hora por IP: sem isso, um script cria tenant sem
+      // limite (cada um com seed proprio — 71+ empresas de teste ja
+      // poluiram producao uma vez por esse motivo exato, ver C1 no
+      // HANDOFF). So por IP, nao por e-mail: cada tentativa de abuso usa
+      // e-mail novo, entao um limite por e-mail nao freia nada.
+      //
+      // `ipRegistro === null` (sem X-Forwarded-For/X-Real-IP) so acontece
+      // sem proxy na frente — nunca em producao, atras do Traefik do
+      // EasyPanel. Pular o limite ali e correto: nao ha "um cliente" pra
+      // identificar, e e exatamente o cenario da propria suite de testes
+      // (centenas de registros em sequencia direto no servidor local).
+      const ipRegistro = ipDoCliente(request)
+      if (ipRegistro) {
+        const limiteRegistro = checarLimite(`register:${ipRegistro}`, 5, 60 * 60 * 1000)
+        if (!limiteRegistro.permitido) {
+          return err('Muitas tentativas de cadastro. Tente novamente em alguns minutos.', 429)
+        }
+      }
       const body = await request.json()
       const { empresa_nome, nome, email, senha } = body || {}
       if (!empresa_nome || !nome || !email || !senha) return err('Campos obrigatorios: empresa_nome, nome, email, senha')
@@ -635,7 +654,23 @@ async function handler(request, { params }) {
     if (route === '/auth/login' && method === 'POST') {
       const { email, senha } = (await request.json()) || {}
       if (!email || !senha) return err('E-mail e senha obrigatorios')
-      const usuario = await usuarioRepo.findByEmail(String(email).toLowerCase().trim())
+      const emailParaLimite = String(email).toLowerCase().trim()
+      // 10 tentativas por 15min por (IP, email) — nao so por IP: um IP
+      // compartilhado (escritorio, NAT) nao pode travar todo mundo por causa
+      // de um so usuario errando a senha. Nao so por email tambem: sem o IP,
+      // um atacante rotacionando de maquina continuaria livre, mas o alvo
+      // real aqui e o script simples martelando uma conta conhecida — a
+      // combinacao cobre esse caso sem punir vizinho de rede. Ver
+      // `ipDoCliente()` para por que `null` (sem proxy na frente) pula o
+      // limite em vez de compartilhar um balde entre todo mundo sem header.
+      const ipLogin = ipDoCliente(request)
+      if (ipLogin) {
+        const limiteLogin = checarLimite(`login:${ipLogin}:${emailParaLimite}`, 10, 15 * 60 * 1000)
+        if (!limiteLogin.permitido) {
+          return err('Muitas tentativas. Tente novamente em alguns minutos.', 429)
+        }
+      }
+      const usuario = await usuarioRepo.findByEmail(emailParaLimite)
       if (!usuario || !verifyPassword(senha, usuario.senha_hash)) return err('Credenciais invalidas', 401)
       if (!usuario.ativo) return err('Usuario inativo', 403)
       const empresa = await empresaRepo.findById(usuario.empresa_id)
