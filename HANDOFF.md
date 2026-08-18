@@ -1,10 +1,11 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (relatorio financeiro ganhou DRE, ponto de
-equilibrio, comparativo com periodo anterior, margem por canal e margem por
-produto; feature flags passaram a controlar acesso de verdade — B1 do
-programa de profissionalizacao; migrations automaticas verificadas em
-producao. Ver §0.)
+Ultima atualizacao: 2026-08-18 (contas a pagar/receber com vencimento —
+fecha as 4 pecas do pedido "relatorio financeiro"; 5 problemas reportados em
+teste real corrigidos: CSV com injecao de formula, fusao de tipo de pedido,
+acesso do atendente, cursor pulando no campo de observacao, PWA no celular;
+feature flags passaram a controlar acesso de verdade — B1 do programa de
+profissionalizacao; migrations automaticas verificadas em producao. Ver §0.)
 
 ## Como usar este arquivo
 
@@ -132,6 +133,93 @@ endpoint de verdade por tras (Mesas&Comandas, Estoque, Caixa). As flags
 continuam gravadas como `false` no signup, porque `temModulo()` trata flag
 AUSENTE como ligada: apagar o registro faria um modulo futuro nascer aberto
 no dia em que ganhasse portao. 10 testes (`tests/backend_test_modulos.py`).
+
+## Contas a pagar/receber — fecha o pedido "relatorio financeiro"
+
+Ultima das 4 pecas pedidas (comparativo, margem por canal e margem por
+produto ja estavam no ar). Camada nova, separada de `transacoes`: uma
+OBRIGACAO (o que ainda vai vencer) versus um FATO (o que ja aconteceu).
+Migration `0025` cria a tabela `contas` (`tipo: 'pagar'|'receber'`,
+`status: 'pendente'|'paga'|'cancelada'`, `vencimento` DATE, `transacao_id`).
+
+**Decisao central:** uma conta pendente NUNCA aparece em nenhum numero do
+relatorio (DRE, CMV, margem) — so ao ser marcada como paga/recebida, o que
+cria a `transacao` de verdade (mesma categoria/natureza da conta) e liga
+`transacao_id`. Contar como despesa um boleto que ainda nao saiu do bolso
+inflaria o resultado com dinheiro que nao mudou de mao. Verificado ponta a
+ponta: DRE mostrava `despesas_fixas: 0` com a conta pendente, passou a
+mostrar o valor exato depois de paga.
+
+`status: 'atrasada'` **nunca e gravado** — e sempre derivado na leitura de
+`vencimento < hoje && status === 'pendente'` (`lib/contas.js`,
+`statusEfetivo()`). Guardar como coluna exigiria um job diario para virar o
+status sozinho; um dia sem esse job deixaria a lista inteira mentindo.
+
+**Bug real de fuso horario, achado escrevendo o teste (nao teoria):**
+`vencimento` e uma data pura (`"2026-08-18"`), que o motor JS sempre le como
+meia-noite UTC. A primeira versao comparava contra "hoje" zerado em HORA
+LOCAL do servidor — num fuso atras de UTC (ex: Brasil), um vencimento
+genuinamente hoje caia antes da meia-noite local (convertida para UTC, mais
+tarde que meia-noite UTC) e era classificado como atrasado por engano.
+Corrigido comparando os dois lados em **calendario UTC**
+(`Date.UTC(...)`), nunca em instante local. O front (`fmtDia()`) ja evitava
+a armadilha simetrica (formatar `new Date(iso)` mostraria o dia errado a
+oeste de UTC) formatando direto dos componentes da string.
+
+Ao marcar como paga, o dialog pergunta a **data em que o dinheiro de fato
+mudou de mao** (nunca assume "hoje") — um boleto vencido em junho e pago em
+julho e despesa de julho no caixa, mesma logica de regime de caixa que o
+resto do relatorio ja usa (`transacoes.data`, nao a data do pedido). Editar
+uma conta ja paga/cancelada e bloqueado (409) — mesma regra de "pedido
+concluido nao se edita".
+
+Tela: aba propria em Financeiro, 4 cards (a pagar, a receber, vence em 7
+dias, atrasadas), tabela filtravel por tipo/status, dialogo de nova conta
+reaproveitando o vocabulario de categorias das despesas
+(`CATEGORIAS_DESPESA`). 24 testes (`tests/backend_test_contas.py`).
+
+## 5 problemas reportados testando o sistema ao vivo
+
+Cada um investigado antes de corrigir — em dois casos o sintoma reportado
+era so a ponta de um problema maior.
+
+1. **CSV do relatorio abrindo com `#NOME?` no Excel.** Rotulos `"= Lucro
+   bruto"` eram lidos como FORMULA (celula comecando com `=`). Alem do
+   rotulo (trocado para `"(=)"`), o serializador generico tinha dois
+   problemas mais serios: aspas dentro do texto quebravam a estrutura da
+   planilha, e qualquer celula comecando com `=`/`+`/`-`/`@` e vetor de
+   **injecao de formula** — nome de produto/cliente entra neste arquivo sem
+   validacao. `csvCell()` agora escapa aspas e prefixa `'` (forcar texto).
+
+2. **Pedido "Mesa" sem desconto e sumindo do kanban.** Mesma causa para os
+   dois sintomas: "Mesa" no dialogo de Novo Pedido nao criava um pedido —
+   abria uma COMANDA (desconto e controlado la, e o pedido so nasce ao
+   fechar, ja "Concluido"). Decisao do dono: Mesa saiu do dialogo (comeca
+   sempre pela tela Mesas) e Balcao+Retirada se fundiram em **"Para
+   levar"**. Migration `0024` reclassifica o historico (testada com
+   rollback contra producao: 14 balcao + 4 retirada → 18 para_levar,
+   faturamento intacto). `normPedidoTipo()` traduz valores antigos em vez
+   de recusar — cliente com JS em cache continua mandando `'balcao'` por um
+   tempo apos o deploy.
+
+3. **Atendente via faturamento, ticket medio, estoque e atendimento.**
+   `dashboard`/`atendimento` saíram de `PERMISSIONS.ATENDENTE`. Achado no
+   caminho: **`GET /dashboard/metrics` nao tinha checagem nenhuma** —
+   bastava estar logado. Fechado no servidor, nao so escondido no menu
+   (mesma logica do B1).
+
+4. **Cursor saindo do campo de observacao a cada letra.** A `key` de cada
+   item era `produto_id + observacao` — como a observacao muda a cada
+   tecla, o React destruia e recriava o input. Cada item ganhou `_uid`
+   local estavel (nunca enviado ao servidor). Testado digitando 23 letras
+   seguidas: 0 perdas de foco.
+
+5. **Barra de endereco/navegacao atrapalhando no celular.** Virou PWA
+   (`app/manifest.js` + meta tags do iOS): atalho na tela inicial abre sem
+   nenhuma das duas barras. Icone proprio gerado sem dependencia externa.
+   `env(safe-area-inset-*)` reserva a area do notch; campos ganham
+   `font-size: 16px` so em toque, porque abaixo disso o iOS da zoom
+   automatico ao focar e nao volta sozinho.
 
 ## Migrations automaticas — confirmado funcionando
 
@@ -467,7 +555,7 @@ policies sao defesa em profundidade que nunca e exercida.
 `permissoes`. Controle de deploy: `schema_migrations` (nao tem `empresa_id`
 — e infraestrutura, nao dominio).
 
-## 4.3 Migrations (23 aplicadas, todas via `scripts/migrate.mjs` desde 2026-08-18)
+## 4.3 Migrations (25 aplicadas, todas via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
 0001_init.sql               0009_repository_support_functions.sql
@@ -479,10 +567,11 @@ policies sao defesa em profundidade que nunca e exercida.
 0007_webhook_events.sql      0015_pedidos_desconto_acrescimo.sql
 0008_conversas_mensagens.sql
 
-0016_kds.sql                 0020_custo.sql
-0017_delivery.sql            0021_cardapio_imagem.sql
-0018_caixa.sql                0022_despesa_natureza.sql
-0019_estoque.sql              0023_feature_flags_retrocompat.sql
+0016_kds.sql                 0021_cardapio_imagem.sql
+0017_delivery.sql            0022_despesa_natureza.sql
+0018_caixa.sql                0023_feature_flags_retrocompat.sql
+0019_estoque.sql              0024_pedido_tipo_para_levar.sql
+0020_custo.sql                0025_contas.sql
 ```
 
 `0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
@@ -637,8 +726,11 @@ imagem apesar do padrao geral de ignorar).
 | Relatorio financeiro — DRE, ponto de equilibrio | **Completo e no ar** |
 | Relatorio financeiro — comparativo periodo anterior | **Completo e no ar** |
 | Relatorio financeiro — margem por canal | **Completo e no ar** |
-| Relatorio financeiro — margem por produto | **Completo, commit ao fim desta sessao** |
-| Relatorio financeiro — contas a pagar/receber | ⚪ nao iniciado (proximo, pedido do dono) |
+| Relatorio financeiro — margem por produto | **Completo e no ar** |
+| Relatorio financeiro — contas a pagar/receber | **Completo e no ar** — fecha o pedido |
+| Pedido: tipos enxugados (delivery/mesa/para_levar) | **Completo e no ar** |
+| Acesso do ATENDENTE restrito (sem financeiro/estoque) | **Completo e no ar** |
+| PWA (instalar no celular, tela cheia) | **Completo e no ar** |
 | Feature flags controlando acesso (B1) | **Completo e no ar** |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
@@ -767,19 +859,32 @@ navegador de verdade — nao suposicao:
     equilibrio: R$ 0" — uma mentira mais convincente (e mais perigosa) que
     mostrar "—". Mesma logica vale para `delta_percent` do comparativo
     (base zero -> `null`, nunca `+100%` nem `+infinito%`).
+24. **Data pura (`"YYYY-MM-DD"`, sem hora) sempre e lida pelo JS como meia-
+    noite UTC — comparar contra "hoje" em HORA LOCAL do servidor e bug
+    garantido.** Achado em `lib/contas.js` (status "atrasada"): num fuso
+    atras de UTC, um vencimento genuinamente hoje caia antes da meia-noite
+    local (convertida para UTC) e era classificado como atrasado. Correcao:
+    normalizar os dois lados para calendario UTC com `Date.UTC(...)` antes
+    de comparar, nunca `setHours(0,0,0,0)` (que zera em hora LOCAL). O mesmo
+    vale ao formatar de volta: `new Date(iso).toLocaleDateString()` mostra o
+    dia ERRADO a oeste de UTC — formatar direto dos componentes da string
+    (`fmtDia` em `app/page.js`) evita o espelho do mesmo bug no front.
+25. **Editar `lib/repositories/factory.js` com o dev server no ar dispara
+    hot-reload de TODO endpoint** (o arquivo e importado por `route.js`
+    inteiro), derrubando conexoes por um instante. Uma suite de teste rodando
+    em paralelo pega isso como falha de conexao, nao falha de logica —
+    confundiu um resultado de teste real nesta sessao. Evitar editar
+    dependencias transitivas de `route.js` enquanto uma suite esta em voo;
+    se acontecer, rodar a suite de novo antes de confiar no resultado.
 
 ---
 
 # 11. Pendencias e proximos passos
 
-**Produto — proximo pedido do dono:**
+**Produto — pedido do dono, concluido nesta sessao:**
 
-- [ ] **Contas a pagar/receber com vencimento.** O financeiro hoje so
-      registra o que ja aconteceu (transacoes lancadas); isto adiciona o
-      que ainda vai vencer. Maior peca do pedido "relatorio financeiro" —
-      as outras 3 (comparativo, margem por canal, margem por produto) ja
-      estao entregues (ver §0). E um subsistema novo (tabela, cadastro,
-      telas), nao uma evolucao do relatorio existente.
+- [x] ~~Contas a pagar/receber com vencimento~~ — **DONE** (ver §0). Fecha
+      as 4 pecas do pedido "relatorio financeiro".
 
 **Produto — backlog conhecido, sem pedido explicito ainda:**
 
@@ -871,15 +976,20 @@ disponivel via `git log`.)
   despesa (modulo puro).
 - `lib/modulos.js` — feature flags / gate de plano (modulo puro + funcoes de
   leitura sobre `Empresa`).
+- `lib/contas.js` — contas a pagar/receber: `statusEfetivo` (atrasada
+  derivada, comparacao em calendario UTC) e `resumoContas` (modulo puro).
 - `lib/caixa.js` — calculo de esperado/diferenca do caixa.
 - `lib/cupom-dados.js` — mapeamento puro Pedido/Comanda -> dados do cupom.
+- `lib/repositories/{mongo,supabase}/contaRepository.js` — CRUD de `contas`,
+  registrado em `lib/repositories/factory.js`.
 
 **Codigo — frontend**
 - `app/page.js` — frontend inteiro (SPA).
+- `app/manifest.js` — manifest do PWA (icones, `display: standalone`).
 - `components/cupom.jsx` — renderiza e imprime o cupom (`window.print()`).
 
 **Banco**
-- `supabase/migrations/0001`…`0023` — lista completa e ordem no §4.3.
+- `supabase/migrations/0001`…`0025` — lista completa e ordem no §4.3.
 - `supabase/prod-ca-2021.crt` — CA raiz do Supabase, para TLS do migrator.
 
 **Deploy**
@@ -900,8 +1010,8 @@ disponivel via `git log`.)
 **Testes**
 - `tests/run_all.py` — descobre e roda toda `tests/backend_test_*.py`.
 - `tests/backend_test_dre.py`, `_comparativo.py`, `_margem_canal.py`,
-  `_margem_produto.py`, `_modulos.py` — relatorio financeiro e feature
-  flags (sessao atual).
+  `_margem_produto.py`, `_modulos.py`, `_contas.py` — relatorio financeiro,
+  feature flags e contas a pagar/receber (sessao atual).
 - `tests/backend_test.py`, `_v2`, `_v3`, `_caixa.py`, `_kds.py`,
   `_custo.py`, `_cardapio.py`, `_estoque.py`, `_entregadores.py` —
   regressao dos modulos anteriores.

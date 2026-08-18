@@ -27,6 +27,7 @@ import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorProduto } from '@/lib/custo'
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
+import { statusEfetivo, resumoContas } from '@/lib/contas'
 import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
 /* ============================ INFRA: persistencia ========================
@@ -533,7 +534,7 @@ async function handler(request, { params }) {
       categoriaRepo, produtoRepo, clienteRepo, usuarioRepo, transacaoRepo,
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
-      kdsTokenRepo, entregadorRepo, caixaRepo, caixaMovimentoRepo,
+      kdsTokenRepo, entregadorRepo, caixaRepo, caixaMovimentoRepo, contaRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -1876,6 +1877,134 @@ async function handler(request, { params }) {
         })
       }
       return json({ receitas: Math.round(receitas * 100) / 100, despesas: Math.round(despesas * 100) / 100, saldo: Math.round((receitas - despesas) * 100) / 100, serie: days })
+    }
+
+    /* ==================== CONTAS A PAGAR/RECEBER ====================
+     * Camada de OBRIGACAO (o que ainda vai vencer), complementar a
+     * `transacoes` (a camada de CAIXA — o que ja aconteceu). Uma conta so
+     * entra em qualquer numero do relatorio financeiro (DRE, CMV, margem)
+     * depois de PAGA, porque so ai vira uma `transacao` de verdade — ver o
+     * handler de /contas/:id/pagar abaixo. Antes disso e so previsao,
+     * invisivel para o relatorio de proposito: contar como despesa um boleto
+     * que ainda nao saiu do bolso inflaria o resultado com dinheiro que nao
+     * mudou de mao.
+     */
+    if (route === '/contas' && method === 'GET') {
+      if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const url = new URL(request.url)
+      const fTipo = url.searchParams.get('tipo')
+      const fStatus = url.searchParams.get('status') // 'pendente' | 'paga' | 'cancelada' | 'atrasada'
+
+      const todas = (await contaRepo.list(ctx.empresa_id)).map((c) => ({ ...c, status_efetivo: statusEfetivo(c) }))
+      let filtradas = todas
+      if (fTipo && fTipo !== 'todos') filtradas = filtradas.filter((c) => c.tipo === fTipo)
+      if (fStatus && fStatus !== 'todos') filtradas = filtradas.filter((c) => c.status_efetivo === fStatus)
+
+      return json({
+        contas: filtradas.map(clean),
+        // Resumo sempre sobre a lista INTEIRA da empresa, nunca sobre a
+        // filtrada — o card "contas a vencer" nao pode mudar de valor so
+        // porque o operador filtrou a tabela por "receber".
+        resumo: resumoContas(todas),
+      })
+    }
+
+    if (route === '/contas' && method === 'POST') {
+      if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const b = (await request.json()) || {}
+      if (!['pagar', 'receber'].includes(b.tipo)) return err('tipo deve ser "pagar" ou "receber"')
+      const valor = Number(b.valor)
+      if (!Number.isFinite(valor) || valor <= 0) return err('valor deve ser maior que zero')
+      if (!b.vencimento) return err('vencimento obrigatorio')
+      // Mesma regra de nao-adivinhar de transacoes.natureza (0022): so grava
+      // se o valor enviado for exatamente um dos dois validos.
+      const natureza = ['fixa', 'variavel'].includes(b.natureza) ? b.natureza : null
+
+      const doc = {
+        id: uuidv4(),
+        empresa_id: ctx.empresa_id,
+        tipo: b.tipo,
+        descricao: b.descricao || '',
+        categoria: b.categoria || 'Outros',
+        natureza,
+        valor: round2(valor),
+        vencimento: b.vencimento,
+        status: 'pendente',
+        pago_em: null,
+        transacao_id: null,
+        observacoes: b.observacoes || '',
+        created_at: new Date(),
+        updated_at: new Date(),
+      }
+      await contaRepo.create(doc)
+      await audit(repos, ctx, 'create', 'conta', doc.id, { tipo: doc.tipo, valor: doc.valor, vencimento: doc.vencimento })
+      return json(clean({ ...doc, status_efetivo: statusEfetivo(doc) }), 201)
+    }
+
+    if (seg[0] === 'contas' && seg[1] && method === 'PUT' && !seg[2]) {
+      if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const conta = await contaRepo.findById(ctx.empresa_id, seg[1])
+      if (!conta) return err('Conta nao encontrada', 404)
+      // So edita enquanto pendente — mesma regra de "pedido concluido nao se
+      // edita" (decisao #6 do HANDOFF): uma conta ja paga virou transacao de
+      // verdade, e corrigir o registro por baixo do relatorio sem gerar
+      // rastro seria pior que recusar a edicao.
+      if (conta.status !== 'pendente') return err(`Conta ${conta.status} nao pode ser editada`, 409)
+      const b = (await request.json()) || {}
+      const upd = { updated_at: new Date() }
+      for (const k of ['descricao', 'categoria', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
+      if (b.valor !== undefined) {
+        const valor = Number(b.valor)
+        if (!Number.isFinite(valor) || valor <= 0) return err('valor deve ser maior que zero')
+        upd.valor = round2(valor)
+      }
+      if (b.vencimento !== undefined) upd.vencimento = b.vencimento
+      if (b.natureza !== undefined) upd.natureza = ['fixa', 'variavel'].includes(b.natureza) ? b.natureza : null
+      const atualizada = await contaRepo.update(ctx.empresa_id, seg[1], upd)
+      await audit(repos, ctx, 'update', 'conta', seg[1], upd)
+      return json(clean({ ...atualizada, status_efetivo: statusEfetivo(atualizada) }))
+    }
+
+    if (seg[0] === 'contas' && seg[1] && seg[2] === 'pagar' && method === 'PUT') {
+      if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const conta = await contaRepo.findById(ctx.empresa_id, seg[1])
+      if (!conta) return err('Conta nao encontrada', 404)
+      if (conta.status !== 'pendente') return err(`Conta ja esta ${conta.status}`, 409)
+      const b = (await request.json()) || {}
+      // A data em que o dinheiro de fato mudou de mao — nunca o vencimento.
+      // Um boleto que vencia em junho e so foi pago em julho e despesa de
+      // julho no caixa: e a mesma logica de regime de caixa que o resto do
+      // relatorio financeiro ja usa (`transacoes.data`, nao a data do pedido).
+      const pagoEm = b.data ? new Date(b.data) : new Date()
+
+      const transacao = {
+        id: uuidv4(),
+        empresa_id: ctx.empresa_id,
+        tipo: conta.tipo === 'pagar' ? 'despesa' : 'receita',
+        categoria: conta.categoria,
+        natureza: conta.natureza,
+        descricao: conta.descricao || `Conta ${conta.tipo === 'pagar' ? 'paga' : 'recebida'}`,
+        valor: conta.valor,
+        pedido_id: null,
+        data: pagoEm,
+        created_at: new Date(),
+      }
+      await transacaoRepo.create(transacao)
+      const atualizada = await contaRepo.update(ctx.empresa_id, seg[1], {
+        status: 'paga', pago_em: pagoEm, transacao_id: transacao.id, updated_at: new Date(),
+      })
+      await audit(repos, ctx, 'pagar', 'conta', seg[1], { transacao_id: transacao.id, valor: conta.valor })
+      return json(clean({ ...atualizada, status_efetivo: statusEfetivo(atualizada) }))
+    }
+
+    if (seg[0] === 'contas' && seg[1] && seg[2] === 'cancelar' && method === 'PUT') {
+      if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const conta = await contaRepo.findById(ctx.empresa_id, seg[1])
+      if (!conta) return err('Conta nao encontrada', 404)
+      if (conta.status !== 'pendente') return err(`Conta ja esta ${conta.status}`, 409)
+      const atualizada = await contaRepo.update(ctx.empresa_id, seg[1], { status: 'cancelada', updated_at: new Date() })
+      await audit(repos, ctx, 'cancelar', 'conta', seg[1], {})
+      return json(clean({ ...atualizada, status_efetivo: statusEfetivo(atualizada) }))
     }
 
     /* ==================== DASHBOARD ==================== */

@@ -9,7 +9,7 @@ import {
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
   Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX, AlertCircle,
-  Volume2, VolumeX, AlertTriangle,
+  Volume2, VolumeX, AlertTriangle, CalendarClock, CalendarCheck2, Ban,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -1800,7 +1800,7 @@ function Financeiro({ temMod = () => true }) {
       </Card>}
 
       <Tabs defaultValue="visao">
-        <TabsList><TabsTrigger value="visao">Visão Geral</TabsTrigger><TabsTrigger value="lancamentos">Lançamentos</TabsTrigger><TabsTrigger value="relatorios">Relatórios</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="visao">Visão Geral</TabsTrigger><TabsTrigger value="lancamentos">Lançamentos</TabsTrigger><TabsTrigger value="contas">Contas a pagar/receber</TabsTrigger><TabsTrigger value="relatorios">Relatórios</TabsTrigger></TabsList>
 
         <TabsContent value="visao" className="mt-4 space-y-6">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -1845,6 +1845,8 @@ function Financeiro({ temMod = () => true }) {
             {tx.length === 0 && <Empty>Nenhum lançamento.</Empty>}
           </CardContent></Card>
         </TabsContent>
+
+        <TabsContent value="contas" className="mt-4"><ContasTab /></TabsContent>
 
         <TabsContent value="relatorios" className="mt-4"><Relatorios /></TabsContent>
       </Tabs>
@@ -2447,6 +2449,252 @@ function Relatorios() {
     </div>
   )
 }
+const CONTA_STATUS_LABEL = { pendente: 'Pendente', atrasada: 'Atrasada', paga: 'Paga', cancelada: 'Cancelada' }
+const CONTA_STATUS_CLS = {
+  pendente: 'text-blue-500 border-blue-500/20 bg-blue-500/10',
+  atrasada: 'text-red-500 border-red-500/20 bg-red-500/10',
+  paga: 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10',
+  cancelada: 'text-muted-foreground',
+}
+/** Data pura (YYYY-MM-DD) formatada sem passar por fuso — `new Date('2026-08-18')`
+ * mostraria 17/08 em quem estiver a oeste de UTC, porque o motor JS le a
+ * string como meia-noite UTC. Formata direto dos componentes do texto. */
+const fmtDia = (iso) => { const [a, m, d] = String(iso).split('-'); return `${d}/${m}/${a}` }
+
+/**
+ * Contas a pagar/receber — camada de OBRIGACAO (o que ainda vai vencer),
+ * complementar aos Lançamentos (o que ja aconteceu). Marcar como paga cria um
+ * lançamento de verdade; ate la a conta e so previsao e nao aparece em
+ * nenhum numero do Relatorio.
+ */
+function ContasTab() {
+  const [dados, setDados] = useState(null)
+  const [filtroTipo, setFiltroTipo] = useState('todos')
+  const [filtroStatus, setFiltroStatus] = useState('todos')
+  const [dlg, setDlg] = useState(false)
+  const [pagando, setPagando] = useState(null) // conta sendo marcada como paga
+
+  const load = useCallback(async () => {
+    const qs = new URLSearchParams()
+    if (filtroTipo !== 'todos') qs.set('tipo', filtroTipo)
+    try { setDados(await api(`/contas?${qs.toString()}`)) } catch (e) { toast.error(e.message) }
+  }, [filtroTipo])
+  useEffect(() => { load() }, [load])
+
+  const salvar = async (f) => {
+    try {
+      await api('/contas', { method: 'POST', body: f })
+      toast.success('Conta cadastrada')
+      setDlg(false)
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+  const confirmarPagamento = async (data) => {
+    try {
+      await api(`/contas/${pagando.id}/pagar`, { method: 'PUT', body: data ? { data } : {} })
+      toast.success(pagando.tipo === 'pagar' ? 'Pagamento registrado' : 'Recebimento registrado')
+      setPagando(null)
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+  const cancelar = async (conta) => {
+    try {
+      await api(`/contas/${conta.id}/cancelar`, { method: 'PUT' })
+      toast.success('Conta cancelada')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  if (!dados) return <Empty>Carregando…</Empty>
+  const contas = (dados.contas || []).filter((c) => filtroStatus === 'todos' || c.status_efetivo === filtroStatus)
+  const r = dados.resumo
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat icon={CalendarClock} label="A pagar" value={brl(r.a_pagar_total)} tone="amber"
+          hint={r.a_pagar_atrasado_qtd > 0 ? `${brl(r.a_pagar_atrasado)} atrasado (${r.a_pagar_atrasado_qtd})` : undefined} />
+        <Stat icon={CalendarCheck2} label="A receber" value={brl(r.a_receber_total)} tone="emerald"
+          hint={r.a_receber_atrasado_qtd > 0 ? `${brl(r.a_receber_atrasado)} atrasado (${r.a_receber_atrasado_qtd})` : undefined} />
+        <Stat icon={Clock} label="Vence em 7 dias" value={brl(r.proximos_7_dias_valor)} tone="violet" hint={`${r.proximos_7_dias_qtd} conta(s)`} />
+        <Stat icon={AlertTriangle} label="Atrasadas (total)" value={brl(round2ish(r.a_pagar_atrasado + r.a_receber_atrasado))} tone="primary"
+          hint={`${r.a_pagar_atrasado_qtd + r.a_receber_atrasado_qtd} conta(s)`} />
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1"><Label className="text-xs">Tipo</Label>
+          <Select value={filtroTipo} onValueChange={setFiltroTipo}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="pagar">A pagar</SelectItem><SelectItem value="receber">A receber</SelectItem></SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1"><Label className="text-xs">Status</Label>
+          <Select value={filtroStatus} onValueChange={setFiltroStatus}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="pendente">Pendente</SelectItem>
+              <SelectItem value="atrasada">Atrasada</SelectItem>
+              <SelectItem value="paga">Paga</SelectItem>
+              <SelectItem value="cancelada">Cancelada</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Button className="ml-auto" onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Nova conta</Button>
+      </div>
+
+      <Card><CardContent className="p-0">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>Descrição</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead>
+            <TableHead className="text-right">Valor</TableHead><TableHead>Vencimento</TableHead>
+            <TableHead>Status</TableHead><TableHead></TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {contas.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell className="font-medium">{c.descricao || '—'}</TableCell>
+                <TableCell className="text-muted-foreground">{c.categoria}</TableCell>
+                <TableCell><Badge variant="outline" className={c.tipo === 'receber' ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10'}>{c.tipo === 'receber' ? 'A receber' : 'A pagar'}</Badge></TableCell>
+                <TableCell className={`text-right font-medium ${c.tipo === 'receber' ? 'text-emerald-500' : 'text-amber-500'}`}>{brl(c.valor)}</TableCell>
+                <TableCell className="text-sm">{fmtDia(c.vencimento)}</TableCell>
+                <TableCell><Badge variant="outline" className={CONTA_STATUS_CLS[c.status_efetivo]}>{CONTA_STATUS_LABEL[c.status_efetivo]}</Badge></TableCell>
+                <TableCell className="text-right">
+                  {c.status === 'pendente' && (
+                    <div className="flex justify-end gap-1">
+                      <Button size="sm" variant="outline" onClick={() => setPagando(c)}>{c.tipo === 'pagar' ? 'Pagar' : 'Receber'}</Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => cancelar(c)} title="Cancelar"><Ban className="h-4 w-4" /></Button>
+                    </div>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {contas.length === 0 && <Empty>Nenhuma conta {filtroStatus !== 'todos' ? CONTA_STATUS_LABEL[filtroStatus].toLowerCase() : 'cadastrada'}.</Empty>}
+      </CardContent></Card>
+
+      {dlg && <ContaDialog onClose={() => setDlg(false)} onSave={salvar} />}
+      {pagando && (
+        <ConfirmarPagamentoDialog conta={pagando} onClose={() => setPagando(null)} onConfirm={confirmarPagamento} />
+      )}
+    </div>
+  )
+}
+const round2ish = (n) => Math.round((Number(n) || 0) * 100) / 100
+
+function ContaDialog({ onClose, onSave }) {
+  const [f, setF] = useState({ tipo: 'pagar', categoria: '', natureza: '', descricao: '', valor: '', vencimento: '' })
+  const [categorias, setCategorias] = useState([])
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+
+  useEffect(() => { api('/financeiro/categorias-despesa').then(setCategorias).catch(() => {}) }, [])
+
+  const [naturezaTocada, setNaturezaTocada] = useState(false)
+  const setCategoria = (v) => {
+    set('categoria', v)
+    if (!naturezaTocada) {
+      const sugerida = categorias.find((c) => c.valor === v)?.natureza_sugerida
+      set('natureza', sugerida || '')
+    }
+  }
+  const setNatureza = (v) => { setNaturezaTocada(true); set('natureza', v) }
+
+  const salvar = async () => {
+    if (!f.categoria) return toast.error('Selecione a categoria')
+    if (!f.valor || Number(f.valor) <= 0) return toast.error('Informe um valor maior que zero')
+    if (!f.vencimento) return toast.error('Informe o vencimento')
+    setSaving(true)
+    try {
+      await onSave({
+        tipo: f.tipo, categoria: f.categoria, descricao: f.descricao,
+        valor: Number(f.valor), vencimento: f.vencimento,
+        natureza: f.tipo === 'pagar' && f.natureza ? f.natureza : undefined,
+      })
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Nova conta</DialogTitle><DialogDescription>Uma previsão — só vira lançamento quando marcada como paga/recebida.</DialogDescription></DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2"><Label>Tipo</Label>
+            <Select value={f.tipo} onValueChange={(v) => set('tipo', v)}><SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="pagar">A pagar</SelectItem><SelectItem value="receber">A receber</SelectItem></SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label>Categoria</Label>
+              {f.tipo === 'pagar' ? (
+                <Select value={f.categoria} onValueChange={setCategoria}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {categorias.filter((c) => c.valor !== 'Estorno').map((c) => (
+                      <SelectItem key={c.valor} value={c.valor}>{c.valor}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={f.categoria} onChange={(e) => set('categoria', e.target.value)} placeholder="Ex: Cliente, Plataforma" />
+              )}
+            </div>
+            <div className="space-y-2"><Label>Valor (R$)</Label><Input type="number" min="0" step="0.01" value={f.valor} onChange={(e) => set('valor', e.target.value)} /></div>
+          </div>
+          <div className="space-y-2"><Label>Vencimento</Label><Input type="date" value={f.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></div>
+          {f.tipo === 'pagar' && (
+            <div className="space-y-2">
+              <Label>Natureza</Label>
+              <Select value={f.natureza} onValueChange={setNatureza}>
+                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixa">Fixa — acontece independente de vender (aluguel, salário)</SelectItem>
+                  <SelectItem value="variavel">Variável — só existe porque vendeu (insumo, comissão)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Usada no ponto de equilíbrio do relatório depois de paga.</p>
+            </div>
+          )}
+          <div className="space-y-2"><Label>Descrição</Label><Input value={f.descricao} onChange={(e) => set('descricao', e.target.value)} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={salvar} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Salvar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * Confirma o pagamento/recebimento e pergunta a DATA em que o dinheiro de
+ * fato mudou de mao — nunca assume "hoje" sem perguntar, porque um boleto
+ * pago ontem lancado hoje contaria no periodo errado do relatorio (regime de
+ * caixa: o que importa e quando saiu do bolso, nao quando venceu).
+ */
+function ConfirmarPagamentoDialog({ conta, onClose, onConfirm }) {
+  const hoje = new Date().toISOString().slice(0, 10)
+  const [data, setData] = useState(hoje)
+  const [saving, setSaving] = useState(false)
+  const acao = conta.tipo === 'pagar' ? 'Pagar' : 'Receber'
+
+  const confirmar = async () => {
+    setSaving(true)
+    try { await onConfirm(data) } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{acao}: {conta.descricao || conta.categoria}</DialogTitle><DialogDescription>{brl(conta.valor)} — vencimento {fmtDia(conta.vencimento)}</DialogDescription></DialogHeader>
+        <div className="space-y-2">
+          <Label>Data em que o dinheiro {conta.tipo === 'pagar' ? 'saiu' : 'entrou'}</Label>
+          <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+          <p className="text-xs text-muted-foreground">Não precisa ser hoje — se já {conta.tipo === 'pagar' ? 'pagou' : 'recebeu'} antes, informe a data real. É o que entra no relatório do período certo.</p>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={confirmar} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Confirmar {acao.toLowerCase()}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function TxDialog({ onClose, onSave }) {
   const [f, setF] = useState({ tipo: 'despesa', categoria: '', natureza: '', descricao: '', valor: '' })
   const [categorias, setCategorias] = useState([])
