@@ -29,7 +29,7 @@ import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorProduto } from '@/lib/custo'
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
-import { statusEfetivo, resumoContas } from '@/lib/contas'
+import { statusEfetivo, resumoContas, adicionarMeses } from '@/lib/contas'
 import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
 
 /* ============================ INFRA: persistencia ========================
@@ -1963,25 +1963,60 @@ async function handler(request, { params }) {
       // se o valor enviado for exatamente um dos dois validos.
       const natureza = ['fixa', 'variavel'].includes(b.natureza) ? b.natureza : null
 
-      const doc = {
-        id: uuidv4(),
-        empresa_id: ctx.empresa_id,
-        tipo: b.tipo,
-        descricao: b.descricao || '',
-        categoria: b.categoria || 'Outros',
-        natureza,
-        valor: round2(valor),
-        vencimento: b.vencimento,
-        status: 'pendente',
-        pago_em: null,
-        transacao_id: null,
-        observacoes: b.observacoes || '',
-        created_at: new Date(),
-        updated_at: new Date(),
+      // `repeticoes` gera a serie INTEIRA de uma vez, aqui no cadastro — nao
+      // e um motor de recorrencia que cria parcela nova sozinha todo mes
+      // (migration 0026). Cada parcela nasce como conta independente, so
+      // ligada pelo `serie_id` pra a tela rotular "3 de 12"; pagar, cancelar
+      // ou editar uma nao afeta as outras. Teto de 60 (5 anos de mensal)
+      // evita um numero digitado errado (ex: confundir com o valor)
+      // gerar milhares de registros.
+      const repeticoes = b.repeticoes !== undefined ? Number(b.repeticoes) : 1
+      if (!Number.isInteger(repeticoes) || repeticoes < 1 || repeticoes > 60) {
+        return err('repeticoes deve ser um numero inteiro entre 1 e 60')
       }
-      await contaRepo.create(doc)
-      await audit(repos, ctx, 'create', 'conta', doc.id, { tipo: doc.tipo, valor: doc.valor, vencimento: doc.vencimento })
-      return json(clean({ ...doc, status_efetivo: statusEfetivo(doc) }), 201)
+
+      const serieId = repeticoes > 1 ? uuidv4() : null
+      const descricaoBase = b.descricao || ''
+      const criadas = []
+      for (let i = 0; i < repeticoes; i++) {
+        const doc = {
+          id: uuidv4(),
+          empresa_id: ctx.empresa_id,
+          tipo: b.tipo,
+          // So numera quando ha mais de uma parcela — conta avulsa nao
+          // ganha "(1/1)" pendurado no nome por acidente de implementacao.
+          descricao: repeticoes > 1 ? `${descricaoBase} (${i + 1}/${repeticoes})`.trim() : descricaoBase,
+          categoria: b.categoria || 'Outros',
+          natureza,
+          valor: round2(valor),
+          // Primeira parcela usa a data exata que veio do formulario; as
+          // seguintes somam meses em cima dela (nunca em cima da anterior —
+          // evita deriva de arredondamento acumulada ao longo de 60 parcelas).
+          vencimento: i === 0 ? b.vencimento : adicionarMeses(b.vencimento, i),
+          status: 'pendente',
+          pago_em: null,
+          transacao_id: null,
+          observacoes: b.observacoes || '',
+          serie_id: serieId,
+          serie_indice: repeticoes > 1 ? i + 1 : null,
+          serie_total: repeticoes > 1 ? repeticoes : null,
+          created_at: new Date(),
+          updated_at: new Date(),
+        }
+        await contaRepo.create(doc)
+        criadas.push(doc)
+      }
+      await audit(repos, ctx, 'create', 'conta', criadas[0].id, {
+        tipo: b.tipo, valor: round2(valor), vencimento: b.vencimento,
+        ...(repeticoes > 1 ? { serie_id: serieId, repeticoes } : {}),
+      })
+
+      const limpar = (d) => clean({ ...d, status_efetivo: statusEfetivo(d) })
+      // O formato da resposta so muda quando ha mais de uma parcela — o
+      // caso comum (conta avulsa) continua devolvendo um objeto so, pra nao
+      // quebrar quem ja consome este endpoint esperando isso.
+      if (repeticoes > 1) return json({ contas: criadas.map(limpar), serie_id: serieId }, 201)
+      return json(limpar(criadas[0]), 201)
     }
 
     if (seg[0] === 'contas' && seg[1] && method === 'PUT' && !seg[2]) {

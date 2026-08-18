@@ -257,6 +257,18 @@ export interface Conta extends TenantScoped {
   /** Preenchido so quando `status === 'paga'`. */
   transacao_id: UUID | null;
   observacoes: string;
+  /**
+   * Recorrencia (migration 0026): `repeticoes` no cadastro gera a serie
+   * INTEIRA de uma vez — nao e uma regra que cria parcela nova sozinha a
+   * cada mes. As 3 colunas so existem quando a conta nasceu de uma serie
+   * (`serie_id` != null); conta avulsa tem as 3 como `null`. Pagar, cancelar
+   * ou editar uma parcela nunca afeta as outras da mesma serie.
+   */
+  serie_id: UUID | null;
+  /** Posicao desta parcela na serie (1-based). `null` fora de serie. */
+  serie_indice: number | null;
+  /** Tamanho total da serie no cadastro. `null` fora de serie. */
+  serie_total: number | null;
   created_at: string;
   updated_at: string;
 }

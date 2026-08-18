@@ -1,12 +1,12 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (monitoramento de erro em producao — A3,
-codigo pronto e no-op ate voce colar a credencial do Sentry; contas a
-pagar/receber com vencimento fecha as 4 pecas do pedido "relatorio
-financeiro"; 5 problemas reportados em teste real corrigidos: CSV com
-injecao de formula, fusao de tipo de pedido, acesso do atendente, cursor
-pulando no campo de observacao, PWA no celular; feature flags passaram a
-controlar acesso de verdade — B1. Ver §0.)
+Ultima atualizacao: 2026-08-18 (contas a pagar/receber ganhou edicao —
+gap de UI, o backend ja suportava — e recorrencia mensal com `repeticoes`;
+rate limiting em /auth/login e /auth/register; monitoramento de erro em
+producao — A3, codigo pronto e no-op ate a credencial do Sentry; contas a
+pagar/receber com vencimento fechou as 4 pecas do pedido "relatorio
+financeiro"; 5 problemas reportados em teste real corrigidos; feature flags
+passaram a controlar acesso de verdade — B1. Ver §0.)
 
 ## Como usar este arquivo
 
@@ -23,39 +23,39 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## ⚠️ Ao testar agora: confira se o deploy ja pegou o ultimo push
+## 🌙 Trabalho autonomo de uma madrugada inteira — resumo
 
-No momento em que este handoff foi escrito, a producao ainda mostrava
-`estoque: false` e `caixa: false` nas flags da empresa (dado de ANTES da
-migration `0023_feature_flags_retrocompat` rodar) e o codigo do gate de
-modulos (commit `46ad3d8`) ainda nao tinha sido confirmado no ar. Isso e
-**esperado e seguro por construcao** — o container roda a migration antes de
-subir o servidor (`docker/entrypoint.sh`), entao a ordem correta e sempre
-"schema corrigido primeiro, codigo novo depois". Mas vale conferir na tela:
+Sessao longa, sem parar pra confirmar cada passo (autorizado explicitamente
+pelo dono). Nesta ordem: as 4 pecas do relatorio financeiro (DRE, ponto de
+equilibrio, comparativo, margem por canal/produto, contas a pagar/receber),
+5 bugs reportados em teste real, B1 (feature flags), A3 (monitoramento,
+codigo pronto e no-op ate a credencial do Sentry), rate limiting em
+login/registro, e — ja com o dono acordado e dando feedback ao vivo —
+edicao de conta (gap de UI) e recorrencia mensal. Tudo testado (regressao
+completa verde a cada commit) e no GitHub.
 
-1. Abrir **Empresa > Modulos** — Mesas & Comandas, Estoque e Caixa devem
-   aparecer **ligados** (3 interruptores azuis).
-2. Se aparecerem desligados, o deploy ainda nao terminou ou nao pegou o push
-   mais recente — aguardar o EasyPanel rebuildar (auto-deploy por push, ver
-   §6) e recarregar. Se persistir desligado depois disso, avisar: seria a
-   primeira vez que a migration `0023` falha, e vale investigar na hora.
+**Unica coisa que ainda precisa do dono:** o A3 (monitoramento de erro) tem
+o codigo 100% pronto, mas so liga de verdade com uma credencial que so ele
+pode criar (conta gratuita no Sentry). Ate la, e um no-op inofensivo. Passo
+a passo em §6.2 e no item A3 do `PROFISSIONALIZACAO.md`.
 
-## 🌙 Trabalho autonomo enquanto voce dormia — o que fazer ao acordar
+## ⚠️ Armadilha nova: rate limiting e a suite de testes local
 
-Voce pediu pra eu seguir sem parar pra confirmar cada passo. Fiz: as 4 pecas
-do relatorio financeiro, os 5 bugs reportados, e comecei o A3
-(monitoramento). Tudo testado (regressao completa verde a cada commit) e no
-GitHub — nada ficou pela metade nem sem verificar.
+Desde `da9fac7`, `/auth/login` e `/auth/register` tem limite real. A suite
+de testes local (dezenas de arquivos, centenas de `/auth/register`) NAO
+sobrevive ao limite de 5/hora se o servidor local rodar com o limitador
+ativo — ver `lib/rateLimit.js` e a nota tecnica completa na secao de rate
+limiting mais abaixo. **Pra rodar a suite completa localmente:**
 
-**Unica coisa que precisa de voce:** o A3 (monitoramento de erro) tem o
-codigo 100% pronto, mas so liga de verdade com uma credencial que so voce
-pode criar (conta gratuita no Sentry). Ate la, e um no-op inofensivo — nao
-muda nada no app. Passo a passo em §6.2 e no item A3 do
-`PROFISSIONALIZACAO.md`.
+```bash
+RATE_LIMIT_DISABLED=1 npm run dev:no-reload
+```
 
-**Verificar quando puder:** confira se o deploy mais recente (commit apos
-`c45a081`) subiu limpo no EasyPanel — o volume de trabalho desta madrugada
-foi grande, vale um olho.
+`RATE_LIMIT_DISABLED` **nunca** deve ir para as variaveis do EasyPanel —
+so existe pra desenvolvimento local. Pra testar o limitador de verdade,
+rode `tests/backend_test_rate_limit.py` SOZINHO, contra um servidor SEM
+essa variavel (ele manda `X-Forwarded-For` sintetico proprio em cada
+requisicao, entao funciona com o limite ativo).
 
 ## O que mudou nesta sessao (2026-08-18, continuacao)
 
@@ -238,6 +238,60 @@ era so a ponta de um problema maior.
    `env(safe-area-inset-*)` reserva a area do notch; campos ganham
    `font-size: 16px` so em toque, porque abaixo disso o iOS da zoom
    automatico ao focar e nao volta sozinho.
+
+## Contas a pagar/receber — edicao (gap de UI) e recorrencia mensal
+
+Dois pedidos do dono, ja testando a feature ao vivo.
+
+**1. "Nao e possivel editar uma conta depois de criada"** — o backend
+(`PUT /contas/:id`) ja funcionava desde o commit original (testado,
+`test_editar_conta_pendente_funciona`). O gap era so na tela: nenhum botao
+chamava esse endpoint. `ContaDialog` ganhou modo edicao (prop `existente`),
+prefilled com os dados atuais, `Tipo` desabilitado (backend nao aceita
+trocar `tipo` via PUT — cancelar e recadastrar se precisar mudar).
+`ContasTab` ganhou o botao de lapis ao lado de Pagar/Cancelar.
+
+**2. Recorrencia (`repeticoes`)** — migration `0026` adiciona `serie_id`/
+`serie_indice`/`serie_total` a `contas`. **Nao e um motor de recorrencia**:
+`POST /contas` com `repeticoes: N` gera as N parcelas de uma vez, todas
+como contas independentes ligadas so pelo `serie_id` (pra a tela rotular
+"3 de 12"). Pagar, cancelar ou editar uma parcela nunca afeta as outras —
+escopo deliberadamente menor que um motor de recorrencia de verdade, porque
+o pedido foi "informar quantas vezes", nao "criar regra recorrente
+continua".
+
+Vencimento das parcelas seguintes: `adicionarMeses()` em `lib/contas.js`,
+NUNCA aritmetica direta de `Date` do JS (que rolaria "31 de janeiro + 1 mes"
+pra "3 de marco" em vez de clampar em 28/29 de fevereiro — testado
+explicitamente, `test_repeticoes_clampa_dia_31_no_ultimo_dia_do_mes_destino`).
+
+Sugestoes que ficaram de fora, anotadas mas nao pedidas: alerta de
+vencimento no Dashboard (hoje so aparece dentro da aba Financeiro), editar
+"esta parcela em diante" numa serie de uma vez, duplicar conta avulsa.
+
+32 testes em `tests/backend_test_contas.py` (24 originais + 8 de
+edicao/recorrencia).
+
+## Rate limiting em /auth/login e /auth/register
+
+Nenhuma das duas rotas tinha limite algum ate esta sessao — login sem
+limite e forca bruta de senha; registro sem limite e criacao ilimitada de
+tenants (71+ empresas de teste ja poluiram producao uma vez por isso, C1).
+
+`lib/rateLimit.js`: janela fixa em memoria (um unico processo Node, sem
+replicas — documentado no modulo pra migrar pra Redis/Postgres se isso
+mudar). `/auth/register`: 5/hora por IP. `/auth/login`: 10/15min por
+(IP, email) — conta toda tentativa, sucesso incluido, senao um atacante
+alternando senha certa/errada nunca seria limitado.
+
+**Achado tecnico relevante pra qualquer sessao futura nesta maquina:** o
+Avast (antivirus) injeta `X-Forwarded-For: 127.0.0.1` em TODO trafego HTTP
+local, mesmo sem proxy real e mesmo sem o cliente mandar o header —
+confirmado com log temporario durante o desenvolvimento. Isso faz a suite
+de testes inteira (que nao sabe desse header) compartilhar um unico balde
+e se bloquear sozinha depois de 5 registros. `RATE_LIMIT_DISABLED=1`
+(nunca em producao) existe exatamente por isso — ver o aviso no topo deste
+arquivo (§0).
 
 ## Migrations automaticas — confirmado funcionando
 
@@ -573,7 +627,7 @@ policies sao defesa em profundidade que nunca e exercida.
 `permissoes`. Controle de deploy: `schema_migrations` (nao tem `empresa_id`
 — e infraestrutura, nao dominio).
 
-## 4.3 Migrations (25 aplicadas, todas via `scripts/migrate.mjs` desde 2026-08-18)
+## 4.3 Migrations (26 aplicadas, todas via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
 0001_init.sql               0009_repository_support_functions.sql
@@ -585,11 +639,12 @@ policies sao defesa em profundidade que nunca e exercida.
 0007_webhook_events.sql      0015_pedidos_desconto_acrescimo.sql
 0008_conversas_mensagens.sql
 
-0016_kds.sql                 0021_cardapio_imagem.sql
-0017_delivery.sql            0022_despesa_natureza.sql
-0018_caixa.sql                0023_feature_flags_retrocompat.sql
-0019_estoque.sql              0024_pedido_tipo_para_levar.sql
-0020_custo.sql                0025_contas.sql
+0016_kds.sql                 0022_despesa_natureza.sql
+0017_delivery.sql            0023_feature_flags_retrocompat.sql
+0018_caixa.sql                0024_pedido_tipo_para_levar.sql
+0019_estoque.sql              0025_contas.sql
+0020_custo.sql                0026_contas_recorrencia.sql
+0021_cardapio_imagem.sql
 ```
 
 `0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
@@ -755,11 +810,13 @@ imagem apesar do padrao geral de ignorar).
 | Relatorio financeiro — margem por canal | **Completo e no ar** |
 | Relatorio financeiro — margem por produto | **Completo e no ar** |
 | Relatorio financeiro — contas a pagar/receber | **Completo e no ar** — fecha o pedido |
+| Contas a pagar/receber — edicao + recorrencia mensal | **Completo e no ar** |
 | Pedido: tipos enxugados (delivery/mesa/para_levar) | **Completo e no ar** |
 | Acesso do ATENDENTE restrito (sem financeiro/estoque) | **Completo e no ar** |
 | PWA (instalar no celular, tela cheia) | **Completo e no ar** |
 | Feature flags controlando acesso (B1) | **Completo e no ar** |
 | Monitoramento de erro em producao (A3) | **Codigo no ar, no-op ate a credencial do Sentry** |
+| Rate limiting em login/registro | **Completo e no ar** |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -1005,7 +1062,11 @@ disponivel via `git log`.)
 - `lib/modulos.js` — feature flags / gate de plano (modulo puro + funcoes de
   leitura sobre `Empresa`).
 - `lib/contas.js` — contas a pagar/receber: `statusEfetivo` (atrasada
-  derivada, comparacao em calendario UTC) e `resumoContas` (modulo puro).
+  derivada, comparacao em calendario UTC), `resumoContas` e
+  `adicionarMeses` (recorrencia — soma meses em data pura, clampando no
+  ultimo dia do mes destino). Modulo puro.
+- `lib/rateLimit.js` — rate limiting em memoria (`checarLimite`,
+  `ipDoCliente`). `RATE_LIMIT_DISABLED=1` so pra dev local — ver §0.
 - `lib/caixa.js` — calculo de esperado/diferenca do caixa.
 - `lib/cupom-dados.js` — mapeamento puro Pedido/Comanda -> dados do cupom.
 - `lib/repositories/{mongo,supabase}/contaRepository.js` — CRUD de `contas`,
@@ -1017,7 +1078,7 @@ disponivel via `git log`.)
 - `components/cupom.jsx` — renderiza e imprime o cupom (`window.print()`).
 
 **Banco**
-- `supabase/migrations/0001`…`0025` — lista completa e ordem no §4.3.
+- `supabase/migrations/0001`…`0026` — lista completa e ordem no §4.3.
 - `supabase/prod-ca-2021.crt` — CA raiz do Supabase, para TLS do migrator.
 
 **Deploy**
@@ -1038,8 +1099,10 @@ disponivel via `git log`.)
 **Testes**
 - `tests/run_all.py` — descobre e roda toda `tests/backend_test_*.py`.
 - `tests/backend_test_dre.py`, `_comparativo.py`, `_margem_canal.py`,
-  `_margem_produto.py`, `_modulos.py`, `_contas.py` — relatorio financeiro,
-  feature flags e contas a pagar/receber (sessao atual).
+  `_margem_produto.py`, `_modulos.py`, `_contas.py`, `_rate_limit.py` —
+  relatorio financeiro, feature flags, contas a pagar/receber e rate
+  limiting (sessao atual). `_rate_limit.py` precisa rodar SOZINHO, sem
+  `RATE_LIMIT_DISABLED=1` — ver aviso no §0.
 - `tests/test_monitoring.mjs` — modulo puro `lib/integrations/monitoring.js`,
   rodado direto (`node tests/test_monitoring.mjs`), fora do `run_all.py`
   (que so descobre `backend_test_*.py`).

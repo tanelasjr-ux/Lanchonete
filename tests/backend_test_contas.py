@@ -324,5 +324,138 @@ def test_conta_pagar_com_data_retroativa_de_pagamento():
     assert gerada["data"].startswith(data_pagamento)
 
 
+
+# ============================================================================
+# Recorrencia (`repeticoes`) — pedido do dono, 2026-08-18.
+#
+# NAO e um motor de recorrencia: gera a serie INTEIRA de uma vez no
+# cadastro, cada parcela vira uma conta independente (paga/cancela/edita
+# isolada), ligadas so por `serie_id` pra a tela rotular "3 de 12".
+# ============================================================================
+
+def test_repeticoes_ausente_e_conta_avulsa_como_sempre():
+    """Sem `repeticoes` no corpo, comportamento identico a antes de a feature existir."""
+    headers = criar_empresa("Repeticoes Ausente")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "valor": 500, "vencimento": dia(10),
+    })
+    assert r.status_code == 201
+    corpo = r.json()
+    assert "contas" not in corpo, "sem repeticoes, resposta continua sendo o objeto direto"
+    assert corpo["serie_id"] is None
+    assert corpo["serie_indice"] is None
+    assert corpo["serie_total"] is None
+
+
+def test_repeticoes_1_e_identico_a_omitir():
+    headers = criar_empresa("Repeticoes Um")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "valor": 500, "vencimento": dia(10), "repeticoes": 1,
+    })
+    assert r.status_code == 201
+    assert "contas" not in r.json()
+    assert r.json()["serie_id"] is None
+
+
+def test_repeticoes_gera_serie_completa_com_vencimento_mensal():
+    headers = criar_empresa("Repeticoes Serie")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "natureza": "fixa", "valor": 1500,
+        "vencimento": "2027-01-05", "descricao": "Aluguel do salao", "repeticoes": 4,
+    })
+    assert r.status_code == 201, r.text
+    corpo = r.json()
+    assert "contas" in corpo and len(corpo["contas"]) == 4
+    serie_id = corpo["serie_id"]
+    assert serie_id is not None
+
+    vencimentos_esperados = ["2027-01-05", "2027-02-05", "2027-03-05", "2027-04-05"]
+    for i, parcela in enumerate(corpo["contas"]):
+        assert parcela["vencimento"] == vencimentos_esperados[i], parcela
+        assert parcela["serie_id"] == serie_id
+        assert parcela["serie_indice"] == i + 1
+        assert parcela["serie_total"] == 4
+        assert parcela["valor"] == 1500
+        assert parcela["descricao"] == f"Aluguel do salao ({i + 1}/4)"
+        assert parcela["status"] == "pendente"
+
+
+def test_repeticoes_clampa_dia_31_no_ultimo_dia_do_mes_destino():
+    """Vencimento dia 31 de janeiro: fevereiro nao tem dia 31 — cai no
+    ultimo dia real do mes (28, ou 29 em ano bissexto), nunca rola pra
+    marco. `new Date(2027,1,31)` do JS faria exatamente esse rolamento
+    errado; por isso a conta e feita nos componentes, nao com `Date` direto."""
+    headers = criar_empresa("Repeticoes Dia 31")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "valor": 100,
+        "vencimento": "2027-01-31", "repeticoes": 3,
+    })
+    assert r.status_code == 201
+    vencimentos = [p["vencimento"] for p in r.json()["contas"]]
+    # 2027 nao e bissexto -> fevereiro tem 28 dias; marco tem 31 (volta ao dia 31).
+    assert vencimentos == ["2027-01-31", "2027-02-28", "2027-03-31"], vencimentos
+
+
+def test_repeticoes_fora_do_intervalo_e_rejeitado():
+    headers = criar_empresa("Repeticoes Invalidas")
+    for valor in (0, -1, 61, 1.5):
+        r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+            "tipo": "pagar", "categoria": "Aluguel", "valor": 100, "vencimento": dia(5), "repeticoes": valor,
+        })
+        assert r.status_code == 400, f"repeticoes={valor} deveria ser rejeitado, veio {r.status_code}"
+
+
+def test_repeticoes_60_e_o_limite_maximo_aceito():
+    headers = criar_empresa("Repeticoes Sessenta")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "valor": 50, "vencimento": dia(1), "repeticoes": 60,
+    })
+    assert r.status_code == 201
+    assert len(r.json()["contas"]) == 60
+
+
+def test_parcela_da_serie_e_paga_de_forma_independente():
+    """Pagar a parcela 1 nao afeta a 2 nem a 3 — cada uma e uma conta de verdade, sem efeito cascata."""
+    headers = criar_empresa("Serie Independente")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "natureza": "fixa", "valor": 800,
+        "vencimento": dia(5), "repeticoes": 3,
+    })
+    parcelas = r.json()["contas"]
+
+    pagar = requests.put(f"{BASE_URL}/contas/{parcelas[0]['id']}/pagar", headers=headers, json={})
+    assert pagar.status_code == 200
+    assert pagar.json()["status"] == "paga"
+
+    lst = requests.get(f"{BASE_URL}/contas", headers=headers).json()["contas"]
+    p2 = next(c for c in lst if c["id"] == parcelas[1]["id"])
+    p3 = next(c for c in lst if c["id"] == parcelas[2]["id"])
+    assert p2["status"] == "pendente", "parcela 2 nao pode ser afetada por pagar a parcela 1"
+    assert p3["status"] == "pendente"
+
+    # DRE conta so a parcela paga (1 x 800), nao a serie inteira (3 x 800).
+    dre = requests.get(f"{BASE_URL}/financeiro/relatorio", headers=headers).json()["dre"]
+    assert dre["despesas_fixas"] == 800
+
+
+def test_parcela_da_serie_e_editada_de_forma_independente():
+    """Editar a descricao/valor da parcela 2 nao muda a 1 nem a 3."""
+    headers = criar_empresa("Serie Edicao Independente")
+    r = requests.post(f"{BASE_URL}/contas", headers=headers, json={
+        "tipo": "pagar", "categoria": "Aluguel", "valor": 600, "vencimento": dia(5), "repeticoes": 3,
+    })
+    parcelas = r.json()["contas"]
+
+    ed = requests.put(f"{BASE_URL}/contas/{parcelas[1]['id']}", headers=headers, json={"valor": 999})
+    assert ed.status_code == 200
+    assert ed.json()["valor"] == 999
+
+    lst = requests.get(f"{BASE_URL}/contas", headers=headers).json()["contas"]
+    p1 = next(c for c in lst if c["id"] == parcelas[0]["id"])
+    p3 = next(c for c in lst if c["id"] == parcelas[2]["id"])
+    assert p1["valor"] == 600
+    assert p3["valor"] == 600
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

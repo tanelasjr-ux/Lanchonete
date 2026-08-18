@@ -2508,7 +2508,9 @@ function ContasTab() {
   const [dados, setDados] = useState(null)
   const [filtroTipo, setFiltroTipo] = useState('todos')
   const [filtroStatus, setFiltroStatus] = useState('todos')
-  const [dlg, setDlg] = useState(false)
+  // null = fechado; {} = cadastrando nova; conta existente = editando.
+  // `?.id` e o que distingue os dois modos dentro do ContaDialog.
+  const [contaDialog, setContaDialog] = useState(null)
   const [pagando, setPagando] = useState(null) // conta sendo marcada como paga
 
   const load = useCallback(async () => {
@@ -2520,9 +2522,16 @@ function ContasTab() {
 
   const salvar = async (f) => {
     try {
-      await api('/contas', { method: 'POST', body: f })
-      toast.success('Conta cadastrada')
-      setDlg(false)
+      if (contaDialog?.id) {
+        await api(`/contas/${contaDialog.id}`, { method: 'PUT', body: f })
+        toast.success('Conta atualizada')
+      } else {
+        const resp = await api('/contas', { method: 'POST', body: f })
+        // Cadastro com repeticoes devolve {contas: [...], serie_id}; conta
+        // avulsa devolve o objeto direto — ver route.js, POST /contas.
+        toast.success(resp.serie_id ? `${resp.contas.length} parcelas cadastradas` : 'Conta cadastrada')
+      }
+      setContaDialog(null)
       load()
     } catch (e) { toast.error(e.message) }
   }
@@ -2575,7 +2584,7 @@ function ContasTab() {
             </SelectContent>
           </Select>
         </div>
-        <Button className="ml-auto" onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Nova conta</Button>
+        <Button className="ml-auto" onClick={() => setContaDialog({})}><Plus className="h-4 w-4 mr-1" />Nova conta</Button>
       </div>
 
       <Card><CardContent className="p-0">
@@ -2598,6 +2607,7 @@ function ContasTab() {
                   {c.status === 'pendente' && (
                     <div className="flex justify-end gap-1">
                       <Button size="sm" variant="outline" onClick={() => setPagando(c)}>{c.tipo === 'pagar' ? 'Pagar' : 'Receber'}</Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setContaDialog(c)} title="Editar"><Pencil className="h-4 w-4" /></Button>
                       <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => cancelar(c)} title="Cancelar"><Ban className="h-4 w-4" /></Button>
                     </div>
                   )}
@@ -2609,7 +2619,7 @@ function ContasTab() {
         {contas.length === 0 && <Empty>Nenhuma conta {filtroStatus !== 'todos' ? CONTA_STATUS_LABEL[filtroStatus].toLowerCase() : 'cadastrada'}.</Empty>}
       </CardContent></Card>
 
-      {dlg && <ContaDialog onClose={() => setDlg(false)} onSave={salvar} />}
+      {contaDialog && <ContaDialog existente={contaDialog.id ? contaDialog : null} onClose={() => setContaDialog(null)} onSave={salvar} />}
       {pagando && (
         <ConfirmarPagamentoDialog conta={pagando} onClose={() => setPagando(null)} onConfirm={confirmarPagamento} />
       )}
@@ -2618,15 +2628,34 @@ function ContasTab() {
 }
 const round2ish = (n) => Math.round((Number(n) || 0) * 100) / 100
 
-function ContaDialog({ onClose, onSave }) {
-  const [f, setF] = useState({ tipo: 'pagar', categoria: '', natureza: '', descricao: '', valor: '', vencimento: '' })
+/**
+ * Cria OU edita uma conta a pagar/receber — `existente` presente decide o
+ * modo. Editar so acontece com a conta ainda `pendente` (o botao que abre
+ * este dialogo em modo edicao nem aparece nos outros status — ver
+ * ContasTab); o backend recusa (409) do mesmo jeito se essa garantia falhar.
+ *
+ * `repeticoes` (gera a serie inteira de uma vez, ver route.js) so aparece
+ * criando: editar mexe numa parcela ja existente, nunca regenera a serie
+ * — mudar quantidade de parcelas depois de criadas exigiria decidir o que
+ * fazer com as que ja existem, e isso nao foi pedido.
+ */
+function ContaDialog({ existente, onClose, onSave }) {
+  const editando = Boolean(existente)
+  const [f, setF] = useState(() => existente
+    ? {
+        tipo: existente.tipo, categoria: existente.categoria, natureza: existente.natureza || '',
+        descricao: existente.descricao || '', valor: String(existente.valor), vencimento: existente.vencimento,
+      }
+    : { tipo: 'pagar', categoria: '', natureza: '', descricao: '', valor: '', vencimento: '', repeticoes: '1' })
   const [categorias, setCategorias] = useState([])
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
 
   useEffect(() => { api('/financeiro/categorias-despesa').then(setCategorias).catch(() => {}) }, [])
 
-  const [naturezaTocada, setNaturezaTocada] = useState(false)
+  // Em modo edicao a natureza ja vem do registro — nao reaplicar a sugestao
+  // da categoria por cima do que o dono classificou antes.
+  const [naturezaTocada, setNaturezaTocada] = useState(editando)
   const setCategoria = (v) => {
     set('categoria', v)
     if (!naturezaTocada) {
@@ -2636,16 +2665,20 @@ function ContaDialog({ onClose, onSave }) {
   }
   const setNatureza = (v) => { setNaturezaTocada(true); set('natureza', v) }
 
+  const repeticoesNum = editando ? 1 : Math.max(1, Number(f.repeticoes) || 1)
+
   const salvar = async () => {
     if (!f.categoria) return toast.error('Selecione a categoria')
     if (!f.valor || Number(f.valor) <= 0) return toast.error('Informe um valor maior que zero')
     if (!f.vencimento) return toast.error('Informe o vencimento')
+    if (!editando && (repeticoesNum < 1 || repeticoesNum > 60)) return toast.error('Repetições deve ser entre 1 e 60')
     setSaving(true)
     try {
       await onSave({
         tipo: f.tipo, categoria: f.categoria, descricao: f.descricao,
         valor: Number(f.valor), vencimento: f.vencimento,
         natureza: f.tipo === 'pagar' && f.natureza ? f.natureza : undefined,
+        ...(editando ? {} : { repeticoes: repeticoesNum }),
       })
     } finally { setSaving(false) }
   }
@@ -2653,12 +2686,17 @@ function ContaDialog({ onClose, onSave }) {
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Nova conta</DialogTitle><DialogDescription>Uma previsão — só vira lançamento quando marcada como paga/recebida.</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{editando ? 'Editar conta' : 'Nova conta'}</DialogTitle>
+          <DialogDescription>Uma previsão — só vira lançamento quando marcada como paga/recebida.</DialogDescription>
+        </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2"><Label>Tipo</Label>
-            <Select value={f.tipo} onValueChange={(v) => set('tipo', v)}><SelectTrigger><SelectValue /></SelectTrigger>
+            <Select value={f.tipo} onValueChange={(v) => set('tipo', v)} disabled={editando}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="pagar">A pagar</SelectItem><SelectItem value="receber">A receber</SelectItem></SelectContent>
             </Select>
+            {editando && <p className="text-xs text-muted-foreground">Tipo não muda depois de criada — cancele e cadastre de novo se precisar trocar.</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
@@ -2678,7 +2716,21 @@ function ContaDialog({ onClose, onSave }) {
             </div>
             <div className="space-y-2"><Label>Valor (R$)</Label><Input type="number" min="0" step="0.01" value={f.valor} onChange={(e) => set('valor', e.target.value)} /></div>
           </div>
-          <div className="space-y-2"><Label>Vencimento</Label><Input type="date" value={f.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2"><Label>Vencimento{!editando && repeticoesNum > 1 ? ' (1ª parcela)' : ''}</Label><Input type="date" value={f.vencimento} onChange={(e) => set('vencimento', e.target.value)} /></div>
+            {!editando && (
+              <div className="space-y-2">
+                <Label>Repetições</Label>
+                <Input type="number" min="1" max="60" value={f.repeticoes} onChange={(e) => set('repeticoes', e.target.value)} />
+              </div>
+            )}
+          </div>
+          {!editando && repeticoesNum > 1 && (
+            <p className="text-xs text-muted-foreground -mt-2">
+              Cadastra {repeticoesNum} parcelas mensais a partir do vencimento acima, cada uma paga/recebida
+              separadamente — pagar ou cancelar uma não afeta as outras.
+            </p>
+          )}
           {f.tipo === 'pagar' && (
             <div className="space-y-2">
               <Label>Natureza</Label>
