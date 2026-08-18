@@ -291,29 +291,34 @@ function AuthScreen({ onAuth }) {
   return (
     <div className="min-h-screen grid lg:grid-cols-2 bg-background">
       {/* Brand side */}
-      <div className="relative hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-primary/90 via-primary to-violet-700 text-primary-foreground overflow-hidden">
+      <div className="relative hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-slate-900 via-slate-800 to-primary/40 text-white overflow-hidden">
         <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 20% 20%, white 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
-        <div className="relative flex items-center gap-2 font-semibold text-lg">
-          <div className="h-9 w-9 rounded-lg bg-white/15 grid place-items-center"><ChefHat className="h-5 w-5" /></div>
-          Restaurant OS
-        </div>
+        {/* Logo da ETNA (a empresa que desenvolve), nao do restaurante
+            cliente — a logo do cliente aparece dentro do sistema, depois do
+            login. O lettering do arquivo e claro, entao so funciona sobre
+            fundo escuro: por isso o gradiente aqui e slate-900, e nao o
+            `bg-background` (que vira branco no tema claro). */}
+        <img src="/etna-logo.png" alt="ETNA — Tecnologia, Software e Soluções Digitais" className="relative h-20 w-auto self-start" />
         <div className="relative space-y-6">
           <h1 className="text-4xl font-bold leading-tight">A plataforma definitiva para gestão de restaurantes.</h1>
-          <p className="text-primary-foreground/80 text-lg">Cardápio, pedidos, clientes, financeiro e integrações WhatsApp — tudo em uma arquitetura multi-tenant pronta para escalar.</p>
+          <p className="text-white/80 text-lg">Cardápio, pedidos, clientes, financeiro e integrações WhatsApp — tudo em uma arquitetura multi-tenant pronta para escalar.</p>
           <div className="flex gap-6 pt-4">
             {[['Multi-tenant', 'Isolamento por empresa'], ['Tempo real', 'Pedidos & dashboard'], ['Integrado', 'WhatsApp & n8n']].map(([t, s]) => (
-              <div key={t}><div className="font-semibold">{t}</div><div className="text-sm text-primary-foreground/70">{s}</div></div>
+              <div key={t}><div className="font-semibold">{t}</div><div className="text-sm text-white/70">{s}</div></div>
             ))}
           </div>
         </div>
-        <div className="relative text-sm text-primary-foreground/60">© {new Date().getFullYear()} Restaurant OS · Enterprise SaaS</div>
+        <div className="relative text-sm text-white/60">© {new Date().getFullYear()} ETNA · Tecnologia, Software e Soluções Digitais</div>
       </div>
 
       {/* Form side */}
       <div className="flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-md space-y-8">
+          {/* No mobile o painel escuro nao aparece, entao aqui vai so o
+              SIMBOLO (colorido, legivel em tema claro e escuro) — o lettering
+              claro da logo completa sumiria sobre fundo branco. */}
           <div className="lg:hidden flex items-center gap-2 font-semibold text-lg">
-            <div className="h-9 w-9 rounded-lg bg-primary grid place-items-center text-primary-foreground"><ChefHat className="h-5 w-5" /></div>
+            <img src="/etna-simbolo.png" alt="ETNA" className="h-9 w-9" />
             Restaurant OS
           </div>
           <div className="space-y-2">
@@ -342,7 +347,44 @@ function AuthScreen({ onAuth }) {
           </p>
         </div>
       </div>
+      <BotaoWhatsApp origem="tela de login" />
     </div>
+  )
+}
+
+/** WhatsApp comercial da ETNA — quem atende do outro lado. */
+const WHATSAPP_ETNA = '5591982934763'
+
+/**
+ * Balao flutuante de WhatsApp. Fala com a ETNA (quem vende e da suporte ao
+ * sistema), nao com o restaurante — o WhatsApp do restaurante e outro
+ * assunto, configurado por empresa em Integracoes.
+ *
+ * `origem` entra na mensagem pre-preenchida pra ETNA saber de onde a pessoa
+ * veio (tela de login = prospect; dentro do sistema = cliente pedindo
+ * suporte) sem precisar perguntar.
+ */
+function BotaoWhatsApp({ origem = 'sistema' }) {
+  const texto = encodeURIComponent(`Olá! Vim pelo Restaurant OS (${origem}) e gostaria de mais informações.`)
+  return (
+    <a
+      href={`https://wa.me/${WHATSAPP_ETNA}?text=${texto}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Falar com a ETNA no WhatsApp"
+      title="Falar com a ETNA no WhatsApp"
+      // `bottom` usa safe-area: no iPhone instalado como PWA, a barra de
+      // gestos ficaria por cima de um botao fixo no rodape.
+      className="fixed right-5 z-50 grid h-14 w-14 place-items-center rounded-full bg-[#25D366] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+      style={{ bottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+    >
+      {/* SVG inline do WhatsApp: o lucide-react nao traz marcas registradas,
+          e puxar um icone de CDN quebraria offline e adicionaria dependencia
+          externa por um caminho de 1 elemento. */}
+      <svg viewBox="0 0 24 24" fill="currentColor" className="h-7 w-7" aria-hidden="true">
+        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884a9.82 9.82 0 0 1 6.988 2.896 9.82 9.82 0 0 1 2.893 6.994c-.003 5.45-4.437 9.885-9.885 9.885m8.413-18.297A11.8 11.8 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.9 11.9 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.82 11.82 0 0 0-3.48-8.413Z" />
+      </svg>
+    </a>
   )
 }
 

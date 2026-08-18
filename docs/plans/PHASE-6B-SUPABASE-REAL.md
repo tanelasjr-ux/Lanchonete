@@ -12,7 +12,7 @@ Nenhum dado foi alterado ou apagado no MongoDB.
 ## 1. Estado inicial encontrado no projeto Supabase
 
 O projeto **não estava vazio**: tinha 17 tabelas de uma versão anterior do
-sistema (desenvolvida na plataforma "emergent"), num modelo genérico
+sistema (do protótipo inicial, antes da reescrita), num modelo genérico
 `id / empresa_id / data jsonb / created_at` — cada registro era um blob JSON,
 incompatível com o modelo relacional das Fases 4-6. Havia dados (3 empresas,
 44 pedidos).
