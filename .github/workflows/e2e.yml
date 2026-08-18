@@ -1,0 +1,66 @@
+name: E2E (Playwright)
+
+# Item A4 do PROFISSIONALIZACAO.md — "Pronto quando: a suite roda em CI e
+# falha quando um desses fluxos quebra."
+#
+# Roda SEMPRE contra MongoDB efemero (`services.mongo` abaixo), NUNCA contra
+# Supabase: o projeto nao tem staging separado (HANDOFF.md, item C1) —
+# DATABASE_PROVIDER=supabase aqui escreveria em producao. Nao ha nenhuma
+# variavel SUPABASE_* neste workflow de proposito; o app cai no default do
+# factory (mongo) mesmo sem `DATABASE_PROVIDER` setado, mas setamos explicito
+# pra deixar a intencao visivel a quem ler o workflow.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_PROVIDER: mongo
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: restaurant_os_e2e
+      # So para o processo local do job — nunca o segredo real de producao.
+      JWT_SECRET: e2e-ci-secret-nao-usar-em-producao
+      CORS_ORIGINS: http://localhost:3000
+      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      # yarn, nao npm: o projeto tem os dois lockfiles (package-lock.json e
+      # yarn.lock), mas as sessoes de desenvolvimento usam yarn (ver
+      # HANDOFF.md, §8) e e o yarn.lock que reflete as dependencias atuais.
+      - name: Instalar dependencias
+        run: yarn install --frozen-lockfile
+
+      - name: Instalar navegador do Playwright (Chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Rodar suite E2E
+        run: npx playwright test
+
+      - name: Publicar relatorio (em falha)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14

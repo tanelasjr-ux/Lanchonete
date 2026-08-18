@@ -10,7 +10,9 @@
         "start": "next start",
         "migrate": "node scripts/migrate.mjs",
         "migrate:dry": "node scripts/migrate.mjs --dry-run",
-        "test": "python tests/run_all.py"
+        "test": "python tests/run_all.py",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui"
     },
     "dependencies": {
         "@hookform/resolvers": "5.1.1",
@@ -75,6 +77,7 @@
         "zod": "3.25.67"
     },
     "devDependencies": {
+        "@playwright/test": "^1.62.1",
         "@types/lodash": "4.17.24",
         "autoprefixer": "10.4.19",
         "globals": "16.2.0",

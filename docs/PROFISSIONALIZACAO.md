@@ -37,7 +37,7 @@ de spec + plano proprios.
 | A1 | Consolidar e executar as suites de teste | Confianca | P | ✅ | `b46d88e`,`be8f167`,`f79a46b` |
 | A2 | Eliminar falhas silenciosas na UI | Confianca | P | ✅ | `e12abe8` |
 | A3 | Monitoramento de erro em producao | Confianca | M | 🟡 | (esta sessao — falta so credencial do Sentry) |
-| A4 | Testes E2E dos fluxos criticos | Confianca | G | ⚪ | |
+| A4 | Testes E2E dos fluxos criticos | Confianca | G | ✅ | (esta sessao) |
 | B1 | Feature flags que realmente controlam acesso | Comercial | M | ✅ | (esta sessao) |
 | B2 | Onboarding de novo restaurante | Comercial | M | ⚪ | |
 | B3 | Billing e assinatura | Comercial | G | ⚪ | |
@@ -254,6 +254,32 @@ abrir/fechar comanda com dois metodos de pagamento, abrir/fechar caixa com
 conferencia, marcar item pronto no KDS.
 
 **Pronto quando:** a suite roda em CI e falha quando um desses fluxos quebra.
+
+### ✅ Concluido (2026-08-18)
+
+`@playwright/test` (nao o MCP de automacao usado nesta sessao — dependencia
+de projeto de verdade, `e2e/`). Os 5 fluxos minimos cobertos, 10 testes:
+`e2e/login.spec.js` (3), `pedido.spec.js` (2), `comanda.spec.js` (1),
+`caixa.spec.js` (2), `kds.spec.js` (2).
+
+CI: `.github/workflows/e2e.yml`, roda em todo push/PR pra `main` contra
+**MongoDB efemero** (`services.mongo`) — nunca Supabase. O projeto nao tem
+staging separado (HANDOFF.md, C1): `DATABASE_PROVIDER=supabase` em CI
+escreveria em producao. Nenhuma variavel `SUPABASE_*` existe no workflow de
+proposito.
+
+Achados no caminho:
+- `getByLabel()` nao funciona no formulario de login: os `<Label>` nao tem
+  `htmlFor` associado ao `<Input>` (gap de acessibilidade pre-existente, nao
+  alterado so pra servir ao teste) — os specs usam `getByPlaceholder()`.
+- Viewport padrao do Playwright (1280x720) deixa o rodape de dialogos
+  maiores (ex: Novo Pedido) fora da area clicavel. `devices['Desktop
+  Chrome']` no `projects` embute seu proprio `viewport` que sobrescreveria
+  qualquer valor definido antes dele em `use` — o override precisa vir
+  DEPOIS do spread (`playwright.config.js`).
+- `POST /pedidos` nao deriva `nome` do `produto_id` (mesma regra do
+  `preco`) — item sem `nome` explicito no corpo fica sem nome em qualquer
+  tela que o exiba (achado escrevendo o teste de KDS, nao em producao).
 
 ---
 
