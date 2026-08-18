@@ -15,6 +15,7 @@ import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip as RTooltip,
 } from 'recharts'
+import { montarEnvelope } from '@/lib/integrations/monitoring'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -40,14 +41,50 @@ import QRCodeSVG from 'qrcode.react'
 /* ============================ API CLIENT ============================ */
 const TOKEN_KEY = 'ros_token'
 const getToken = () => (typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null)
+/**
+ * Reporta erro do NAVEGADOR pro monitoramento (item A3 do PROFISSIONALIZACAO.md).
+ * Complementa a captura do servidor (route.js): cobre falha de rede (fetch()
+ * nunca chegou no servidor — o backend nao tem como ver isso) e excecao de
+ * JS que acontece fora de uma chamada de API. `NEXT_PUBLIC_SENTRY_DSN` e
+ * intencionalmente uma variavel PUBLICA — DSN do Sentry e projetado pra
+ * viver em bundle de cliente, nao e segredo (so aceita eventos, nao le
+ * dado). Sem ela configurada, no-op completo, mesmo protocolo/modulo puro
+ * de `lib/integrations/monitoring.js` usado no servidor.
+ */
+async function capturarErroCliente(erro, contexto = {}) {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
+  if (!dsn) return
+  try {
+    const envelope = montarEnvelope({ dsn, erro, contexto: { ...contexto, rota: contexto.rota || window.location.pathname } })
+    if (!envelope) return
+    await fetch(envelope.url, { method: 'POST', headers: envelope.headers, body: envelope.body })
+  } catch {
+    // Fire-and-forget: reportar erro nao pode gerar outro erro visivel.
+  }
+}
+
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res
+  try {
+    res = await fetch(`/api${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (e) {
+    // Rede caiu ANTES de chegar no servidor — o unico lugar que ve isso e o
+    // navegador. Ver route.js para a captura simetrica do lado do servidor.
+    capturarErroCliente(e, { rota: path, metodo: method })
+    throw new Error('Falha de conexão. Verifique sua internet e tente novamente.')
+  }
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || 'Erro na requisição')
+  if (!res.ok) {
+    // So 5xx vira relato de monitoramento: 4xx e validacao esperada
+    // (campo obrigatorio faltando, permissao negada) — reportar isso como
+    // "erro" encheria o painel de ruido que nao pede acao de ninguem.
+    if (res.status >= 500) capturarErroCliente(data.error || 'Erro do servidor', { rota: path, metodo: method })
+    throw new Error(data.error || 'Erro na requisição')
+  }
   return data
 }
 const brl = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v || 0))

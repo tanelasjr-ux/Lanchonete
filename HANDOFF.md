@@ -1,11 +1,12 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (contas a pagar/receber com vencimento —
-fecha as 4 pecas do pedido "relatorio financeiro"; 5 problemas reportados em
-teste real corrigidos: CSV com injecao de formula, fusao de tipo de pedido,
-acesso do atendente, cursor pulando no campo de observacao, PWA no celular;
-feature flags passaram a controlar acesso de verdade — B1 do programa de
-profissionalizacao; migrations automaticas verificadas em producao. Ver §0.)
+Ultima atualizacao: 2026-08-18 (monitoramento de erro em producao — A3,
+codigo pronto e no-op ate voce colar a credencial do Sentry; contas a
+pagar/receber com vencimento fecha as 4 pecas do pedido "relatorio
+financeiro"; 5 problemas reportados em teste real corrigidos: CSV com
+injecao de formula, fusao de tipo de pedido, acesso do atendente, cursor
+pulando no campo de observacao, PWA no celular; feature flags passaram a
+controlar acesso de verdade — B1. Ver §0.)
 
 ## Como usar este arquivo
 
@@ -38,6 +39,23 @@ subir o servidor (`docker/entrypoint.sh`), entao a ordem correta e sempre
    mais recente — aguardar o EasyPanel rebuildar (auto-deploy por push, ver
    §6) e recarregar. Se persistir desligado depois disso, avisar: seria a
    primeira vez que a migration `0023` falha, e vale investigar na hora.
+
+## 🌙 Trabalho autonomo enquanto voce dormia — o que fazer ao acordar
+
+Voce pediu pra eu seguir sem parar pra confirmar cada passo. Fiz: as 4 pecas
+do relatorio financeiro, os 5 bugs reportados, e comecei o A3
+(monitoramento). Tudo testado (regressao completa verde a cada commit) e no
+GitHub — nada ficou pela metade nem sem verificar.
+
+**Unica coisa que precisa de voce:** o A3 (monitoramento de erro) tem o
+codigo 100% pronto, mas so liga de verdade com uma credencial que so voce
+pode criar (conta gratuita no Sentry). Ate la, e um no-op inofensivo — nao
+muda nada no app. Passo a passo em §6.2 e no item A3 do
+`PROFISSIONALIZACAO.md`.
+
+**Verificar quando puder:** confira se o deploy mais recente (commit apos
+`c45a081`) subiu limpo no EasyPanel — o volume de trabalho desta madrugada
+foi grande, vale um olho.
 
 ## O que mudou nesta sessao (2026-08-18, continuacao)
 
@@ -691,6 +709,15 @@ container.
 Sem `JWT_SECRET`, o app sobe mas responde `503 degraded` e recusa autenticar
 (falha fechada, de proposito). Variavel nova so vale **apos reimplantar**.
 
+**Opcionais (monitoramento de erro, item A3):** `SENTRY_DSN` (servidor) e
+`NEXT_PUBLIC_SENTRY_DSN` (navegador — DSN e projetado pra ser publico).
+Ausentes, o app funciona identico a hoje (no-op completo, sem chamada de
+rede nenhuma). Para ativar: criar conta gratuita em sentry.io, criar um
+projeto Node.js, copiar o DSN mostrado no onboarding, colar como
+`SENTRY_DSN` nas variaveis do EasyPanel (e opcionalmente o mesmo valor como
+`NEXT_PUBLIC_SENTRY_DSN`, se tambem quiser capturar erro do navegador),
+redeploy. Detalhe tecnico completo no item A3 do `PROFISSIONALIZACAO.md`.
+
 ## 6.3 Supabase Storage
 
 Bucket `logos` (publico, 1 MB, PNG/JPG/WEBP/SVG) e bucket `cardapios`
@@ -732,6 +759,7 @@ imagem apesar do padrao geral de ignorar).
 | Acesso do ATENDENTE restrito (sem financeiro/estoque) | **Completo e no ar** |
 | PWA (instalar no celular, tela cheia) | **Completo e no ar** |
 | Feature flags controlando acesso (B1) | **Completo e no ar** |
+| Monitoramento de erro em producao (A3) | **Codigo no ar, no-op ate a credencial do Sentry** |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -970,7 +998,7 @@ disponivel via `git log`.)
 - `lib/repositories/supabase/` — 15 repositories.
 - `lib/repositories/factory.js` — switch `DATABASE_PROVIDER`.
 - `lib/integrations/` — `evolution.js`, `n8n.js`, `supabase.js`,
-  `storage.js`, `payments/`.
+  `storage.js`, `payments/`, `monitoring.js` (Sentry, no-op sem `SENTRY_DSN`).
 - `lib/custo.js` — CMV, margem por canal, margem por produto (modulo puro).
 - `lib/financeiro.js` — DRE, ponto de equilibrio, comparativo, categorias de
   despesa (modulo puro).
@@ -1012,6 +1040,9 @@ disponivel via `git log`.)
 - `tests/backend_test_dre.py`, `_comparativo.py`, `_margem_canal.py`,
   `_margem_produto.py`, `_modulos.py`, `_contas.py` — relatorio financeiro,
   feature flags e contas a pagar/receber (sessao atual).
+- `tests/test_monitoring.mjs` — modulo puro `lib/integrations/monitoring.js`,
+  rodado direto (`node tests/test_monitoring.mjs`), fora do `run_all.py`
+  (que so descobre `backend_test_*.py`).
 - `tests/backend_test.py`, `_v2`, `_v3`, `_caixa.py`, `_kds.py`,
   `_custo.py`, `_cardapio.py`, `_estoque.py`, `_entregadores.py` —
   regressao dos modulos anteriores.

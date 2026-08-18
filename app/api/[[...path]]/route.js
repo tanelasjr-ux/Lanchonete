@@ -23,6 +23,7 @@ import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations/supabase'
 import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
+import { capturarErro } from '@/lib/integrations/monitoring'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
 import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorProduto } from '@/lib/custo'
@@ -527,6 +528,12 @@ async function handler(request, { params }) {
   const seg = Array.isArray(path) ? path : []
   const route = `/${seg.join('/')}`
   const method = request.method
+  // Preenchido assim que `ctx` existe (logo apos autenticar), pra o catch-all
+  // no fim da funcao poder marcar o erro com `empresa_id` mesmo sem ter
+  // acesso direto a `ctx` (que e local ao bloco onde foi declarado). Fica
+  // `null` para erro que aconteceu ANTES de autenticar (ex: JSON invalido em
+  // /auth/login) — o relato ainda sai, so sem esse campo.
+  let ctxParaErro = null
 
   try {
     const repos = await getRepositories()
@@ -856,6 +863,7 @@ async function handler(request, { params }) {
     if (!usuario || !usuario.ativo) return err('Sessao invalida', 401)
     const ctx = { empresa_id: session.empresa_id, usuario_id: session.usuario_id, nome: usuario.nome, papel: usuario.papel }
     const tenant = { empresa_id: ctx.empresa_id } // escopo multitenant obrigatorio
+    ctxParaErro = ctx
 
     /**
      * Portao de PLANO (feature flags), independente do portao de PAPEL (`can`).
@@ -2731,6 +2739,11 @@ async function handler(request, { params }) {
     return err(`Rota ${route} nao encontrada`, 404)
   } catch (e) {
     console.error('API Error:', e)
+    // Fire-and-forget: nunca aguardado (`await` atrasaria a resposta de erro
+    // que o usuario ja esta esperando) e `.catch()` extra por seguranca —
+    // capturarErro() ja nao lanca sozinha, mas uma promise rejeitada sem
+    // handler ainda produziria um unhandledRejection no processo do Node.
+    capturarErro(e, { empresa_id: ctxParaErro?.empresa_id, rota: route, metodo: method }).catch(() => {})
     return err('Erro interno do servidor', 500)
   }
 }

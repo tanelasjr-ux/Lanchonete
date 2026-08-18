@@ -36,7 +36,7 @@ de spec + plano proprios.
 |---|------|--------|-----|--------|--------|
 | A1 | Consolidar e executar as suites de teste | Confianca | P | ✅ | `b46d88e`,`be8f167`,`f79a46b` |
 | A2 | Eliminar falhas silenciosas na UI | Confianca | P | ✅ | `e12abe8` |
-| A3 | Monitoramento de erro em producao | Confianca | M | ⚪ | |
+| A3 | Monitoramento de erro em producao | Confianca | M | 🟡 | (esta sessao — falta so credencial do Sentry) |
 | A4 | Testes E2E dos fluxos criticos | Confianca | G | ⚪ | |
 | B1 | Feature flags que realmente controlam acesso | Comercial | M | ✅ | (esta sessao) |
 | B2 | Onboarding de novo restaurante | Comercial | M | ⚪ | |
@@ -208,16 +208,36 @@ configuracao faltando — nao reporta erro em execucao.
 um produto vendido a terceiros, isso nao se sustenta: o cliente descobre antes de
 voce, e a confianca se perde na primeira vez.
 
-**O que fazer:**
-1. Escolher a ferramenta (Sentry tem plano gratuito adequado a este porte)
-2. Instrumentar o `route.js` no ponto unico onde a excecao vira resposta 500
-3. Instrumentar o frontend no wrapper `api()`, por onde toda chamada ja passa
-4. **Enviar `empresa_id`, nunca dado do cliente final** — nome, telefone e
-   endereco de consumidor nao vao para servico externo
-5. Configurar alerta para taxa de erro acima do normal
+### 🟡 Codigo pronto, falta so a credencial (2026-08-18)
 
-**Pronto quando:** um erro forcado em producao aparece no painel em menos de um
-minuto, com `empresa_id` e rota, e sem nenhum dado pessoal.
+Instrumentado dos dois lados. **Sem `SENTRY_DSN` configurado, e um NO-OP
+completo** — zero chamada de rede, comportamento identico ao que o app ja
+tinha (so `console.error`). Nao muda nada pra quem ainda nao ativou.
+
+- `lib/integrations/monitoring.js` — implementacao manual do protocolo de
+  ingestao do Sentry (Envelope API), NAO o SDK oficial (`@sentry/nextjs`). O
+  SDK completo traz plugin de webpack e instrumentacao automatica que
+  precisariam de uma conta real pra validar contra — risco de quebrar o
+  build em silencio numa sessao sem acesso a conta nenhuma pra testar. O
+  protocolo HTTP e publico e estavel; `montarEnvelope()` e uma funcao PURA
+  (nao faz I/O), testada isolada em `tests/test_monitoring.mjs` sem precisar
+  de DSN real.
+- **Backend**: `route.js`, catch-all unico onde toda excecao vira resposta
+  500 (fire-and-forget, nunca atrasa nem quebra a resposta de erro).
+- **Frontend**: wrapper `api()` (falha de rede antes de chegar no servidor,
+  e resposta 5xx — 4xx e validacao esperada, nao vira relato) +
+  `window.onerror`/`unhandledrejection` globais no `App()`, via
+  `NEXT_PUBLIC_SENTRY_DSN` (DSN e projetado pra ser publico — so aceita
+  evento, nao le dado).
+- **Nunca envia dado do cliente final**: so `empresa_id`, rota, metodo e a
+  mensagem do erro — nenhum campo vem do corpo da requisicao.
+- Build de producao verificado (`yarn build`) com as duas variaveis
+  ausentes — passa limpo, sem erro de env em tempo de build (armadilha 15).
+
+**O que falta pra `Pronto quando`:** criar a conta (gratuita) no Sentry,
+pegar o DSN do projeto, colar como `SENTRY_DSN` (servidor) e opcionalmente
+`NEXT_PUBLIC_SENTRY_DSN` (navegador) nas variaveis do EasyPanel, redeploy.
+So essa parte exige uma decisao/acao do dono — nada mais.
 
 ---
 
