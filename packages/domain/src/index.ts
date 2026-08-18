@@ -17,7 +17,16 @@ export type Papel = 'OWNER' | 'ADMIN' | 'GERENTE' | 'ATENDENTE' | 'COZINHA';
 export type PedidoStatus =
   | 'recebido' | 'em_preparo' | 'pronto' | 'concluido' | 'cancelado' | 'saiu_para_entrega'
   | 'NOVO' | 'CONFIRMADO' | 'EM_PREPARACAO' | 'PRONTO' | 'SAIU_PARA_ENTREGA' | 'ENTREGUE' | 'CANCELADO';
-export type PedidoTipo = 'balcao' | 'delivery' | 'retirada' | 'mesa';
+/**
+ * Como o pedido chega ao cliente. Tres valores desde a migration 0024 — antes
+ * eram quatro (`balcao` e `retirada` descreviam a mesma situacao e foram
+ * fundidos em `para_levar`, com o historico reclassificado).
+ *
+ * `mesa` nao e criado pelo dialogo de Novo Pedido: nasce quando uma comanda e
+ * fechada (ver route.js, fechamento de comanda). Atendimento em mesa comeca
+ * sempre pela tela de Mesas.
+ */
+export type PedidoTipo = 'delivery' | 'mesa' | 'para_levar';
 export type Pagamento = 'pix' | 'cartao' | 'dinheiro';
 export type TransacaoTipo = 'receita' | 'despesa';
 export type IntegracaoTipo = 'evolution' | 'n8n' | 'mercadopago';
@@ -222,6 +231,37 @@ export interface Transacao extends TenantScoped {
 }
 
 /**
+ * Conta a pagar/receber — camada de OBRIGACAO (migration 0025), complementar
+ * a `Transacao` (a camada de CAIXA). So passa a valer para o relatorio
+ * financeiro quando marcada como paga, o que cria a `Transacao`
+ * correspondente e preenche `transacao_id` — antes disso a conta e so uma
+ * previsao, invisivel para DRE/CMV/margem.
+ */
+export interface Conta extends TenantScoped {
+  id: UUID;
+  tipo: 'pagar' | 'receber';
+  descricao: string;
+  categoria: string;
+  /** So relevante para `tipo: 'pagar'`. Nunca inferida — mesma regra de Transacao.natureza. */
+  natureza: 'fixa' | 'variavel' | null;
+  valor: number;
+  /** Data (nao instante) do vencimento — formato `YYYY-MM-DD`. */
+  vencimento: string;
+  /**
+   * `'atrasada'` NUNCA e gravado aqui — so existe como valor calculado na
+   * leitura (`statusEfetivo` em lib/contas.js), a partir de `vencimento` e
+   * `status === 'pendente'`. O contrato grava so os tres estados reais.
+   */
+  status: 'pendente' | 'paga' | 'cancelada';
+  pago_em: string | null;
+  /** Preenchido so quando `status === 'paga'`. */
+  transacao_id: UUID | null;
+  observacoes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
  * Sessao de caixa. Um caixa aberto por empresa por vez — garantido por
  * indice unico parcial no Postgres, nao so pela checagem na aplicacao.
  */
@@ -406,6 +446,14 @@ export interface TransacaoRepository extends Repository<Transacao>, BulkCreatabl
   listRecentes(empresaId: UUID, limit: number): Promise<Transacao[]>;
   findByCaixa(empresaId: UUID, caixaId: UUID): Promise<Transacao[]>;
   findByPedido(empresaId: UUID, pedidoId: UUID): Promise<Transacao[]>;
+}
+
+export interface ContaRepository {
+  create(entity: Conta): Promise<Conta>;
+  findById(empresaId: UUID, id: UUID): Promise<Conta | null>;
+  /** Lista completa da empresa, ordenada por vencimento — a UI filtra em memoria. */
+  list(empresaId: UUID): Promise<Conta[]>;
+  update(empresaId: UUID, id: UUID, patch: Partial<Conta>): Promise<Conta>;
 }
 
 export interface CaixaRepository extends Repository<Caixa> {

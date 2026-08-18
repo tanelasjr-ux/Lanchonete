@@ -122,12 +122,43 @@ const PERMISSIONS = {
   OWNER: ['*'],
   ADMIN: ['dashboard', 'cardapio', 'clientes', 'pedidos', 'mesas', 'financeiro', 'relatorios', 'atendimento', 'usuarios', 'empresa', 'auditoria', 'integracoes', 'pagamentos'],
   GERENTE: ['dashboard', 'cardapio', 'clientes', 'pedidos', 'mesas', 'financeiro', 'relatorios', 'atendimento', 'pagamentos'],
-  ATENDENTE: ['dashboard', 'clientes', 'pedidos', 'mesas', 'atendimento', 'pagamentos'],
-  COZINHA: ['dashboard', 'pedidos'],
+  // ATENDENTE opera o balcao e o salao — nao ve dinheiro do negocio.
+  // `dashboard` saiu porque a tela expoe faturamento do dia, ticket medio e
+  // alerta de estoque; `atendimento` saiu porque a central de conversas do
+  // WhatsApp (delivery) e trabalho de quem cuida do canal, nao do balcao.
+  // Decisao do dono em 2026-08-18, ao revisar o que a conta de atendente
+  // enxergava. Continua com `pagamentos` porque precisa receber a venda.
+  ATENDENTE: ['clientes', 'pedidos', 'mesas', 'pagamentos'],
+  // COZINHA vai direto para o KDS (o front redireciona no login) e nunca abre
+  // o Dashboard. `dashboard` saiu da lista pelo mesmo motivo do ATENDENTE:
+  // enquanto estava aqui, o endpoint de metricas servia faturamento a quem
+  // so precisa saber o que produzir.
+  COZINHA: ['pedidos'],
 }
 function can(papel, modulo) {
   const perms = PERMISSIONS[papel] || []
   return perms.includes('*') || perms.includes(modulo)
+}
+
+/**
+ * Vocabulario de tipo de pedido (migration 0024). `mesa` esta aqui porque
+ * existe no banco, mas nao e criado por requisicao: nasce do fechamento de
+ * comanda.
+ */
+const TIPOS_PEDIDO = ['delivery', 'mesa', 'para_levar']
+/**
+ * `balcao` e `retirada` foram fundidos em `para_levar`. Traduzir em vez de
+ * recusar nao e leniencia: depois de um deploy o navegador de quem estava com
+ * o app aberto continua servindo o JS antigo (armadilha conhecida, ver
+ * HANDOFF §10) e mandaria `balcao` por horas. Recusar transformaria isso em
+ * "nao consigo lancar pedido" no meio do expediente; traduzir grava o pedido
+ * no vocabulario certo e ninguem perde venda.
+ */
+const TIPO_PEDIDO_LEGADO = { balcao: 'para_levar', retirada: 'para_levar' }
+function normPedidoTipo(valor, padrao = 'para_levar') {
+  if (!valor) return padrao
+  if (TIPOS_PEDIDO.includes(valor)) return valor
+  return TIPO_PEDIDO_LEGADO[valor] || padrao
 }
 
 /**
@@ -384,7 +415,7 @@ async function seedEmpresa(repos, empresa_id, ctx) {
         cliente_id: cliente.id,
         cliente_nome: cliente.nome,
         itens,
-        tipo: ['balcao', 'delivery', 'retirada'][Math.floor(Math.random() * 3)],
+        tipo: ['para_levar', 'delivery'][Math.floor(Math.random() * 2)],
         pagamento: ['pix', 'cartao', 'dinheiro'][Math.floor(Math.random() * 3)],
         status,
         observacoes: '',
@@ -1139,6 +1170,11 @@ async function handler(request, { params }) {
      * capturado como se "estoque-baixo" fosse um id.
      */
     if (route === '/produtos/estoque-baixo' && method === 'GET') {
+      // Quantidade em estoque e informacao de gestao, nao de atendimento —
+      // exige quem cuida do cardapio (GERENTE+). `GET /produtos` continua
+      // aberto porque o atendente precisa dele para montar o pedido; o que
+      // fica restrito e o saldo, nao o catalogo.
+      if (!can(ctx.papel, 'cardapio')) return err('Sem permissao', 403)
       // Estoque desligado: lista vazia, nao 403. Este endpoint alimenta um
       // alerta que faz polling de fundo em TODA tela — devolver erro encheria
       // a operacao de toast vermelho a cada 30 segundos por um modulo que a
@@ -1472,7 +1508,7 @@ async function handler(request, { params }) {
       if (!itens.length) return err('Pedido precisa de ao menos 1 item')
       const subtotal = round2(itens.reduce((s, it) => s + Number(it.preco) * Number(it.quantidade || 1), 0))
 
-      const tipo = b.tipo || 'balcao'
+      const tipo = normPedidoTipo(b.tipo)
       let entregaTaxa = 0
       let entregaTempo = null
       let entregaEndereco = ''
@@ -1525,7 +1561,9 @@ async function handler(request, { params }) {
       const pedido = await pedidoRepo.findById(ctx.empresa_id, seg[1])
       if (!pedido) return err('Pedido nao encontrado', 404)
       const upd = { updated_at: new Date() }
-      for (const k of ['status', 'tipo', 'pagamento', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
+      for (const k of ['status', 'pagamento', 'observacoes']) if (b[k] !== undefined) upd[k] = b[k]
+      // `tipo` passa pela traducao de legado, igual ao POST.
+      if (b.tipo !== undefined) upd.tipo = normPedidoTipo(b.tipo, pedido.tipo)
 
       const finais = ['concluido', 'ENTREGUE']
       const travados = [...finais, 'cancelado', 'CANCELADO']
@@ -1842,6 +1880,12 @@ async function handler(request, { params }) {
 
     /* ==================== DASHBOARD ==================== */
     if (route === '/dashboard/metrics' && method === 'GET') {
+      // Este endpoint devolve faturamento do dia, ticket medio e alerta de
+      // estoque. Ficou SEM checagem nenhuma ate 2026-08-18: bastava estar
+      // logado. Tirar o item do menu no front esconderia o botao e deixaria a
+      // rota aberta — a mesma falha das feature flags (B1), onde a tela dizia
+      // uma coisa e o servidor permitia outra.
+      if (!can(ctx.papel, 'dashboard')) return err('Sem permissao', 403)
       const [pedidos, transacoes, produtos, clientes] = await Promise.all([
         pedidoRepo.list(ctx.empresa_id),
         transacaoRepo.list(ctx.empresa_id),

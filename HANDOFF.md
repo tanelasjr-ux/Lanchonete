@@ -306,7 +306,7 @@ recebiam custo/margem sem checagem de papel. Corrigido com o mesmo gate que
 
 **Restaurant OS** — SaaS de atendimento e gestao para restaurantes,
 lanchonetes e similares, com WhatsApp como canal principal de atendimento.
-Modulos: cardapio, pedidos (balcao/delivery/retirada/mesa), mesas e comandas,
+Modulos: cardapio, pedidos (delivery/mesa/para_levar), mesas e comandas,
 clientes/CRM, financeiro, pagamentos, conversas de WhatsApp, relatorios,
 auditoria e RBAC.
 

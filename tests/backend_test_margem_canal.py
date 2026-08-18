@@ -1,4 +1,4 @@
-"""Margem bruta por canal de venda (balcao/mesa/delivery/retirada).
+"""Margem bruta por canal de venda (para_levar/mesa/delivery).
 
 O total consolidado esconde a pergunta que decide contrato de app de entrega:
 o delivery esta pagando o que custa? Vender muito e ganhar pouco so aparece
@@ -71,19 +71,19 @@ def test_relatorio_devolve_margem_por_canal():
 
 
 def test_canais_diferentes_ficam_em_buckets_separados():
-    """Um pedido de balcao e um de delivery aparecem em linhas distintas, sem misturar."""
+    """Um pedido para levar e um de delivery aparecem em linhas distintas, sem misturar."""
     headers = criar_empresa("Canais Separados")
     p = criar_produto(headers, "Prato Canal", preco=50, custo=20)
 
-    criar_pedido_pago(headers, "balcao", [(p, 2)])
+    criar_pedido_pago(headers, "para_levar", [(p, 2)])
     criar_pedido_pago(headers, "delivery", [(p, 1)], entrega_taxa=8)
 
     rep = relatorio(headers)
-    balcao = canal(rep, "balcao")
+    para_levar = canal(rep, "para_levar")
     delivery = canal(rep, "delivery")
 
-    assert balcao is not None and delivery is not None
-    assert balcao["receita_base"] == 100, balcao   # 2x R$50
+    assert para_levar is not None and delivery is not None
+    assert para_levar["receita_base"] == 100, para_levar   # 2x R$50
     assert delivery["receita_base"] == 50, delivery  # 1x R$50, taxa fora
 
 
@@ -108,12 +108,12 @@ def test_margem_percent_calculada_corretamente():
     headers = criar_empresa("Margem Calculada")
     # Produto que custa 40% do preco -> margem esperada de 60%.
     p = criar_produto(headers, "Margem 60", preco=100, custo=40)
-    criar_pedido_pago(headers, "balcao", [(p, 3)])
+    criar_pedido_pago(headers, "para_levar", [(p, 3)])
 
     rep = relatorio(headers)
-    balcao = canal(rep, "balcao")
-    assert balcao["custo_total"] == 120, balcao  # 3 x 40
-    assert balcao["margem_percent"] == 60.0, balcao
+    para_levar = canal(rep, "para_levar")
+    assert para_levar["custo_total"] == 120, para_levar  # 3 x 40
+    assert para_levar["margem_percent"] == 60.0, para_levar
 
 
 def test_produto_sem_custo_cadastrado_da_margem_null_nao_zero():
@@ -122,12 +122,12 @@ def test_produto_sem_custo_cadastrado_da_margem_null_nao_zero():
     r = requests.post(f"{BASE_URL}/produtos", headers=headers, json={"nome": "Sem Custo", "preco": 30})
     assert r.status_code == 201, r.text
     p = r.json()
-    criar_pedido_pago(headers, "retirada", [(p, 1)])
+    criar_pedido_pago(headers, "para_levar", [(p, 1)])
 
     rep = relatorio(headers)
-    retirada = canal(rep, "retirada")
-    assert retirada["margem_percent"] is None
-    assert retirada["receita_base"] == 30, "receita conta mesmo sem custo"
+    para_levar = canal(rep, "para_levar")
+    assert para_levar["margem_percent"] is None
+    assert para_levar["receita_base"] == 30, "receita conta mesmo sem custo"
 
 
 def test_ticket_medio_por_canal():
@@ -149,12 +149,39 @@ def test_canais_isolados_entre_empresas():
     headers_a = criar_empresa("Canal Multi A")
     headers_b = criar_empresa("Canal Multi B")
     p = criar_produto(headers_a, "Produto A", preco=99, custo=10)
-    criar_pedido_pago(headers_a, "balcao", [(p, 1)])
+    criar_pedido_pago(headers_a, "para_levar", [(p, 1)])
 
     rep_b = relatorio(headers_b)
-    balcao_b = canal(rep_b, "balcao")
-    if balcao_b is not None:
-        assert balcao_b["receita_base"] != 99
+    para_levar_b = canal(rep_b, "para_levar")
+    if para_levar_b is not None:
+        assert para_levar_b["receita_base"] != 99
+
+
+def test_tipo_legado_balcao_e_retirada_cai_no_canal_para_levar():
+    """`balcao` e `retirada` (migration 0024) somam no MESMO canal `para_levar`.
+
+    Nao e comportamento transitorio: cliente com o JS antigo em cache continua
+    mandando esses valores por um tempo apos o deploy (armadilha conhecida —
+    ver HANDOFF), e o servidor traduz em vez de recusar. Este teste existe
+    para que a fusao nao regrida silenciosamente se alguem tocar em
+    `normPedidoTipo`.
+    """
+    headers = criar_empresa("Legado Para Levar")
+    p = criar_produto(headers, "Item Legado", preco=10, custo=4)
+    antes = canal(relatorio(headers), "para_levar")
+    pedidos_antes = antes["pedidos"] if antes else 0
+
+    criar_pedido_pago(headers, "balcao", [(p, 1)])
+    criar_pedido_pago(headers, "retirada", [(p, 1)])
+    criar_pedido_pago(headers, "para_levar", [(p, 1)])
+
+    rep = relatorio(headers)
+    assert canal(rep, "balcao") is None, "tipo legado nao pode criar canal proprio"
+    assert canal(rep, "retirada") is None, "tipo legado nao pode criar canal proprio"
+    para_levar = canal(rep, "para_levar")
+    # O seed de demonstracao tambem sorteia 'para_levar' para os pedidos que
+    # cria — por isso comparamos contra a contagem ANTES, nao um numero fixo.
+    assert para_levar["pedidos"] == pedidos_antes + 3, "os tres deveriam cair no mesmo canal"
 
 
 if __name__ == '__main__':

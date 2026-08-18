@@ -54,6 +54,40 @@ const brl = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency:
 const fmtDate = (d) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
 /**
+ * Serializa uma celula de CSV para abrir corretamente no Excel.
+ *
+ * Resolve dois problemas distintos, ambos vistos em arquivo real:
+ *
+ * 1. ASPAS DENTRO DO TEXTO quebravam a estrutura da planilha. Um produto
+ *    chamado `Burger "Especial"` fechava o campo no meio e jogava o resto
+ *    para colunas erradas. No CSV, aspa literal se escreve DUPLICADA.
+ *
+ * 2. CELULA COMECANDO COM `=`, `+`, `-` ou `@` e lida como FORMULA. O dono
+ *    reportou `#NOME?` no lugar de "Lucro bruto" e "Lucro liquido" — o Excel
+ *    tentou avaliar `= Lucro bruto` como funcao. Alem de estragar o
+ *    relatorio, isso e um vetor de injecao: nome de produto ou de cliente
+ *    entra neste arquivo, e uma formula plantada ali executa na maquina de
+ *    quem abrir a planilha. O `'` na frente e o marcador de texto do Excel.
+ *
+ * Os rotulos do proprio DRE usam `(=)`/`(-)` em vez de `=`/`-` justamente
+ * para nao dependerem desta protecao para ficarem legiveis.
+ */
+/**
+ * Identidade local de linha para listas editaveis do React. So existe no
+ * navegador — nunca e persistida nem enviada ao servidor.
+ */
+let _uidSeq = 0
+const uid = () => `l${++_uidSeq}`
+/** Remove o `_uid` local antes de mandar os itens para a API. */
+const semUid = (itens) => (itens || []).map(({ _uid, ...resto }) => resto)
+
+const csvCell = (c) => {
+  const texto = String(c ?? '')
+  const seguro = /^[=+\-@\t\r]/.test(texto) ? `'${texto}` : texto
+  return `"${seguro.replace(/"/g, '""')}"`
+}
+
+/**
  * VALIDACAO MANUAL — Cupom com delivery (Task 12)
  *
  * Checklist de validacao end-to-end (fazer manualmente no navegador):
@@ -99,6 +133,22 @@ const STATUS = {
   cancelado: { label: 'Cancelado', cls: 'bg-red-500/15 text-red-500 border-red-500/20' },
 }
 const FLOW = ['recebido', 'em_preparo', 'pronto', 'concluido']
+
+/**
+ * Rotulo do tipo de pedido. `balcao` e `retirada` foram fundidos em
+ * `para_levar` (migration 0024) — continuam mapeados aqui porque o banco de
+ * desenvolvimento (Mongo) nao passa pelas migrations do Postgres, e um backup
+ * restaurado tambem pode trazer o valor antigo. Sem isso a etiqueta do card
+ * mostraria a chave crua.
+ */
+const TIPO_PEDIDO_LABEL = {
+  para_levar: 'Para levar',
+  delivery: 'Delivery',
+  mesa: 'Mesa',
+  balcao: 'Para levar',
+  retirada: 'Para levar',
+}
+const tipoPedidoLabel = (t) => TIPO_PEDIDO_LABEL[t] || t
 
 const MESA_STATUS = {
   livre: { label: 'Livre', dot: 'bg-emerald-500', cls: 'border-emerald-500/30 bg-emerald-500/5', text: 'text-emerald-500' },
@@ -953,7 +1003,7 @@ function Pedidos({ me }) {
   const [dlg, setDlg] = useState(false)
   const [ajuste, setAjuste] = useState(null) // pedido em ajuste de valor
   const [editar, setEditar] = useState(null) // pedido "recebido" sendo editado (itens/tipo/observacoes)
-  const [filtroTipo, setFiltroTipo] = useState(null) // null (todas), 'balcao', 'mesa', 'retirada', 'delivery'
+  const [filtroTipo, setFiltroTipo] = useState(null) // null (todas), 'para_levar', 'delivery', 'mesa'
   const [sairEntregaModal, setSairEntregaModal] = useState(null) // pedido sendo despachado para entrega
   const [entregadorSelecionado, setEntregadorSelecionado] = useState(null) // entregador selecionado no modal
   const [despachando, setDespachando] = useState(false)
@@ -1040,7 +1090,13 @@ function Pedidos({ me }) {
     }
   }
 
-  const pedidosFiltrados = filtroTipo ? pedidos.filter(p => p.tipo === filtroTipo) : pedidos
+  // "Para levar" tambem casa os valores antigos (balcao/retirada): no Mongo de
+  // desenvolvimento eles nao passam pela migration 0024, e filtrar so pelo
+  // valor novo esconderia pedidos que o operador ve na lista sem filtro.
+  const casaTipo = (p) => filtroTipo === 'para_levar'
+    ? ['para_levar', 'balcao', 'retirada'].includes(p.tipo)
+    : p.tipo === filtroTipo
+  const pedidosFiltrados = filtroTipo ? pedidos.filter(casaTipo) : pedidos
   const cols = [...FLOW]
   const FINAIS = ['concluido', 'ENTREGUE', 'cancelado']
   return (
@@ -1048,10 +1104,9 @@ function Pedidos({ me }) {
       <PageHeader title="Pedidos" description="Acompanhe e movimente os pedidos pelo fluxo de produção." action={<Button onClick={() => setDlg(true)}><Plus className="h-4 w-4 mr-1" />Novo pedido</Button>} />
       <div className="flex flex-wrap gap-2 items-center">
         <Button size="sm" variant={filtroTipo === null ? 'default' : 'outline'} onClick={() => setFiltroTipo(null)}>Todas</Button>
-        <Button size="sm" variant={filtroTipo === 'balcao' ? 'default' : 'outline'} onClick={() => setFiltroTipo('balcao')}>Balcão</Button>
-        <Button size="sm" variant={filtroTipo === 'mesa' ? 'default' : 'outline'} onClick={() => setFiltroTipo('mesa')}>Mesa</Button>
-        <Button size="sm" variant={filtroTipo === 'retirada' ? 'default' : 'outline'} onClick={() => setFiltroTipo('retirada')}>Retirada</Button>
+        <Button size="sm" variant={filtroTipo === 'para_levar' ? 'default' : 'outline'} onClick={() => setFiltroTipo('para_levar')}>Para levar</Button>
         <Button size="sm" variant={filtroTipo === 'delivery' ? 'default' : 'outline'} onClick={() => setFiltroTipo('delivery')}>Delivery</Button>
+        <Button size="sm" variant={filtroTipo === 'mesa' ? 'default' : 'outline'} onClick={() => setFiltroTipo('mesa')}>Mesa</Button>
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {cols.map((col) => {
@@ -1069,7 +1124,7 @@ function Pedidos({ me }) {
                   return (
                     <Card key={p.id}>
                       <CardContent className="p-4 space-y-2">
-                        <div className="flex items-center justify-between"><span className="font-semibold">#{p.numero}</span><Badge variant="outline" className="text-xs capitalize">{p.tipo}</Badge></div>
+                        <div className="flex items-center justify-between"><span className="font-semibold">#{p.numero}</span><Badge variant="outline" className="text-xs">{tipoPedidoLabel(p.tipo)}</Badge></div>
                         <div className="text-sm">{p.cliente_nome}</div>
                         <div className="text-xs text-muted-foreground">{(p.itens || []).map((i) => `${i.quantidade}x ${i.nome}`).join(', ')}</div>
 
@@ -1310,15 +1365,14 @@ function AjusteValorDialog({ pedido, onClose, onSaved }) {
 function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }) {
   const isEditing = !!pedido
   const [prods, setProds] = useState([])
-  const [mesasLivres, setMesasLivres] = useState([])
   const [clientes, setClientes] = useState([])
   const [empresaConfig, setEmpresaConfig] = useState(null)
-  const [itens, setItens] = useState(() => (pedido?.itens || []).map((i) => ({ ...i })))
+  // Itens de um pedido existente vem do servidor sem `_uid` — precisam ganhar
+  // um aqui, senao a `key` de todas as linhas seria `undefined` ao editar.
+  const [itens, setItens] = useState(() => (pedido?.itens || []).map((i) => ({ ...i, _uid: uid() })))
   const [cliente_id, setCliente] = useState(pedido?.cliente_id ?? clienteInicial)
-  const [tipo, setTipo] = useState(pedido?.tipo || 'balcao')
+  const [tipo, setTipo] = useState(pedido?.tipo === 'delivery' ? 'delivery' : 'para_levar')
   const [pagamento, setPag] = useState(pedido?.pagamento || 'pix')
-  const [mesa_id, setMesaId] = useState('')
-  const [pessoas, setPessoas] = useState(2)
   const [observacoes, setObservacoes] = useState(pedido?.observacoes || '')
   const [desconto, setDesconto] = useState(pedido?.desconto ? String(pedido.desconto) : '')
   const [acrescimo, setAcrescimo] = useState(pedido?.acrescimo ? String(pedido.acrescimo) : '')
@@ -1334,7 +1388,6 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
     api('/produtos').then(setProds).catch((e) => console.error('Falha ao carregar produtos no dialog de pedido:', e.message))
     api('/clientes').then(setClientes).catch((e) => console.error('Falha ao carregar clientes no dialog de pedido:', e.message))
     api('/empresa').then(setEmpresaConfig).catch((e) => console.error('Falha ao carregar config da empresa no dialog de pedido:', e.message))
-    if (!isEditing) api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch((e) => console.error('Falha ao carregar mesas no dialog de pedido:', e.message))
   }, [isEditing])
 
   // Pre-fill delivery fields when tipo changes or cliente changes
@@ -1364,14 +1417,28 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
       setEntregaTempoEstimado('')
     }
   }, [tipo, cliente_id, isEditing, clientes, empresaConfig])
+  /**
+   * `_uid` e identidade LOCAL da linha, so para o React. Antes a `key` da
+   * linha era `produto_id + observacao` — e como a observacao muda a cada
+   * tecla, a key mudava junto, o React destruia e recriava o input, e o
+   * cursor saltava fora do campo a cada letra digitada. Com uma identidade
+   * estavel, a linha sobrevive a edicao.
+   *
+   * Nao vai para o servidor: `semUid()` remove antes de enviar.
+   */
   const add = (p, observacao = '') => setItens((s) => {
     const ex = s.find((i) => i.produto_id === p.id && (i.observacao || '') === observacao)
     if (ex) return s.map((i) => i === ex ? { ...i, quantidade: i.quantidade + 1 } : i)
-    return [...s, { produto_id: p.id, nome: p.nome, preco: p.preco, quantidade: 1, observacao }]
+    return [...s, { _uid: uid(), produto_id: p.id, nome: p.nome, preco: p.preco, quantidade: 1, observacao }]
   })
-  const dec = (id, observacao = '') => setItens((s) => s
-    .map((i) => (i.produto_id === id && (i.observacao || '') === observacao) ? { ...i, quantidade: Math.max(0, i.quantidade - 1) } : i)
+  // Mexe pelo `_uid` da linha, nao por produto+observacao: duas linhas do
+  // mesmo produto so se distinguem pela observacao, e ela muda enquanto o
+  // operador digita.
+  const decUid = (uidAlvo) => setItens((s) => s
+    .map((i) => i._uid === uidAlvo ? { ...i, quantidade: Math.max(0, i.quantidade - 1) } : i)
     .filter((i) => i.quantidade > 0))
+  const incUid = (uidAlvo) => setItens((s) => s
+    .map((i) => i._uid === uidAlvo ? { ...i, quantidade: i.quantidade + 1 } : i))
   const subtotal = itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
   const descontoNum = Math.max(0, Number(desconto) || 0)
   const acrescimoNum = Math.max(0, Number(acrescimo) || 0)
@@ -1385,7 +1452,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
     setSaving(true)
     try {
       if (isEditing) {
-        const payload = { itens, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum }
+        const payload = { itens: semUid(itens), tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum }
         if (tipo === 'delivery') {
           payload.entrega_endereco = entregaEndereco
           payload.entrega_taxa = entregaTaxaNum
@@ -1393,13 +1460,8 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
         }
         await api(`/pedidos/${pedido.id}`, { method: 'PUT', body: payload })
         toast.success('Pedido atualizado')
-      } else if (tipo === 'mesa') {
-        if (!mesa_id) { setSaving(false); return toast.error('Selecione a mesa') }
-        const comanda = await api(`/mesas/${mesa_id}/abrir`, { method: 'POST', body: { cliente_id, pessoas } })
-        for (const it of itens) await api(`/comandas/${comanda.id}/itens`, { method: 'POST', body: { produto_id: it.produto_id, quantidade: it.quantidade, observacao: it.observacao || '' } })
-        toast.success('Comanda aberta na mesa')
       } else {
-        const payload = { itens, cliente_id, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum }
+        const payload = { itens: semUid(itens), cliente_id, tipo, pagamento, observacoes, desconto: descontoNum, acrescimo: acrescimoNum }
         if (tipo === 'delivery') {
           payload.entrega_endereco = entregaEndereco
           payload.entrega_taxa = entregaTaxaNum
@@ -1442,19 +1504,20 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
             )}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1"><Label className="text-xs">Tipo</Label>
-                <Select value={tipo} onValueChange={setTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="balcao">Balcao</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem>{!isEditing && <SelectItem value="mesa">Mesa</SelectItem>}</SelectContent></Select>
+                <Select value={tipo} onValueChange={setTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="para_levar">Para levar</SelectItem><SelectItem value="delivery">Delivery</SelectItem></SelectContent></Select>
               </div>
-              {tipo === 'mesa' && !isEditing ? (
-                <div className="space-y-1"><Label className="text-xs">Mesa</Label>
-                  <Select value={mesa_id} onValueChange={setMesaId}><SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger><SelectContent>{mesasLivres.map((m) => <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>)}</SelectContent></Select>
-                </div>
-              ) : (
-                <div className="space-y-1"><Label className="text-xs">Pagamento</Label>
-                  <Select value={pagamento} onValueChange={setPag}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao">Cartao</SelectItem><SelectItem value="dinheiro">Dinheiro</SelectItem></SelectContent></Select>
-                </div>
-              )}
+              <div className="space-y-1"><Label className="text-xs">Pagamento</Label>
+                <Select value={pagamento} onValueChange={setPag}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao">Cartao</SelectItem><SelectItem value="dinheiro">Dinheiro</SelectItem></SelectContent></Select>
+              </div>
             </div>
-            {tipo === 'mesa' && !isEditing && <div className="space-y-1"><Label className="text-xs">Pessoas</Label><Input type="number" min={1} value={pessoas} onChange={(e) => setPessoas(e.target.value)} /></div>}
+            {/* Atendimento em mesa nao passa por aqui: a comanda acumula itens
+                ao longo da refeicao, aceita desconto e divide a conta — coisas
+                que um pedido avulso nao faz. Comeca sempre na tela Mesas. */}
+            {!isEditing && (
+              <p className="text-xs text-muted-foreground">
+                Atendimento em mesa? Abra a comanda na tela <span className="font-medium">Mesas</span>.
+              </p>
+            )}
             {tipo === 'delivery' && (
               <>
                 <div className="space-y-1">
@@ -1482,35 +1545,33 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
             <div className="space-y-2 max-h-40 overflow-auto ros-scroll">
               {itens.length === 0 && <p className="text-sm text-muted-foreground">Nenhum item adicionado.</p>}
               {itens.map((i, idx) => (
-                <div key={`${i.produto_id}-${i.observacao || ''}`} className="space-y-1 text-sm border-b pb-2 last:border-0">
+                <div key={i._uid} className="space-y-1 text-sm border-b pb-2 last:border-0">
                   <div className="flex items-center justify-between">
                     <span className="flex-1">{i.nome}</span>
-                    <div className="flex items-center gap-2"><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => dec(i.produto_id, i.observacao)}><Minus className="h-3 w-3" /></Button><span className="w-5 text-center">{i.quantidade}</span><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => add({ id: i.produto_id, nome: i.nome, preco: i.preco }, i.observacao)}><Plus className="h-3 w-3" /></Button></div>
+                    <div className="flex items-center gap-2"><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => decUid(i._uid)}><Minus className="h-3 w-3" /></Button><span className="w-5 text-center">{i.quantidade}</span><Button size="icon" variant="outline" className="h-6 w-6" onClick={() => incUid(i._uid)}><Plus className="h-3 w-3" /></Button></div>
                     <span className="w-20 text-right font-medium">{brl(i.preco * i.quantidade)}</span>
                   </div>
                   <Input
                     placeholder="Observacao (opcional) — ex: sem cebola"
                     className="h-7 text-xs"
                     value={i.observacao || ''}
-                    onChange={(e) => setItens((s) => s.map((it, ix) => ix === idx ? { ...it, observacao: e.target.value } : it))}
+                    onChange={(e) => setItens((s) => s.map((it) => it._uid === i._uid ? { ...it, observacao: e.target.value } : it))}
                   />
                 </div>
               ))}
             </div>
             {/* Observacao geral do pedido (ex: "sem talheres", "entregar na
-                portaria"). Nao se aplica ao tipo "mesa": ali quem acumula
-                observacoes e a comanda, item a item, na tela de Mesas. */}
-            {tipo !== 'mesa' && (
-              <div className="space-y-1">
-                <Label className="text-xs" htmlFor="pedido-observacoes">Observações do pedido</Label>
-                <Textarea id="pedido-observacoes" placeholder="Ex: sem talheres, entregar na portaria…" className="text-sm min-h-16"
-                  value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
-              </div>
-            )}
-            {/* Ajuste de valor: so faz sentido no pedido direto. No tipo "mesa"
-                quem controla desconto/taxa e a comanda, na tela de Mesas. */}
-            {tipo !== 'mesa' && (
-              <>
+                portaria"). Em mesa quem acumula observacao e a comanda, item a
+                item — e mesa nao passa mais por este dialog. */}
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="pedido-observacoes">Observações do pedido</Label>
+              <Textarea id="pedido-observacoes" placeholder="Ex: sem talheres, entregar na portaria…" className="text-sm min-h-16"
+                value={observacoes} onChange={(e) => setObservacoes(e.target.value)} />
+            </div>
+            {/* Desconto e acrescimo sempre disponiveis aqui: o dono reportou
+                que "mesa nao tem desconto" — era porque mesa caia no fluxo de
+                comanda. Agora todo pedido deste dialog aceita ajuste. */}
+            <>
                 <Separator />
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
@@ -1525,8 +1586,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
                   </div>
                 </div>
                 {descontoExcede && <p className="text-xs text-destructive">O desconto nao pode ser maior que o valor do pedido.</p>}
-              </>
-            )}
+            </>
             <div className="space-y-1 pt-2 border-t text-sm">
               <div className="flex items-center justify-between text-muted-foreground"><span>Subtotal</span><span>{brl(subtotal)}</span></div>
               {descontoNum > 0 && <div className="flex items-center justify-between text-muted-foreground"><span>Desconto</span><span>- {brl(descontoNum)}</span></div>}
@@ -1536,7 +1596,7 @@ function PedidoDialog({ onClose, onSaved, clienteInicial = null, pedido = null }
             </div>
           </div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{isEditing ? 'Salvar alterações' : (tipo === 'mesa' ? 'Abrir comanda' : 'Criar pedido')}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{isEditing ? 'Salvar alterações' : 'Criar pedido'}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -1968,11 +2028,11 @@ function DreCard({ dre, despesasPorCategoria, coberturaCmv, comparativo }) {
         <CardContent>
           {linha('Receita', brl(dre.receita_total))}
           {linha('(–) Custo da mercadoria (CMV)', `– ${brl(dre.custo_mercadoria)}`, { indent: true })}
-          {linha('= Lucro bruto', brl(dre.lucro_bruto), { total: true })}
+          {linha('(=) Lucro bruto', brl(dre.lucro_bruto), { total: true })}
           {linha('(–) Despesas fixas', `– ${brl(dre.despesas_fixas)}`, { indent: true })}
           {linha('(–) Despesas variáveis', `– ${brl(dre.despesas_variaveis)}`, { indent: true })}
           {dre.despesas_nao_classificadas > 0 && linha('(–) Despesas não classificadas', `– ${brl(dre.despesas_nao_classificadas)}`, { indent: true })}
-          {linha('= Lucro líquido', <span className={dre.lucro_liquido >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{brl(dre.lucro_liquido)}</span>, { total: true })}
+          {linha('(=) Lucro líquido', <span className={dre.lucro_liquido >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{brl(dre.lucro_liquido)}</span>, { total: true })}
           {comparativo?.lucro_liquido && <div className="mt-2"><Variacao v={comparativo.lucro_liquido} /></div>}
           {dre.margem_liquida_percent !== null && (
             <p className="text-xs text-muted-foreground mt-2">Margem líquida: {dre.margem_liquida_percent.toFixed(1).replace('.', ',')}% da receita</p>
@@ -2241,11 +2301,11 @@ function Relatorios() {
       rows.push(['DRE'])
       rows.push(['Receita', String(d.receita_total).replace('.', ',')])
       rows.push(['(-) Custo da mercadoria', String(d.custo_mercadoria).replace('.', ',')])
-      rows.push(['= Lucro bruto', String(d.lucro_bruto).replace('.', ',')])
+      rows.push(['(=) Lucro bruto', String(d.lucro_bruto).replace('.', ',')])
       rows.push(['(-) Despesas fixas', String(d.despesas_fixas).replace('.', ',')])
       rows.push(['(-) Despesas variáveis', String(d.despesas_variaveis).replace('.', ',')])
       rows.push(['(-) Despesas não classificadas', String(d.despesas_nao_classificadas).replace('.', ',')])
-      rows.push(['= Lucro líquido', String(d.lucro_liquido).replace('.', ',')])
+      rows.push(['(=) Lucro líquido', String(d.lucro_liquido).replace('.', ',')])
       rows.push(['Margem líquida %', String(d.margem_liquida_percent ?? '').replace('.', ',')])
       rows.push(['Ponto de equilíbrio (mensal)', d.ponto_equilibrio !== null ? String(d.ponto_equilibrio).replace('.', ',') : 'nao calculavel'])
       rows.push([])
@@ -2282,7 +2342,7 @@ function Relatorios() {
     for (const r of rep.tabela) {
       rows.push([new Date(r.data).toLocaleString('pt-BR'), r.numero, r.cliente, r.pagamento, String(r.valor).replace('.', ','), r.status, r.origem])
     }
-    const csv = rows.map((r) => r.map((c) => `"${String(c ?? '')}"`).join(';')).join('\n')
+    const csv = rows.map((r) => r.map(csvCell).join(';')).join('\n')
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `relatorio-${Date.now()}.csv`; a.click()
   }
@@ -2303,7 +2363,7 @@ function Relatorios() {
         )}
         <div className="space-y-1"><Label className="text-xs">Pagamento</Label><Select value={filtros.pagamento} onValueChange={(v) => setFiltros({ ...filtros, pagamento: v })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao">Cartão</SelectItem><SelectItem value="dinheiro">Dinheiro</SelectItem></SelectContent></Select></div>
         <div className="space-y-1"><Label className="text-xs">Status pedido</Label><Select value={filtros.status} onValueChange={(v) => setFiltros({ ...filtros, status: v })}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="novo">Novo</SelectItem><SelectItem value="em_preparacao">Em preparação</SelectItem><SelectItem value="pronto">Pronto</SelectItem><SelectItem value="saiu">Saiu p/ entrega</SelectItem><SelectItem value="entregue">Entregue</SelectItem><SelectItem value="cancelado">Cancelado</SelectItem></SelectContent></Select></div>
-        <div className="space-y-1"><Label className="text-xs">Tipo</Label><Select value={filtros.tipo} onValueChange={(v) => setFiltros({ ...filtros, tipo: v })}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="balcao">Balcão</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="retirada">Retirada</SelectItem><SelectItem value="mesa">Mesa</SelectItem></SelectContent></Select></div>
+        <div className="space-y-1"><Label className="text-xs">Tipo</Label><Select value={filtros.tipo} onValueChange={(v) => setFiltros({ ...filtros, tipo: v })}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="para_levar">Para levar</SelectItem><SelectItem value="delivery">Delivery</SelectItem><SelectItem value="mesa">Mesa</SelectItem></SelectContent></Select></div>
         <div className="flex gap-2 ml-auto">
           <Button variant="outline" onClick={exportCsv}>CSV</Button>
           <Button variant="outline" onClick={() => window.print()}>PDF</Button>
@@ -3667,6 +3727,16 @@ function App() {
   const modulos = me.modulos ?? {}
   const temMod = (m) => modulos[m] !== false
   const nav = NAV.filter((n) => has(n.perm) && (!n.modulo || temMod(n.modulo)))
+  /**
+   * A view inicial e "dashboard", mas nem todo papel tem Dashboard — um
+   * ATENDENTE cairia numa tela que ele nao pode ver (e que o servidor agora
+   * responde 403). Quando a view atual nao esta na navegacao permitida,
+   * mostra a primeira que esta.
+   *
+   * Vale tambem para modulo desligado: quem estava em "Mesas" e teve o modulo
+   * desativado nao fica preso numa tela morta.
+   */
+  const viewAtual = nav.some((n) => n.key === view) ? view : (nav[0]?.key ?? view)
   const initials = (me.usuario?.nome || '?').split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()
   const brandName = me.empresa?.config?.appearance?.nome_exibido || me.empresa?.nome_comercial || me.empresa?.nome || 'Restaurant OS'
   const logo = me.empresa?.logo
@@ -3679,7 +3749,7 @@ function App() {
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-auto ros-scroll">
         {nav.map((n) => {
-          const active = view === n.key
+          const active = viewAtual === n.key
           return (
             <button key={n.key} onClick={() => { setView(n.key); setMobileNav(false) }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${active ? 'bg-sidebar-primary text-sidebar-primary-foreground font-medium' : 'text-sidebar-foreground hover:bg-sidebar-accent'}`}>
               <n.icon className="h-4 w-4" />{n.label}
@@ -3703,7 +3773,7 @@ function App() {
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileNav(true)}><MenuIcon className="h-5 w-5" /></Button>
             <div>
-              <div className="font-semibold capitalize">{NAV.find((n) => n.key === view)?.label}</div>
+              <div className="font-semibold capitalize">{NAV.find((n) => n.key === viewAtual)?.label}</div>
               <div className="text-xs text-muted-foreground">{me.empresa?.nome}</div>
             </div>
           </div>
@@ -3723,21 +3793,24 @@ function App() {
         </header>
 
         <main className="flex-1 overflow-auto ros-scroll p-4 lg:p-6">
-          {view === 'dashboard' && <Dashboard temMod={temMod} />}
-          {view === 'pedidos' && <Pedidos me={me} />}
-          {view === 'mesas' && <Mesas />}
-          {view === 'atendimento' && <Atendimento />}
-          {view === 'cardapio' && <Cardapio />}
-          {view === 'clientes' && <Clientes />}
-          {view === 'financeiro' && <Financeiro temMod={temMod} />}
-          {view === 'usuarios' && <Usuarios roles={me.roles} />}
-          {view === 'empresa' && <Empresa reload={loadMe} />}
-          {view === 'integracoes' && <Integracoes />}
-          {view === 'auditoria' && <Auditoria />}
-          {view === 'kds_concluir' && <CozinhaPendentes apiFetch={api} />}
+          {viewAtual === 'dashboard' && <Dashboard temMod={temMod} />}
+          {viewAtual === 'pedidos' && <Pedidos me={me} />}
+          {viewAtual === 'mesas' && <Mesas />}
+          {viewAtual === 'atendimento' && <Atendimento />}
+          {viewAtual === 'cardapio' && <Cardapio />}
+          {viewAtual === 'clientes' && <Clientes />}
+          {viewAtual === 'financeiro' && <Financeiro temMod={temMod} />}
+          {viewAtual === 'usuarios' && <Usuarios roles={me.roles} />}
+          {viewAtual === 'empresa' && <Empresa reload={loadMe} />}
+          {viewAtual === 'integracoes' && <Integracoes />}
+          {viewAtual === 'auditoria' && <Auditoria />}
+          {viewAtual === 'kds_concluir' && <CozinhaPendentes apiFetch={api} />}
         </main>
       </div>
-      <AlertaEstoqueGlobal ativo={temMod('estoque')} />
+      {/* `has('cardapio')` alem do modulo: o alerta mostra saldo de estoque,
+          que o ATENDENTE nao pode ver. Sem isso o popup faria polling de 30s
+          contra uma rota que agora responde 403 para ele. */}
+      <AlertaEstoqueGlobal ativo={temMod('estoque') && has('cardapio')} />
       <Toaster richColors position="top-right" />
     </div>
   )

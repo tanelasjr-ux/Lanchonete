@@ -145,3 +145,47 @@
   /* Nao quebrar um item de pedido no meio ao virar a pagina. */
   .cupom-item { break-inside: avoid; }
 }
+
+/* ============================ CELULAR / PWA ============================
+ * O dono reportou que, ao abrir pelo celular, a barra de endereco em cima e a
+ * barra de navegacao embaixo comiam a tela. A solucao e instalar como PWA
+ * (`display: standalone` no manifest + `appleWebApp.capable` no layout): o
+ * atalho na tela inicial abre sem nenhuma das duas.
+ *
+ * Com a tela inteira liberada (`viewport-fit: cover`), o conteudo passa a
+ * poder cair embaixo do notch e da barra de gestos — por isso as reservas
+ * abaixo. `env(safe-area-inset-*)` vale 0 no desktop e no navegador comum,
+ * entao isto nao muda nada fora do celular instalado.
+ * ==================================================================== */
+
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* A barra de gestos do iPhone fica POR CIMA do conteudo. Sem esta reserva o
+ * ultimo botao de uma tela rolavel fica inalcancavel. */
+main {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Cabecalho fixo precisa descer o proprio conteudo abaixo do notch, em vez de
+ * so ganhar altura — senao o titulo fica escondido atras do recorte. */
+header {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* O iOS aplica ZOOM automatico ao focar um campo com fonte menor que 16px, e
+ * depois nao volta — a tela fica torta pelo resto da sessao. Garantir 16px no
+ * campo evita isso sem precisar travar o zoom do usuario (que quebraria a
+ * acessibilidade de quem aumenta a fonte de proposito).
+ *
+ * So no toque (`pointer: coarse`): no desktop os campos menores continuam
+ * com o tamanho original do design. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
