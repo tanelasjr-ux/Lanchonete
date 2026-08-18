@@ -693,12 +693,55 @@ function CmvCards({ cmv }) {
 }
 
 /* ============================ DASHBOARD ============================ */
+/**
+ * Bloco de boas-vindas do Dashboard — texto e estrutura pedidos pelo dono
+ * (2026-08-18): "Sua operação mais simples. Seu negócio mais eficiente."
+ * Fica ACIMA dos cards operacionais, nunca no lugar deles — quem abre o
+ * Dashboard toda hora ainda precisa ver faturamento/pedidos primeiro que
+ * tudo, este bloco e o cabeçalho da pagina, nao o conteudo principal dela.
+ */
+function DashboardHero() {
+  const beneficios = [
+    { titulo: 'Tudo conectado', texto: 'Pedidos, mesas, cozinha, delivery e financeiro trabalhando juntos.' },
+    { titulo: 'Atendimento mais rápido', texto: 'Sua equipe sabe o que precisa fazer e acompanha cada pedido do início ao fim.' },
+    { titulo: 'Mais controle do negócio', texto: 'Tenha uma visão clara das vendas, pedidos, clientes e resultados do seu restaurante.' },
+  ]
+  const modulos = ['Mesas', 'Balcão', 'Delivery', 'Cardápio', 'Cozinha', 'Clientes', 'Financeiro']
+  return (
+    <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
+      <CardContent className="p-6 space-y-5">
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold tracking-tight">Sua operação mais simples. Seu negócio mais eficiente.</h2>
+          <p className="text-muted-foreground">Do pedido ao pagamento, tenha tudo o que precisa para administrar seu restaurante em um único sistema.</p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1 text-sm text-muted-foreground">
+            {modulos.map((m, i) => (
+              <span key={m} className="flex items-center gap-2">
+                {i > 0 && <span className="text-border">•</span>}
+                {m}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3 pt-1">
+          {beneficios.map((b) => (
+            <div key={b.titulo} className="space-y-1">
+              <div className="font-semibold text-sm">{b.titulo}</div>
+              <div className="text-sm text-muted-foreground">{b.texto}</div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function Dashboard({ temMod = () => true }) {
   const [m, setM] = useState(null)
   useEffect(() => { api('/dashboard/metrics').then(setM).catch((e) => toast.error(e.message)) }, [])
   if (!m) return <Empty>Carregando métricas…</Empty>
   return (
     <div className="space-y-6">
+      <DashboardHero />
       <PageHeader title="Dashboard" description="Visão geral da operação de hoje e dos últimos 7 dias." />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat icon={DollarSign} label="Faturamento hoje" value={brl(m.faturamentoHoje)} tone="emerald" />

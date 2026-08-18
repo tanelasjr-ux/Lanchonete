@@ -622,7 +622,10 @@ async function handler(request, { params }) {
           // os dois modulos normalmente — as flags nasciam erradas porque
           // ninguem as lia. Agora que o portao e real, o default mente caro.
           feature_flags: flagsPadraoSignup(),
-          appearance: { cor_principal: '#4f46e5', cor_secundaria: '#7c3aed', tema: 'dark', nome_exibido: empresa_nome },
+          // Padrao claro (pedido do dono, 2026-08-18: "quero que o site abra
+          // na cor branca"). O dono continua podendo trocar por empresa —
+          // isto e so o valor com que uma empresa NOVA nasce.
+          appearance: { cor_principal: '#4f46e5', cor_secundaria: '#7c3aed', tema: 'light', nome_exibido: empresa_nome },
           pagamentos: { metodos: { dinheiro: true, pix: true, cartao_debito: true, cartao_credito: true }, taxa_servico_padrao: 10 },
         },
         ativo: true,
