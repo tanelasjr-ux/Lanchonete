@@ -1,11 +1,12 @@
 # HANDOFF.md — Restaurant OS
 
 Ultima atualizacao: 2026-08-18, noite (Painel da Plataforma / assinaturas —
-backend completo, testado, **commitado e pronto para push** — `a8ad4aa`,
-ver §0.1. Antes disso, ja no ar: comercializacao — logo ETNA, saida da
-Emergent, balao de WhatsApp, tema claro padrao, boas-vindas no Dashboard;
-E2E Playwright (A4); contas a pagar/receber com edicao e recorrencia; rate
-limiting; A3. Ver §0.)
+backend + frontend completos, testados ponta a ponta via Playwright,
+**commitados e enviados** — `a8ad4aa` + `2eebf01`, ver §0.1. Antes disso,
+ja no ar: comercializacao — logo ETNA, saida da Emergent, balao de
+WhatsApp, tema claro padrao, boas-vindas no Dashboard; E2E Playwright
+(A4); contas a pagar/receber com edicao e recorrencia; rate limiting; A3.
+Ver §0.)
 
 ## Como usar este arquivo
 
@@ -22,11 +23,12 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 0.1 🟡 Painel da Plataforma — backend commitado (`a8ad4aa`), falta o frontend
+## 0.1 ✅ Painel da Plataforma — completo, testado e enviado
 
 O dono pediu para sair no meio do trabalho; retomou depois. Backend
-verificado (regressao completa 16/17, unica excecao esperada) e commitado
-nesta retomada. Isto documenta o que ja aconteceu e o que falta.
+(`a8ad4aa`) e frontend (`2eebf01`) prontos, verificados e no `main` do
+GitHub — o deploy automatico do EasyPanel deve aplicar a migration `0027`
+na producao. Isto documenta o que foi feito e o que ainda falta (pouco).
 
 **O que e:** resposta ao pedido do dono ("como criador preciso ter controle
 total, de quem e quantas pessoas estao acessando o sistema... sistema de
@@ -97,6 +99,12 @@ novos + 7 modificados, NADA commitado ainda:**
    e verdes** contra o servidor local (`localhost:3000`), incluindo o caso
    que mais importa: sessao ja aberta e cortada NA HORA ao bloquear (nao
    so no proximo login).
+7. **Frontend** (`app/page.js`, commit `2eebf01`): item de navegacao
+   "Painel ETNA" (so visivel quando `GET /plataforma/eu` confirma admin —
+   `Crown` icon), tela `PainelPlataforma` (resumo de carteira + tabela de
+   empresas + dialogos de configurar assinatura/registrar pagamento/
+   bloquear), e `AvisoAssinatura` no topo do Dashboard do cliente
+   (banner amber/vermelho com botao direto pro WhatsApp da ETNA).
 
 **Verificado:**
 - `node --check` em todos os arquivos novos/editados — sintaxe ok.
@@ -109,21 +117,33 @@ novos + 7 modificados, NADA commitado ainda:**
   importa porque o gate de auth novo (`empresa.ativo` a cada requisicao)
   mexe no caminho de TODA rota autenticada do sistema, nao so das novas —
   as outras 16 suites passando confirma que nada quebrou.
-- Commitado: `a8ad4aa`. **Ainda nao houve `git push`** — proximo passo.
+- **Verificado ponta a ponta via Playwright** contra o servidor local:
+  admin ve "Painel ETNA" na nav e um usuario comum nao ve; configurar
+  assinatura com vencimento passado mostra "atrasada" na hora na tabela;
+  registrar pagamento avanca o vencimento em exatamente 1 mes e volta pra
+  "em dia"; o aviso no Dashboard do cliente muda de amber ("em aberto")
+  pra vermelho ("atrasada") exatamente no dia 4 de atraso, com a copy
+  aprovada pelo dono; bloquear corta login novo **E** sessao ja aberta na
+  mesma hora (reload joga de volta pra tela de login); desbloquear
+  devolve tudo. Dados de verificacao criados e removidos do Mongo local
+  ao final — nao ficou lixo de teste.
+- Commitado e enviado: `a8ad4aa` (backend) + `2eebf01` (frontend), `git
+  push` feito — o deploy automatico do EasyPanel deve pegar e aplicar a
+  migration `0027` em producao.
 
-**O que falta, em ordem:**
-1. `git push` do commit `a8ad4aa` (backend pronto, so falta subir).
-2. **Frontend do Painel da Plataforma nao existe ainda** — hoje so tem
-   API. Falta: tela nova (lista de empresas + status de assinatura + botao
-   de registrar pagamento + bloqueio), gated por `GET /plataforma/eu`.
-3. **Banner de aviso no lado do cliente tambem nao existe** — `GET
-   /assinatura/status` ja devolve o `aviso` pronto (nivel/titulo/mensagem),
-   falta so consumir isso em algum lugar visivel do Dashboard (o dono
-   pediu explicitamente "aparecer na tela do cliente").
-4. Depois de subir: promover o email do proprio dono em
-   `plataforma_admins` **em producao** (nenhum endpoint faz isso — e
+**O que falta:**
+1. Promover o e-mail do proprio dono em `plataforma_admins` **em
+   producao**, depois que o deploy concluir (nenhum endpoint faz isso —
    deliberado, ver decisao de seguranca acima — precisa de um insert
    manual, uma vez, via `psql`/painel do Supabase).
+2. Conferir no EasyPanel que o deploy automatico rodou limpo e a migration
+   `0027` foi aplicada (log do container mostra `migrate.mjs` no boot).
+3. Opcional, sem pedido explicito: paginacao na tabela do Painel da
+   Plataforma — hoje lista TODAS as empresas sem paginar; inofensivo com 1
+   cliente real em producao hoje, mas o dev local acumulou 2000+ empresas
+   de teste ao longo das sessoes e a tela renderizou todas sem quebrar
+   (so confirma que funciona, nao que escale bem visualmente com volume
+   grande).
 
 ## 0.2 Pendente do pedido de comercializacao (5 itens, 4 no ar)
 
@@ -818,7 +838,7 @@ commit — ver §0.1) NAO sao `contas`.** `contas` e o que o RESTAURANTE deve
 (fornecedor, aluguel); `assinaturas` e o que o restaurante deve PARA A
 ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
 
-## 4.3 Migrations (27 aplicadas quando `0027` for commitada, via `scripts/migrate.mjs` desde 2026-08-18)
+## 4.3 Migrations (27 commitadas — `0027` aplica sozinha no proximo deploy — via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
 0001_init.sql               0009_repository_support_functions.sql
@@ -835,7 +855,7 @@ ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
 0018_caixa.sql                0024_pedido_tipo_para_levar.sql
 0019_estoque.sql              0025_contas.sql
 0020_custo.sql                0026_contas_recorrencia.sql
-0021_cardapio_imagem.sql      0027_assinaturas.sql (commitada, push pendente — ver §0.1)
+0021_cardapio_imagem.sql      0027_assinaturas.sql
 ```
 
 `0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
@@ -1010,9 +1030,8 @@ imagem apesar do padrao geral de ignorar).
 | Rate limiting em login/registro | **Completo e no ar** |
 | Testes E2E Playwright (A4) | **Completo e no ar**, CI rodando contra Mongo efemero |
 | Comercializacao — logo ETNA, saida da Emergent, WhatsApp, tema claro, boas-vindas | **Completo e no ar** |
-| Painel da Plataforma — backend (assinaturas, bloqueio, admin por e-mail) | **Completo, testado e commitado** (`a8ad4aa`), push pendente — ver §0.1 |
-| Painel da Plataforma — frontend (tela do admin) | **NAO INICIADO** |
-| Aviso de atraso na tela do cliente | **API pronta (`GET /assinatura/status`), banner visual NAO INICIADO** |
+| Painel da Plataforma (backend + frontend — assinaturas, bloqueio, admin por e-mail) | **Completo e no ar** (`a8ad4aa` + `2eebf01`), verificado via Playwright — ver §0.1 |
+| Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -1177,17 +1196,15 @@ navegador de verdade — nao suposicao:
 - [x] ~~Logo ETNA, saida da Emergent, balao de WhatsApp, tema claro,
       boas-vindas~~ — **DONE e no ar**.
 
-**Produto — pedido do dono, EM ANDAMENTO (retomar por aqui, ver §0.1):**
+- [x] ~~Painel da Plataforma (backend + frontend) + aviso de atraso ao
+      cliente~~ — **DONE, verificado via Playwright, commitado
+      (`a8ad4aa` + `2eebf01`) e enviado ao GitHub**. Ver §0.1.
 
-- [x] ~~Painel da Plataforma (backend)~~ — **DONE**, commitado `a8ad4aa`.
-      Falta so `git push`.
-- [ ] **Painel da Plataforma (frontend)** — tela do admin nao existe
-      ainda: lista de empresas, status de assinatura, registrar pagamento,
-      bloquear/desbloquear.
-- [ ] **Banner de aviso de atraso na tela do cliente** — API pronta,
-      componente visual falta.
+**Produto — falta so isto para fechar o item 4 do pedido do dono:**
+
 - [ ] Promover o e-mail do dono em `plataforma_admins` EM PRODUCAO, depois
-      do deploy (insert manual, nenhum endpoint faz isso de proposito).
+      que o deploy automatico concluir (insert manual, nenhum endpoint faz
+      isso de proposito — ver §0.1).
 
 **Produto — backlog conhecido, sem pedido explicito ainda:**
 
@@ -1220,6 +1237,7 @@ navegador de verdade — nao suposicao:
 # 12. Commits recentes (sessao atual + anteriores)
 
 ```
+2eebf01 feat(plataforma): frontend do Painel da Plataforma e aviso ao cliente
 a8ad4aa feat(plataforma): controle total do dono — assinaturas, bloqueio manual e aviso humanizado de atraso
 195bd7b feat(ux): tema claro como padrao + boas-vindas no Dashboard
 ee7ec3a feat(marca): logo ETNA na tela de login, WhatsApp comercial e saida da Emergent
@@ -1293,13 +1311,12 @@ disponivel via `git log`.)
   derivada, comparacao em calendario UTC), `resumoContas` e
   `adicionarMeses` (recorrencia — soma meses em data pura, clampando no
   ultimo dia do mes destino). Modulo puro.
-- `lib/assinatura.js` — mensalidade do SaaS (ETNA <- restaurante), **NAO
-  COMMITADO ainda** (ver §0.1): `diasDeAtraso`, `statusEfetivo`,
-  `avisoParaCliente` (escada sem aviso antecipado), `resumoCarteira`.
-  Modulo puro.
+- `lib/assinatura.js` — mensalidade do SaaS (ETNA <- restaurante):
+  `diasDeAtraso`, `statusEfetivo`, `avisoParaCliente` (escada sem aviso
+  antecipado), `resumoCarteira`. Modulo puro.
 - `lib/repositories/{mongo,supabase}/assinaturaRepository.js`,
   `assinaturaPagamentoRepository.js`, `plataformaAdminRepository.js` —
-  idem, pendentes de commit.
+  idem.
 - `lib/rateLimit.js` — rate limiting em memoria (`checarLimite`,
   `ipDoCliente`). `RATE_LIMIT_DISABLED=1` so pra dev local — ver §0.
 - `lib/caixa.js` — calculo de esperado/diferenca do caixa.
@@ -1314,7 +1331,6 @@ disponivel via `git log`.)
 
 **Banco**
 - `supabase/migrations/0001`…`0027` — lista completa e ordem no §4.3.
-  `0027` (assinaturas) commitada em `a8ad4aa`, push pendente — ver §0.1.
 - `supabase/prod-ca-2021.crt` — CA raiz do Supabase, para TLS do migrator.
 
 **Deploy**
