@@ -1,12 +1,11 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18 (contas a pagar/receber ganhou edicao —
-gap de UI, o backend ja suportava — e recorrencia mensal com `repeticoes`;
-rate limiting em /auth/login e /auth/register; monitoramento de erro em
-producao — A3, codigo pronto e no-op ate a credencial do Sentry; contas a
-pagar/receber com vencimento fechou as 4 pecas do pedido "relatorio
-financeiro"; 5 problemas reportados em teste real corrigidos; feature flags
-passaram a controlar acesso de verdade — B1. Ver §0.)
+Ultima atualizacao: 2026-08-18, noite (Painel da Plataforma / assinaturas —
+backend completo, testado, **commitado e pronto para push** — `a8ad4aa`,
+ver §0.1. Antes disso, ja no ar: comercializacao — logo ETNA, saida da
+Emergent, balao de WhatsApp, tema claro padrao, boas-vindas no Dashboard;
+E2E Playwright (A4); contas a pagar/receber com edicao e recorrencia; rate
+limiting; A3. Ver §0.)
 
 ## Como usar este arquivo
 
@@ -23,7 +22,126 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 🌙 Trabalho autonomo de uma madrugada inteira — resumo
+## 0.1 🟡 Painel da Plataforma — backend commitado (`a8ad4aa`), falta o frontend
+
+O dono pediu para sair no meio do trabalho; retomou depois. Backend
+verificado (regressao completa 16/17, unica excecao esperada) e commitado
+nesta retomada. Isto documenta o que ja aconteceu e o que falta.
+
+**O que e:** resposta ao pedido do dono ("como criador preciso ter controle
+total, de quem e quantas pessoas estao acessando o sistema... sistema de
+alerta quando for vencer mensalidade... aviso humanizado de atraso...").
+Depois de discutir o design com ele (ver decisoes abaixo), implementei o
+backend inteiro: assinaturas (mensalidade que cada restaurante paga pra
+ETNA), identidade de admin da plataforma separada por e-mail, bloqueio
+manual total ou por modulo, e o aviso ao cliente dentro do proprio sistema
+dele.
+
+**Decisoes do dono, ja incorporadas no codigo (nao renegociar sem
+confirmar de novo):**
+- **Nunca avisar com antecedencia.** So depois que a mensalidade venceu.
+  Citacao literal: *"nao avise com antecedencia o cliente, avise somente
+  apos o atraso! gostei desse aqui"* — aprovando explicitamente a copy da
+  faixa amber (dia 0-3: "pode levar 1 dia util"). Isso elimina qualquer
+  tier de "vence em breve" — `lib/assinatura.js` so tem `avisoParaCliente()`
+  retornando algo a partir de 1 dia de atraso.
+- **Bloqueio e sempre MANUAL**, nunca automatico por atraso. O dono decide
+  se bloqueia "alguns servicos" (modulo especifico) ou "acesso ao
+  cliente" (empresa inteira) — nunca um robo desligando sozinho.
+- **Admin tem acesso total aos dados** (nao so agregados) — o Painel da
+  Plataforma le tudo (empresas, assinaturas, ultimo login).
+
+**Estado do codigo — TUDO FUNCIONANDO, `git status` mostra 10 arquivos
+novos + 7 modificados, NADA commitado ainda:**
+
+1. `supabase/migrations/0027_assinaturas.sql` — 3 tabelas novas
+   (`assinaturas`, `assinatura_pagamentos`, `plataforma_admins`), RLS
+   habilitado sem policy (proposital, ver comentario no arquivo). **Testada
+   em transacao com rollback contra producao** (mesma disciplina de sempre
+   — nao ha staging). Ainda nao aplicada de verdade (so roda no boot do
+   container quando este commit chegar na `main`).
+2. `lib/assinatura.js` — modulo puro: `diasDeAtraso`, `statusEfetivo`
+   (atrasada e sempre derivada, nunca gravada — mesma regra de
+   `contas.status_efetivo`), `avisoParaCliente` (a escada amber/vermelho
+   sem aviso antecipado), `resumoCarteira`. 14 testes unitarios em
+   `test_assinatura_calculo.mjs`, **todos passando**.
+3. Repositories novos (Mongo + Supabase, os dois lados):
+   `assinaturaRepository`, `assinaturaPagamentoRepository`,
+   `plataformaAdminRepository` — mais `list()` novo em `empresaRepository`
+   e `listLogins()` novo em `auditoriaRepository` (os dois cross-tenant DE
+   PROPOSITO, documentado no codigo, seguranca fica 100% em route.js).
+   Registrados em `lib/repositories/factory.js` e nos contratos de
+   `packages/domain/src/index.ts`.
+4. `app/api/[[...path]]/route.js` — endpoints novos:
+   - `GET /assinatura/status` (cliente, propria empresa, alimenta o aviso)
+   - `GET /plataforma/eu` (frontend descobre se o usuario logado e admin)
+   - `GET /plataforma/empresas` (lista todas + assinatura + ultimo acesso + resumo de carteira)
+   - `PUT /plataforma/empresas/:id/assinatura` (criar/editar contrato)
+   - `PUT /plataforma/assinaturas/:id/pagar` (registra pagamento, avanca `proximo_vencimento` com `adicionarMeses`)
+   - `PUT /plataforma/assinaturas/:id/cancelar`
+   - `PUT /plataforma/empresas/:id/bloqueio` (liga/desliga `empresas.ativo`)
+   - `PUT /plataforma/empresas/:id/modulos/:chave` (variante admin do toggle que ja existia so pro OWNER)
+
+   Identidade de admin: `plataforma_admins`, tabela SEPARADA por e-mail
+   (nunca uma flag em `usuarios`) — comprometer a conta de um restaurante
+   nunca vira acesso a plataforma. Auditoria de acao do admin grava no
+   `empresa_id` da empresa ALVO (nao do admin), pra aparecer no historico
+   que o proprio restaurante enxerga.
+5. **Gap fechado: `empresa.ativo` agora e verificado em `/auth/login` E a
+   cada requisicao autenticada** (nao so no login) — sem isso, bloquear uma
+   empresa so surtiria efeito depois que o token de 7 dias expirasse.
+   Busca a empresa em paralelo (`Promise.all`) com a busca do usuario, que
+   ja acontecia em toda requisicao — nao e uma consulta nova, e a mesma
+   viagem ao banco fazendo mais uma coisa.
+6. `tests/backend_test_plataforma.py` — 11 testes de integracao, **rodados
+   e verdes** contra o servidor local (`localhost:3000`), incluindo o caso
+   que mais importa: sessao ja aberta e cortada NA HORA ao bloquear (nao
+   so no proximo login).
+
+**Verificado:**
+- `node --check` em todos os arquivos novos/editados — sintaxe ok.
+- `node test_assinatura_calculo.mjs` — 14/14 passou.
+- `python -m pytest tests/backend_test_plataforma.py -v` — 11/11 passou.
+- **Regressao completa (`tests/run_all.py`): 16/17 suites verdes.** A unica
+  excecao (`backend_test_rate_limit.py`) e o comportamento ESPERADO quando
+  o servidor roda com `RATE_LIMIT_DISABLED=1` (precisa rodar sozinho,
+  contra servidor sem essa variavel — ver aviso no topo do §0). Isso
+  importa porque o gate de auth novo (`empresa.ativo` a cada requisicao)
+  mexe no caminho de TODA rota autenticada do sistema, nao so das novas —
+  as outras 16 suites passando confirma que nada quebrou.
+- Commitado: `a8ad4aa`. **Ainda nao houve `git push`** — proximo passo.
+
+**O que falta, em ordem:**
+1. `git push` do commit `a8ad4aa` (backend pronto, so falta subir).
+2. **Frontend do Painel da Plataforma nao existe ainda** — hoje so tem
+   API. Falta: tela nova (lista de empresas + status de assinatura + botao
+   de registrar pagamento + bloqueio), gated por `GET /plataforma/eu`.
+3. **Banner de aviso no lado do cliente tambem nao existe** — `GET
+   /assinatura/status` ja devolve o `aviso` pronto (nivel/titulo/mensagem),
+   falta so consumir isso em algum lugar visivel do Dashboard (o dono
+   pediu explicitamente "aparecer na tela do cliente").
+4. Depois de subir: promover o email do proprio dono em
+   `plataforma_admins` **em producao** (nenhum endpoint faz isso — e
+   deliberado, ver decisao de seguranca acima — precisa de um insert
+   manual, uma vez, via `psql`/painel do Supabase).
+
+## 0.2 Pendente do pedido de comercializacao (5 itens, 4 no ar)
+
+O dono pediu 5 coisas numa unica mensagem (ver §0.3 para o que ja saiu):
+logo ETNA no login, remover Emergent, balao de WhatsApp, controle
+total/assinaturas (item 0.1, quase pronto) e sugestoes de melhoria (dadas
+em conversa, nao pedido de implementacao).
+
+**Decisao em aberto, nao decidida ainda:** o dono ofereceu arquivos de logo
+de qualidade melhor depois do primeiro upload ("inseri a logo com melhor
+qualidade na pasta caso queira usar!"). Avaliados e **descartados por
+enquanto**: `Copilot PNG.png` tem o mesmo defeito do arquivo original
+(fundo xadrez gravado no pixel, sem alfa real) e o texto "ETNA" em azul
+marinho escuro, que sumiria contra o painel escuro do login.
+`Ercio Projeto - kittl.png` **ainda nao foi inspecionado visualmente**. Nao
+foi pedido para trocar de novo — so revisitar se o dono trouxer o assunto.
+
+## 0.3 🌙 Trabalho autonomo de uma madrugada inteira — resumo
 
 Sessao longa, sem parar pra confirmar cada passo (autorizado explicitamente
 pelo dono). Nesta ordem: as 4 pecas do relatorio financeiro (DRE, ponto de
@@ -319,6 +437,61 @@ lembrar. Estoque e CMV estavam quebrados em producao, em silencio, ate o
 dono esbarrar no erro `Could not find the 'cardapio_imagem_url' column`.
 Detalhe tecnico completo no item **C6** do `PROFISSIONALIZACAO.md`.
 
+## Testes E2E (Playwright) dos 5 fluxos criticos — A4 (`3f9e829`)
+
+`e2e/` novo: `login`, `pedido`, `comanda`, `caixa`, `kds` — os 5 fluxos que o
+`PROFISSIONALIZACAO.md` marcava como sem cobertura sistematica.
+`.github/workflows/e2e.yml` roda contra **MongoDB efemero, nunca Supabase**
+(sem `SUPABASE_*` no ambiente do CI, de proposito — nao ha staging, entao
+CI jamais pode tocar producao). Achados reais escrevendo os testes:
+- `playwright.config.js`: o viewport customizado precisa vir DEPOIS do
+  spread de `devices['Desktop Chrome']`, senao o preset do device
+  sobrescreve silenciosamente para 1280x720.
+- O formulario de login nao tem `<Label for=...>` ligado ao `<Input>`
+  (gap de acessibilidade pre-existente, documentado e nao corrigido so
+  para o teste) — os testes usam `getByPlaceholder(...)`.
+- `POST /pedidos` **exige `nome` explicito por item** (mesma regra de
+  nunca derivar do `produto_id` que ja valia para `preco` — achado nº 21
+  do §10). O helper `criarPedido()` nao mandava; um item some sem nome no
+  card do KDS ate ser corrigido.
+
+## Comercializacao — logo, saida da Emergent, WhatsApp, tema claro (`ee7ec3a`, `195bd7b`)
+
+Pedido do dono como criador/vendedor do produto, nao como usuario de um
+restaurante:
+
+1. **Logo ETNA na tela de login** (`ee7ec3a`). Os JPGs originais tinham o
+   fundo xadrez GRAVADO no pixel (sem alfa real) — qualquer remocao
+   automatica teria comido as letras, porque a borda anti-aliased do texto
+   e cinza identico ao xadrez. O dono forneceu um PNG com transparencia de
+   verdade; `public/etna-logo.png`/`etna-simbolo.png` foram gerados via
+   `sharp`, recortados pelo bounding box real do canal alfa (nunca "no
+   olho"). Ver §0.2 para os arquivos de logo mais recentes que o dono
+   ofereceu depois — ainda nao decidido se trocam.
+2. **Saida da Emergent** (`ee7ec3a`). Referencias ao prototipo que iniciou
+   o projeto removidas de `components/ui/chart.jsx` (comentarios de lint
+   mortos, sem config correspondente) e `docs/plans/PHASE-6B-SUPABASE-REAL.md`
+   (wording historico preservado, so o nome do vendedor trocado). Pasta
+   `lib/constants/testIds/` (nao usada por nada, confirmado por grep)
+   apagada com aprovacao explicita.
+3. **Balao de WhatsApp comercial** (`ee7ec3a`). `BotaoWhatsApp` flutuante
+   em toda tela (comecando pelo login), `wa.me/5591982934763` com mensagem
+   pre-preenchida indicando a origem do clique. Sem dependencia de CDN
+   (SVG inline). `env(safe-area-inset-bottom)` evita sobrepor a barra de
+   gestos do iOS.
+4. **Tema claro como padrao** (`195bd7b`). Pedido explicito: *"quero que o
+   site abra na cor branca, e nao na cor preta como e hoje"*. Trocado em
+   TRES lugares que precisavam concordar: `ThemeProvider` (front,
+   `defaultTheme`), o valor gravado no signup de empresa NOVA
+   (`appearance.tema`), e a empresa real do dono em producao (ja existia
+   antes da mudanca de default, precisou de update manual pontual).
+5. **Boas-vindas no Dashboard** (`195bd7b`). Texto de marketing pedido pelo
+   dono ("Sua operacao mais simples...") — **importante nao confundir com
+   a tela de login**: o dono corrigiu explicitamente no meio do pedido
+   ("me refiro a tela apos o login!"), entao o componente `DashboardHero`
+   fica no topo do `Dashboard()`, nao no `AuthScreen`. E cabecalho da
+   pagina — nao substitui os cards/graficos que ja existiam ali.
+
 ## 📋 Dois backlogs, propositos diferentes
 
 | Documento | Para que serve |
@@ -546,6 +719,17 @@ persistida, e por isso ficam fora do contrato de dominio.
   migrado para Supabase Auth — auditado na Fase 8, implementacao nao iniciada.
 - **O `papel` NUNCA vem do token**: e relido do banco a cada requisicao, no
   portao unico de auth. Por isso revogar acesso e imediato.
+- **`empresas.ativo` tambem e relido a cada requisicao** (nao so no login,
+  desde o Painel da Plataforma — §0.1). Sem isso, bloquear uma empresa so
+  surtiria efeito quando o token de 7 dias expirasse. Busca a empresa em
+  paralelo com a busca do usuario (`Promise.all`), reaproveitando a viagem
+  ao banco que ja acontecia — nao e uma consulta nova por requisicao.
+- **Admin da PLATAFORMA (a ETNA) e identidade separada, por e-mail**:
+  tabela `plataforma_admins`, nunca uma flag em `usuarios`. Um usuario
+  sempre pertence a uma empresa (`usuarios.empresa_id NOT NULL`); marcar o
+  dono como "super admin" ali vazaria a plataforma inteira se aquela conta
+  fosse comprometida. Sem endpoint de auto-promocao — o unico jeito de
+  virar admin e um insert direto no banco. Ver §0.1.
 - **RBAC: hardcoded** nos objetos `ROLES`/`PERMISSIONS` do `route.js` (50+
   checagens `can()`). As tabelas `papeis`/`permissoes` existem no Supabase com
   seed, mas **o app nao as le** — armadilha conhecida, nao "corrigir" sem
@@ -623,11 +807,18 @@ policies sao defesa em profundidade que nunca e exercida.
 `comanda_itens`, `pedidos`, `pedido_itens`, `pagamentos`, `transacoes`,
 `integracoes`, `conversas`, `mensagens`, `auditoria`, `webhook_events`,
 `pedido_contadores`, `entregadores`, `caixas`, `caixa_movimentos`,
-`kds_tokens`. Raiz do tenant: `empresas`. Catalogos globais: `papeis`,
-`permissoes`. Controle de deploy: `schema_migrations` (nao tem `empresa_id`
-— e infraestrutura, nao dominio).
+`kds_tokens`, `contas`, `assinaturas`, `assinatura_pagamentos`. Raiz do
+tenant: `empresas`. Catalogos globais: `papeis`, `permissoes`. Da
+PLATAFORMA, sem `empresa_id` (ver §2.4): `plataforma_admins`. Controle de
+deploy: `schema_migrations` (tambem sem `empresa_id` — infraestrutura, nao
+dominio).
 
-## 4.3 Migrations (26 aplicadas, todas via `scripts/migrate.mjs` desde 2026-08-18)
+**`assinaturas`/`assinatura_pagamentos` (migration `0027`, pendente de
+commit — ver §0.1) NAO sao `contas`.** `contas` e o que o RESTAURANTE deve
+(fornecedor, aluguel); `assinaturas` e o que o restaurante deve PARA A
+ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
+
+## 4.3 Migrations (27 aplicadas quando `0027` for commitada, via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
 0001_init.sql               0009_repository_support_functions.sql
@@ -644,7 +835,7 @@ policies sao defesa em profundidade que nunca e exercida.
 0018_caixa.sql                0024_pedido_tipo_para_levar.sql
 0019_estoque.sql              0025_contas.sql
 0020_custo.sql                0026_contas_recorrencia.sql
-0021_cardapio_imagem.sql
+0021_cardapio_imagem.sql      0027_assinaturas.sql (commitada, push pendente — ver §0.1)
 ```
 
 `0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
@@ -817,6 +1008,11 @@ imagem apesar do padrao geral de ignorar).
 | Feature flags controlando acesso (B1) | **Completo e no ar** |
 | Monitoramento de erro em producao (A3) | **Codigo no ar, no-op ate a credencial do Sentry** |
 | Rate limiting em login/registro | **Completo e no ar** |
+| Testes E2E Playwright (A4) | **Completo e no ar**, CI rodando contra Mongo efemero |
+| Comercializacao — logo ETNA, saida da Emergent, WhatsApp, tema claro, boas-vindas | **Completo e no ar** |
+| Painel da Plataforma — backend (assinaturas, bloqueio, admin por e-mail) | **Completo, testado e commitado** (`a8ad4aa`), push pendente — ver §0.1 |
+| Painel da Plataforma — frontend (tela do admin) | **NAO INICIADO** |
+| Aviso de atraso na tela do cliente | **API pronta (`GET /assinatura/status`), banner visual NAO INICIADO** |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -873,6 +1069,14 @@ servidor, `rm -rf .next`, subir de novo.
    margem por canal/produto.
 8. **Feature flag ausente/null conta como LIGADA, nunca desligada.** Falta
    de dado nao pode virar perda de acesso.
+9. **Aviso de mensalidade atrasada nunca antecipa o vencimento** — so a
+   partir de 1 dia de atraso, decisao explicita do dono (§0.1). Nao
+   reintroduzir um tier de "vence em breve" sem confirmar de novo.
+10. **Bloqueio de acesso (empresa inteira ou modulo especifico) e sempre
+    MANUAL** — nenhum robo desliga uma empresa sozinho por atraso.
+11. **Identidade de admin da plataforma vive numa tabela separada por
+    e-mail (`plataforma_admins`), nunca numa flag em `usuarios`.** Sem
+    endpoint de auto-promocao, de proposito.
 9. **Migrations sao imutaveis uma vez aplicadas.** Mudanca de schema sempre
    em arquivo novo, nunca editando um antigo.
 
@@ -968,8 +1172,22 @@ navegador de verdade — nao suposicao:
 
 **Produto — pedido do dono, concluido nesta sessao:**
 
-- [x] ~~Contas a pagar/receber com vencimento~~ — **DONE** (ver §0). Fecha
-      as 4 pecas do pedido "relatorio financeiro".
+- [x] ~~Contas a pagar/receber com vencimento~~ — **DONE**. Fecha as 4
+      pecas do pedido "relatorio financeiro".
+- [x] ~~Logo ETNA, saida da Emergent, balao de WhatsApp, tema claro,
+      boas-vindas~~ — **DONE e no ar**.
+
+**Produto — pedido do dono, EM ANDAMENTO (retomar por aqui, ver §0.1):**
+
+- [x] ~~Painel da Plataforma (backend)~~ — **DONE**, commitado `a8ad4aa`.
+      Falta so `git push`.
+- [ ] **Painel da Plataforma (frontend)** — tela do admin nao existe
+      ainda: lista de empresas, status de assinatura, registrar pagamento,
+      bloquear/desbloquear.
+- [ ] **Banner de aviso de atraso na tela do cliente** — API pronta,
+      componente visual falta.
+- [ ] Promover o e-mail do dono em `plataforma_admins` EM PRODUCAO, depois
+      do deploy (insert manual, nenhum endpoint faz isso de proposito).
 
 **Produto — backlog conhecido, sem pedido explicito ainda:**
 
@@ -988,8 +1206,7 @@ navegador de verdade — nao suposicao:
 - [ ] **A3 — Monitoramento de erro em producao.**
 - [ ] **B2 — Onboarding de novo restaurante.**
 - [ ] **D1 — Extrair regra de negocio do `route.js`** (2.500+ linhas hoje).
-- [ ] **A4 — Testes E2E (Playwright) sistematicos**, cobrindo telas que hoje
-      so tem verificacao ad-hoc.
+- [x] ~~A4 — Testes E2E (Playwright) sistematicos~~ — **DONE**, ver `e2e/`.
 - [ ] **Segundo projeto Supabase para staging** — eliminaria a causa raiz do
       C1 (rodar teste local `supabase` escreve em producao).
 - [ ] **Implementar Supabase Auth** (`PHASE-8-AUTH-AUDIT.md`), incluindo
@@ -1003,6 +1220,17 @@ navegador de verdade — nao suposicao:
 # 12. Commits recentes (sessao atual + anteriores)
 
 ```
+a8ad4aa feat(plataforma): controle total do dono — assinaturas, bloqueio manual e aviso humanizado de atraso
+195bd7b feat(ux): tema claro como padrao + boas-vindas no Dashboard
+ee7ec3a feat(marca): logo ETNA na tela de login, WhatsApp comercial e saida da Emergent
+3f9e829 test(e2e): suite Playwright dos 5 fluxos criticos + CI (A4)
+0bbe408 feat(contas): edicao (gap de UI) e recorrencia mensal
+da9fac7 feat(seguranca): rate limiting em /auth/login e /auth/register
+4d9ab33 feat(A3): monitoramento de erro em producao — codigo pronto, no-op sem DSN
+c45a081 feat(financeiro): contas a pagar/receber com vencimento
+2681dc5 fix: 5 problemas reportados em teste real (CSV, pedido, acesso, cursor, PWA)
+03159aa docs: reescreve HANDOFF.md por completo — retrato atual do projeto
+6d539dc feat(relatorio): margem por produto (lucro bruto, ranking)
 567188b feat(relatorio): margem bruta por canal de venda
 97c3696 feat(relatorio): comparativo com o periodo anterior
 5af895d refactor(modulos): tira da tela os modulos que nao usamos
@@ -1065,6 +1293,13 @@ disponivel via `git log`.)
   derivada, comparacao em calendario UTC), `resumoContas` e
   `adicionarMeses` (recorrencia — soma meses em data pura, clampando no
   ultimo dia do mes destino). Modulo puro.
+- `lib/assinatura.js` — mensalidade do SaaS (ETNA <- restaurante), **NAO
+  COMMITADO ainda** (ver §0.1): `diasDeAtraso`, `statusEfetivo`,
+  `avisoParaCliente` (escada sem aviso antecipado), `resumoCarteira`.
+  Modulo puro.
+- `lib/repositories/{mongo,supabase}/assinaturaRepository.js`,
+  `assinaturaPagamentoRepository.js`, `plataformaAdminRepository.js` —
+  idem, pendentes de commit.
 - `lib/rateLimit.js` — rate limiting em memoria (`checarLimite`,
   `ipDoCliente`). `RATE_LIMIT_DISABLED=1` so pra dev local — ver §0.
 - `lib/caixa.js` — calculo de esperado/diferenca do caixa.
@@ -1078,7 +1313,8 @@ disponivel via `git log`.)
 - `components/cupom.jsx` — renderiza e imprime o cupom (`window.print()`).
 
 **Banco**
-- `supabase/migrations/0001`…`0026` — lista completa e ordem no §4.3.
+- `supabase/migrations/0001`…`0027` — lista completa e ordem no §4.3.
+  `0027` (assinaturas) commitada em `a8ad4aa`, push pendente — ver §0.1.
 - `supabase/prod-ca-2021.crt` — CA raiz do Supabase, para TLS do migrator.
 
 **Deploy**
@@ -1101,8 +1337,18 @@ disponivel via `git log`.)
 - `tests/backend_test_dre.py`, `_comparativo.py`, `_margem_canal.py`,
   `_margem_produto.py`, `_modulos.py`, `_contas.py`, `_rate_limit.py` —
   relatorio financeiro, feature flags, contas a pagar/receber e rate
-  limiting (sessao atual). `_rate_limit.py` precisa rodar SOZINHO, sem
+  limiting. `_rate_limit.py` precisa rodar SOZINHO, sem
   `RATE_LIMIT_DISABLED=1` — ver aviso no §0.
+- `tests/backend_test_plataforma.py` — Painel da Plataforma, 11 testes
+  verdes. Promove admin inserindo direto no Mongo local (`pymongo`) — nao
+  existe endpoint de auto-promocao de proposito, entao o teste do caminho
+  feliz precisa desse atalho so-local, mesmo espirito de
+  `RATE_LIMIT_DISABLED`.
+- `test_assinatura_calculo.mjs` — 14 testes puros de `lib/assinatura.js`,
+  mesmo padrao de `test_custo_calculo.mjs`/`test_caixa_calculo.mjs`.
+- `e2e/` (Playwright) — `login`, `pedido`, `comanda`, `caixa`, `kds`.
+  `playwright.config.js`, `.github/workflows/e2e.yml` (CI contra Mongo
+  efemero, nunca Supabase).
 - `tests/test_monitoring.mjs` — modulo puro `lib/integrations/monitoring.js`,
   rodado direto (`node tests/test_monitoring.mjs`), fora do `run_all.py`
   (que so descobre `backend_test_*.py`).
