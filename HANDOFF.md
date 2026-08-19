@@ -1,22 +1,29 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-19, tarde. 🟡 **PDV (cobranca no cartao pela
-maquininha Mercado Pago Point) EM ANDAMENTO** — brainstorming, spec e
-plano de 11 tasks completos; execucao via subagentes com 3/11 tasks
-completas e commitadas (`ad1dfe6`), pausada aqui a pedido do dono pra
-retomar depois. **Comece por §0.0** — tem o passo a passo exato de como
-continuar, incluindo 2 achados reais (um bug de producao no fluxo de Pix,
-corrigido; uma race condition adiada de proposito pra Task 8).
+Ultima atualizacao: 2026-08-19, noite. **Dois trabalhos em andamento em
+paralelo, pausados aqui por falta de tokens da sessao — comece por §0.0.**
 
-Antes disso, ja concluido e no ar nesta mesma sessao: **B2 — Onboarding
+1. 🟡 **PDV (maquininha Mercado Pago Point)** — plano de 11 tasks,
+   **5/11 completas e commitadas** (`63414e5`), retomar na Task 6.
+2. 🟡 **Controle de acesso ao cadastro (allowlist de e-mail)** — spec
+   escrita e commitada (`794d165`), **plano de implementacao ainda NAO
+   escrito** — proximo passo antes de qualquer codigo e invocar
+   `superpowers:writing-plans` sobre essa spec.
+
+Junto disso, **ja concluido, testado e no ar** nesta retomada: o texto
+"Sua operação mais simples..." saiu do Dashboard e ficou exclusivo da
+tela de login (commit `ae9a89f`) — pedido explicito do dono, feito fora
+dos dois planos acima, nao precisa de nenhuma acao futura.
+
+Antes disso, ja concluido e no ar em sessoes anteriores: **B2 — Onboarding
 guiado** (checklist substitui o marketing no Dashboard ate a empresa se
 configurar; seed de demonstracao virou botao opcional — achado real: o
 signup ja nao entregava mais o app vazio havia tempo, a premissa original
 do B2 estava desatualizada); Painel da Plataforma completo (assinaturas,
 bloqueio, aviso de atraso, pausa de aviso/cortesia); bug real corrigido
-(logo/icones do PWA em 404 em producao); novo texto da tela de login;
-deploy do EasyPanel que tinha atrasado se resolveu sozinho (§0.0.2). Ver
-§0.1 em diante para o historico completo desta sessao.
+(logo/icones do PWA em 404 em producao); deploy do EasyPanel que tinha
+atrasado se resolveu sozinho (§0.0.3). Ver §0.1 em diante para o historico
+completo desta sessao.
 
 ## Como usar este arquivo
 
@@ -45,7 +52,7 @@ subagentes (`superpowers:subagent-driven-development`, em andamento).
 
 **Documentos, nesta ordem de leitura:**
 1. `docs/superpowers/specs/2026-08-19-pdv-maquininha-design.md` — a decisao
-   e o porque (Mercado Pago Point, nao Stone/Cielo/PagBank — ver §0.0.2)
+   e o porque (Mercado Pago Point, nao Stone/Cielo/PagBank — ver §0.0.3)
 2. `docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md` — as 11 tasks,
    cada uma com codigo exato
 3. `.superpowers/sdd/2026-08-19-pdv-maquininha-plan/progress.md` — **o
@@ -61,19 +68,25 @@ subagentes (`superpowers:subagent-driven-development`, em andamento).
 | 1 — contrato de dominio + migration `0029` (`pedidos.pago_em`) | ✅ completa (commits `1bc7b72..a93873f`, 1 fix round) |
 | 2 — `comandaRepo.atualizarStatusPagamentoResumo` (Mongo real, Supabase no-op) | ✅ completa (commit `5e6c890`, review limpo) |
 | 3 — `confirmarPagamento()` + corrige bug real do Pix | ✅ completa (commits `5e6c890..ad1dfe6`, 1 fix round) |
-| 4 — adapter `lib/integrations/payments/point.js` (Orders API) + testes puros | 🟡 **brief ja extraido, NENHUM agente despachado ainda** — proximo passo |
-| 5-11 | ainda nao iniciadas |
+| 4 — adapter `lib/integrations/payments/point.js` (Orders API) + testes puros | ✅ completa (commit `2c0395f`, review limpo) |
+| 5 — `terminalId` configuravel na integracao Mercado Pago | ✅ completa (commit `63414e5`, review limpo) |
+| 6 — Cobranca na comanda + cancelamento | 🟡 **proximo passo, nenhum agente despachado ainda** |
+| 7-11 | ainda nao iniciadas |
 
-**HEAD atual do projeto:** `ad1dfe6` (tudo commitado, nada pendente de push
-— cada task deste plano tem sido commitada E enviada ao GitHub direto na
-`main`, mesma disciplina do resto da sessao, sem worktree isolado —
-decisao registrada no ledger).
+**Commits do PDV, em ordem:** `a93873f` (1) → `5e6c890` (2) → `5fb5706`
++`ad1dfe6` (3, com 1 fix round) → `2c0395f` (4) → `63414e5` (5). Todos
+direto na `main`, sem worktree isolado (decisao registrada no ledger).
+Entre esses, dois commits de OUTRO trabalho tambem foram para a `main`
+(`ba1d633` handoff, `ae9a89f` fix do texto do login/dashboard) — nao
+tocam em nada do PDV, so intercalados no historico.
 
 **Para retomar:** invocar `superpowers:subagent-driven-development` de
 novo com o plano (`docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md`)
-— a skill le o ledger, ve que as Tasks 1-3 tem linha `Task N: complete`, e
-resume sozinha a partir da Task 4. Nao precisa reexplicar nada disto ao
-retomar; o ledger e a spec carregam o contexto.
+— a skill le o ledger, ve que as Tasks 1-5 tem linha `Task N: complete`, e
+resume sozinha a partir da Task 6. Nao precisa reexplicar nada disto ao
+retomar; o ledger e a spec carregam o contexto. **Antes de despachar,
+confirmar o HEAD real com `git log` — nao supor que e o ultimo commit
+listado acima, pode ter avancado por outro trabalho.**
 
 ## 0.0.1 Dois achados reais durante a implementacao (nao previstos na spec original)
 
@@ -110,7 +123,57 @@ condicional/atomico no repository, filtrado por `pago_em IS NULL`), nao
 retroagir na Task 3. Ao despachar a Task 8, carregar esta exigencia
 explicitamente no dispatch do implementador.
 
-## 0.0.2 ✅ RESOLVIDO SOZINHO (historico): deploy automatico do EasyPanel tinha atrasado
+## 0.0.2 🟡 EM ANDAMENTO: Controle de acesso ao cadastro (allowlist de e-mail)
+
+**Pedido do dono, no meio da execucao do PDV** (nao e do PDV, e um
+trabalho paralelo): *"eu como dono devo ter a possibilidade de adicionar
+os e-mails que podem ter acesso ao sistema... hoje qualquer empresa pode
+fazer o cadastro... corrija isso."* Junto disso, duas perguntas que ja
+foram respondidas em conversa (nao geraram trabalho):
+- "nao achei o botao que pausa o aviso de cobranca" — nao e bug: o botao
+  so aparece numa empresa que ja tem assinatura CONFIGURADA (confirmado:
+  nenhuma empresa em producao tem assinatura cadastrada ainda). Fluxo
+  certo: Painel ETNA → "Configurar" na empresa → so entao "Pagamento" e
+  "Pausar aviso" aparecem.
+- "como o sistema sabe que o cliente pagou a mensalidade da ETNA?" — hoje
+  100% manual (botao "Pagamento" no Painel ETNA). Nao ha integracao
+  bancaria; tecnicamente possivel via agregador de Open Finance (Pluggy/
+  Belvo), mas e projeto proprio, nao vale o esforco no volume atual.
+
+**Passou pelo brainstorming completo** (`superpowers:brainstorming`,
+classificado arquitetural) ate a spec escrita e commitada. **O plano de
+implementacao (`superpowers:writing-plans`) AINDA NAO FOI ESCRITO** —
+esse e o proximo passo antes de qualquer codigo.
+
+**Documento:** `docs/superpowers/specs/2026-08-19-controle-acesso-cadastro-design.md`
+(commit `794d165`).
+
+**Decisoes ja tomadas (nao renegociar sem confirmar de novo):**
+- Mecanismo: **allowlist ANTES do cadastro** — dono libera o e-mail
+  primeiro (tabela nova `emails_liberados`, migration `0030`, mesmo
+  padrao de `plataforma_admins`), so entao aquele e-mail completa
+  `POST /auth/register`. Alternativas descartadas: aprovar DEPOIS do
+  cadastro, convite por link — ambas dao mais trabalho operacional ao
+  dono.
+- O link "Cadastre sua empresa" na tela de login **continua visivel** —
+  e-mail nao liberado vira erro claro + CTA do WhatsApp (funil de vendas,
+  nao beco sem saida).
+- **Achado durante o design, ja resolvido na spec:** as 17 suites de
+  teste deste projeto registram empresas descartaveis o tempo todo — sem
+  cuidado, o gate quebraria a regressao inteira (mesma classe de problema
+  que o B2 teve com o seed automatico). Solucao: `SIGNUP_ALLOWLIST_DISABLED=1`,
+  mesmo padrao ja usado para `RATE_LIMIT_DISABLED` — nunca setada em
+  producao. **Diferente do B2, nenhum arquivo de teste existente precisa
+  mudar** (o bypass e por variavel de ambiente, nao por dado semeado).
+- Revogar acesso de quem ja se cadastrou fica fora de escopo — ja existe
+  (bloquear a empresa inteira no Painel ETNA).
+
+**Para retomar:** ler a spec, confirmar que ainda faz sentido, invocar
+`superpowers:writing-plans` sobre ela pra gerar o plano de tasks, depois
+`superpowers:subagent-driven-development` pra executar — mesmo fluxo
+completo ja usado pro PDV.
+
+## 0.0.3 ✅ RESOLVIDO SOZINHO (historico): deploy automatico do EasyPanel tinha atrasado
 
 Registrado enquanto acontecia, resolvido antes do dono precisar mexer em
 nada — mantido aqui como referencia caso se repita.
@@ -239,7 +302,7 @@ novos + 7 modificados, NADA commitado ainda:**
   migration `0027` em producao.
 
 **O que falta:**
-1. ~~Deploy automatico~~ — resolvido sozinho, ver §0.0.2. Nada pendente aqui.
+1. ~~Deploy automatico~~ — resolvido sozinho, ver §0.0.3. Nada pendente aqui.
 2. Opcional, sem pedido explicito: paginacao na tabela do Painel da
    Plataforma — hoje lista TODAS as empresas sem paginar; inofensivo com 1
    cliente real em producao hoje, mas o dev local acumulou 2000+ empresas
@@ -310,7 +373,7 @@ maquina (mesma classe de interferencia ja documentada para
 `X-Forwarded-For`, ver §0 sobre rate limiting), entao `yarn install` e
 `apk add` falham com "unable to verify the first certificate"/"TLS:
 server certificate not trusted" mesmo com `--network=host`. O fix segue
-o padrao oficial do Next.js — confirmado direto em producao, ver §0.0.2.
+o padrao oficial do Next.js — confirmado direto em producao, ver §0.0.3.
 
 ## 0.1.3 Novo texto da tela de login
 
@@ -1477,7 +1540,7 @@ navegador de verdade — nao suposicao:
 - [x] ~~Fix: logo/icones do PWA 404 em producao~~ — **DONE, commitado
       (`b7bbe01`) e confirmado no ar**. Ver §0.1.2.
 - [x] ~~Todos os itens acima confirmados em producao~~ — o deploy que
-      tinha atrasado se resolveu sozinho. Ver §0.0.2.
+      tinha atrasado se resolveu sozinho. Ver §0.0.3.
 
 **Tecnico — pedido do dono, concluido nesta sessao:**
 
