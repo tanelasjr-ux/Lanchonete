@@ -39,7 +39,7 @@ de spec + plano proprios.
 | A3 | Monitoramento de erro em producao | Confianca | M | 🟡 | (esta sessao — falta so credencial do Sentry) |
 | A4 | Testes E2E dos fluxos criticos | Confianca | G | ✅ | (esta sessao) |
 | B1 | Feature flags que realmente controlam acesso | Comercial | M | ✅ | (esta sessao) |
-| B2 | Onboarding de novo restaurante | Comercial | M | ⚪ | |
+| B2 | Onboarding de novo restaurante | Comercial | M | ✅ | `0deb39d`, `8b78f26` (2026-08-19) |
 | B3 | Billing e assinatura | Comercial | G | ⚪ | |
 | B4 | Emissao fiscal (NFC-e) | Comercial | G | ⚪ | |
 | C1 | Limpar empresas de teste da producao | Operacao | P | 🟡 | (sem commit — dado, nao codigo) |
@@ -53,6 +53,9 @@ de spec + plano proprios.
 
 **Ordem recomendada:** `A1 → A2 → C1 → B1 → A3 → D1 → B2 → ...`
 Comeca pelos pequenos que reduzem risco imediato, antes dos grandes.
+Proximos, a escolher: C3/C4 (Supabase Auth + RLS de verdade — C4 depende
+de C3), D1 (extrair regra de negocio do route.js — mas nao justifica
+sessao propria, acontece junto de outras features), C5 (iFood/Rappi).
 
 ---
 
@@ -396,6 +399,22 @@ onde comecar — e o suporte vira o onboarding, o que nao escala.
 
 **Pronto quando:** um restaurante novo consegue registrar a primeira venda sem
 ninguem explicar nada.
+
+**✅ Feito em 2026-08-19 (`0deb39d` backend, `8b78f26` frontend).**
+Achado real ao implementar: a evidencia acima estava desatualizada — o
+`signup` NAO entregava mais o app vazio, rodava `seedEmpresa()` sozinho
+(4 categorias/11 produtos/8 mesas ficticios), o que esvaziaria qualquer
+checklist. Resolvido primeiro: `POST /auth/register` parou de semear;
+virou `POST /empresa/seed-demo`, sob demanda — exatamente a opcao "quero
+ver com dados de exemplo" do item 4 acima, so que descoberta como
+pre-requisito, nao acrescimo. Checklist final: categoria, produto **com
+custo preenchido** (nao so "cadastrar produto" — o seed nunca preenche
+custo, entao mesmo rodando o seed esse item continua pendente), mesas (so
+se o modulo estiver ativo), e "registrar a primeira venda" no lugar de
+"configurar formas de pagamento" (o item original nao fazia sentido: os 4
+metodos ja nascem ligados desde o signup, nada fica pendente ali). Cada
+item e derivado de dados reais (`GET /onboarding/status`), nunca uma flag
+gravada. Ver HANDOFF.md para o design completo.
 
 ---
 

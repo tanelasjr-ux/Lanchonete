@@ -1,17 +1,23 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-19, madrugada. 🔴 **DEPLOY AUTOMATICO DO
-EASYPANEL PAROU DE DISPARAR** — 3 commits no `main` desde ~02:34 UTC
-(fix da logo, pausar-aviso completo com migration `0028`, texto da tela
-de login) ainda nao chegaram em producao. Ver §0.1, item mais urgente
-desta atualizacao. Tambem nesta retomada: Painel da Plataforma
-(assinaturas, bloqueio, aviso de atraso) — backend + frontend completos
-e testados via Playwright; pausar aviso ao cliente (cortesia sem perder
-o controle do dono); bug real achado e corrigido (logo/icones do PWA
-dando 404 em producao ha dias); novo texto da tela de login. Antes disso,
-ja no ar: comercializacao — saida da Emergent, balao de WhatsApp, tema
-claro padrao, boas-vindas no Dashboard; E2E Playwright (A4); contas a
-pagar/receber com edicao e recorrencia; rate limiting; A3. Ver §0.
+Ultima atualizacao: 2026-08-19, manha. **B2 — Onboarding guiado**
+concluido e no ar (`0deb39d` + `8b78f26`): checklist de primeiros passos
+substitui o texto de marketing no Dashboard ate a empresa se configurar;
+seed de demonstracao parou de rodar sozinho no signup, virou botao
+opcional. Achado real no processo: o signup JA NAO entregava mais o app
+vazio (rodava seed automatico havia tempo) — a premissa original do B2
+estava desatualizada. Ver §0.2.
+
+O **deploy automatico do EasyPanel que tinha parado de disparar (~20min
+de atraso) se resolveu sozinho** — Painel da Plataforma, pausar aviso,
+fix da logo/PWA e texto do login, todos confirmados no ar. Ver §0.1.
+
+Nesta mesma retomada, tambem no ar: Painel da Plataforma (assinaturas,
+bloqueio, aviso de atraso) com pausa de aviso (cortesia sem perder o
+controle do dono); bug real corrigido (logo/icones do PWA em 404 havia
+dias); novo texto da tela de login. Antes disso: comercializacao — saida
+da Emergent, balao de WhatsApp, tema claro padrao; E2E Playwright (A4);
+contas a pagar/receber; rate limiting; A3. Ver §0.
 
 ## Como usar este arquivo
 
@@ -28,45 +34,25 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 0.0 🔴 URGENTE: deploy automatico do EasyPanel parou de disparar
+## 0.0 ✅ RESOLVIDO SOZINHO: deploy automatico do EasyPanel tinha atrasado
 
-Confirmado por evidencia direta, nao suposicao: consultei
-`public.schema_migrations` em producao (via `pg` + `SUPABASE_DB_URL`,
-mesma ferramenta usada pra testar migrations) as ~03:19 UTC de
-2026-08-19 e a ultima migration aplicada continua sendo `0027_assinaturas`
-(aplicada as 02:33:56). Isso significa que **3 commits no `main` desde
-entao NAO chegaram em producao**, apesar do push ter funcionado (`git log`
-mostra os 3 no GitHub normalmente):
+Registrado enquanto acontecia, resolvido antes do dono precisar mexer em
+nada — mantido aqui como referencia caso se repita.
 
-```
-b7bbe01 fix(deploy): copia public/ para a imagem — logo e icones do PWA davam 404
-3dbaac9 feat(plataforma): pausar aviso de atraso ao cliente (cortesia) — backend
-f91c467 feat(plataforma): frontend da pausa de aviso + novo texto da tela de login
-```
-
-Em deploys anteriores nesta mesma sessao, uma migration nova aparecia em
-producao **2-3 minutos** depois do push (confirmado cronometrando o
-deploy do Painel da Plataforma, §0.1). Desta vez, mais de 20 minutos
-sem nenhum sinal de novo build.
-
-**O que eu NAO consigo fazer daqui:** nao tenho acesso ao dashboard do
-EasyPanel (sem credenciais/API configurada nesta sessao), entao nao
-consigo ver logs de build, fila de deploy, nem disparar um redeploy
-manual. So consigo observar o efeito de fora (curl em producao,
-`schema_migrations` via `pg`).
-
-**Ao retomar, primeiro passo:** conferir se o deploy ja chegou —
-
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://restaurante-app.ilmdzk.easypanel.host/etna-logo.png
-# 200 = fix da logo chegou. 404 = ainda nao (ou o proprio bug ainda nao corrigido).
-```
-
-ou consultar `schema_migrations` (ver §5.1 pra credenciais) e checar se
-`0028_assinatura_pausa_aviso` ja aparece. Se depois de checar o dashboard
-do EasyPanel o dono identificar a causa (build travado, webhook do GitHub
-desconfigurado, etc.), registrar aqui o que resolveu para nao repetir a
-investigacao numa proxima vez.
+Consultando `public.schema_migrations` em producao (via `pg` +
+`SUPABASE_DB_URL`) as ~03:19 UTC de 2026-08-19, a ultima migration
+aplicada ainda era `0027_assinaturas` (de 02:33:56) — 3 commits no
+`main` (fix da logo, pausar-aviso com migration `0028`, texto do login)
+ja estavam no GitHub havia mais de 20 minutos sem sinal de novo build,
+bem mais lento que o normal desta sessao (2-3 min). Confirmado as
+~10:10 UTC (quase 8h depois) que o deploy finalmente rodou: os 5
+arquivos estaticos voltaram a 200 e `0028_assinatura_pausa_aviso`
+apareceu em `schema_migrations`. Causa raiz nao identificada — pode ter
+sido fila do EasyPanel, cache de build, ou algo do lado deles. Se
+acontecer de novo, o metodo de diagnostico que funcionou foi exatamente
+este: `curl` num arquivo estatico que so existe no fix mais recente +
+consultar `schema_migrations` direto no banco (nenhum dos dois exige
+acesso ao dashboard do EasyPanel, que esta fora do alcance desta sessao).
 
 ## 0.1 ✅ Painel da Plataforma — completo, testado e enviado
 
@@ -193,7 +179,7 @@ empresa real (`Tanelas FooD`, papel `OWNER`). Assim que o login normal
 funcionar, o item "Painel ETNA" aparece na navegacao — nao precisa de
 nenhum passo a mais.
 
-## 0.1.1 Pausar aviso ao cliente (cortesia) — completo, testado, PUSH FEITO mas nao deployado (ver §0.0)
+## 0.1.1 Pausar aviso ao cliente (cortesia) — completo, testado e no ar
 
 Pedido do dono, no mesmo dia: *"preciso ter a possibilidade de pausar o
 aviso informativo de pagamento, caso eu queira dar um mes de cortesia"*.
@@ -224,7 +210,7 @@ estado "pausa ativa/inativa" pra alguem esquecer de desligar.
   cliente mesmo com atraso real; painel do dono continua "atrasada";
   remover a pausa traz o aviso de volta na hora.
 - Commits: `3dbaac9` (backend) + `f91c467` (frontend, ver §0.1.3) —
-  **enviados ao GitHub, aguardando o deploy destravar (§0.0)**.
+  **enviados, deployados e confirmados em producao**.
 
 ## 0.1.2 Bug real corrigido: logo e icones do PWA davam 404 em producao
 
@@ -263,6 +249,66 @@ overline + headline + subtexto + tags de modulo + 3 beneficios com
 emoji (🍽️⚡📱), no painel escuro `hidden lg:flex` de
 `app/page.js` (`AuthScreen`). Verificado visualmente via Playwright em
 1440×900 — cabe sem overflow. Commit `f91c467`.
+
+## 0.1.4 Onboarding guiado (B2) — completo, testado e no ar
+
+Pedido do dono: qual proximo item do backlog tecnico atacar depois do
+Painel da Plataforma. Escolhido entre B2 (onboarding), D1 (extrair regra
+de negocio do route.js) e C4 (RLS realmente ativa) — os outros dois
+foram descartados por razao concreta: D1 o proprio backlog diz que "nao
+justifica sessao propria"; C4 depende de C3 (Supabase Auth), que ainda
+nao foi feito.
+
+**Achado real que mudou o design:** a evidencia original do item B2 no
+`PROFISSIONALIZACAO.md` dizia "o signup entrega o app vazio" — falso.
+`seedEmpresa()` ja rodava automaticamente em TODO `POST /auth/register`
+havia tempo, entao qualquer checklist de "cadastre sua primeira
+categoria" apareceria pronto sem o dono ter feito nada. Resolvido:
+`POST /auth/register` parou de semear; virou `POST /empresa/seed-demo`,
+sob demanda — a propria opcao "quero ver com dados de exemplo" que o
+backlog ja pedia, so que descoberta como pre-requisito, nao acrescimo
+opcional.
+
+**Checklist final — 4 itens, cada um DERIVADO de dados reais**
+(`GET /onboarding/status`, nunca uma flag "concluido" gravada em algum
+lugar — mesma disciplina de status derivado do resto do sistema):
+1. Cadastrar categoria
+2. Cadastrar produto **com custo preenchido** (nao so "um produto
+   qualquer" — o seed de demonstracao nunca preenche custo, de proposito,
+   entao mesmo rodando o seed esse item continua pendente ate o dono
+   preencher de verdade)
+3. Configurar mesas (item omitido inteiro se o modulo `mesas` estiver
+   desligado — `temModulo(empresa,'mesas')`, mesmo padrao de sempre)
+4. Registrar a primeira venda — trocou "configurar formas de pagamento"
+   do backlog original (nao fazia sentido: os 4 metodos ja nascem
+   ligados no signup, nada fica pendente ali) pelo proprio criterio de
+   sucesso que o `PROFISSIONALIZACAO.md` define para o B2.
+
+**Onde aparece:** `OnboardingChecklist` substitui o `DashboardHero` de
+marketing no topo do Dashboard enquanto `completo: false` — quem acabou
+de se cadastrar precisa de guia, nao de pitch de venda. Cada item tem
+botao "Ir" que navega direto pra tela certa (`destino` vem do backend).
+Botao "Ver com dados de exemplo" chama o seed sob demanda e recarrega a
+pagina inteira (mais simples que invalidar cada pedaco de estado
+espalhado pelos componentes).
+
+**Blast radius real no processo de implementar:** parar o seed
+automatico quebrou a suposicao de 6 arquivos de teste legados
+(`backend_test.py`, `_v2`, `_v3`, `_caixa`, `_custo`, `_kds`) que sempre
+assumiram dados de demonstracao prontos logo apos o registro. Corrigido
+chamando `POST /empresa/seed-demo` explicitamente no setup de cada um —
+restaura o mesmo estado inicial que sempre tiveram, sem mudar o que cada
+teste verifica. Achado por regressao real (nao suposicao): rodei a suite
+completa DEPOIS de tirar o seed automatico e vi exatamente quais suites
+quebravam.
+
+10 testes novos (`tests/backend_test_onboarding.py`) + regressao completa
+17/18 verde (rate_limit e a excecao sempre esperada). Verificado via
+Playwright: empresa nova nasce com Dashboard zerado e o checklist
+visivel; "Ir" no item categoria navega pro Cardapio; "Ver com dados de
+exemplo" povoa a empresa e fecha 3 dos 4 itens (produto com custo
+continua pendente, como projetado); rodar o seed duas vezes da 409.
+Commits: `0deb39d` (backend) + `8b78f26` (frontend).
 
 ## 0.2 Pendente do pedido de comercializacao (5 itens, 4 no ar)
 
@@ -1151,10 +1197,11 @@ imagem apesar do padrao geral de ignorar).
 | Testes E2E Playwright (A4) | **Completo e no ar**, CI rodando contra Mongo efemero |
 | Comercializacao — logo ETNA, saida da Emergent, WhatsApp, tema claro, boas-vindas | **Completo e no ar** |
 | Painel da Plataforma (backend + frontend — assinaturas, bloqueio, admin por e-mail) | **Completo e no ar** (`a8ad4aa` + `2eebf01`), verificado via Playwright — ver §0.1 |
-| Pausar aviso ao cliente (cortesia) | **Completo, testado, enviado ao GitHub — deploy travado (§0.0)** — ver §0.1.1 |
-| Novo texto da tela de login | **Completo, enviado ao GitHub — deploy travado (§0.0)** — ver §0.1.3 |
-| Fix: logo/icones do PWA 404 em producao | **Corrigido no codigo, enviado ao GitHub — deploy travado (§0.0)** — ver §0.1.2 |
+| Pausar aviso ao cliente (cortesia) | **Completo e no ar** — ver §0.1.1 |
+| Novo texto da tela de login | **Completo e no ar** — ver §0.1.3 |
+| Fix: logo/icones do PWA 404 em producao | **Completo e no ar** — ver §0.1.2 |
 | Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
+| Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -1353,15 +1400,16 @@ navegador de verdade — nao suposicao:
       GitHub**. Ver §0.1.1.
 - [x] ~~Novo texto da tela de login~~ — **DONE, commitado (`f91c467`) e
       enviado ao GitHub**. Ver §0.1.3.
-- [x] ~~Fix: logo/icones do PWA 404 em producao~~ — **DONE no codigo,
-      commitado (`b7bbe01`) e enviado ao GitHub**. Ver §0.1.2.
+- [x] ~~Fix: logo/icones do PWA 404 em producao~~ — **DONE, commitado
+      (`b7bbe01`) e confirmado no ar**. Ver §0.1.2.
+- [x] ~~Todos os itens acima confirmados em producao~~ — o deploy que
+      tinha atrasado se resolveu sozinho. Ver §0.0.
 
-**Produto — bloqueado ate o deploy automatico voltar a funcionar (§0.0):**
+**Tecnico — pedido do dono, concluido nesta sessao:**
 
-- [ ] Confirmar em producao que os itens acima (backend/frontend de
-      pausar aviso, fix da logo/icones, texto novo do login) chegaram —
-      nenhum deles esta no ar ainda, apesar de estarem prontos e no
-      GitHub. Ver §0.0.
+- [x] ~~B2 — Onboarding guiado (checklist + seed sob demanda)~~ —
+      **DONE, testado via Playwright, commitado (`0deb39d` + `8b78f26`)
+      e no ar**. Ver §0.1.4.
 
 **Produto — backlog conhecido, sem pedido explicito ainda:**
 
@@ -1394,6 +1442,9 @@ navegador de verdade — nao suposicao:
 # 12. Commits recentes (sessao atual + anteriores)
 
 ```
+8b78f26 feat(onboarding): frontend do checklist guiado (B2)
+0deb39d feat(onboarding): checklist guiado + seed de demo sob demanda (B2) — backend
+2edcb06 docs: handoff — pausar aviso, fix da logo/PWA, texto do login; alerta de deploy travado
 f91c467 feat(plataforma): frontend da pausa de aviso + novo texto da tela de login
 3dbaac9 feat(plataforma): pausar aviso de atraso ao cliente (cortesia) — backend
 b7bbe01 fix(deploy): copia public/ para a imagem — logo e icones do PWA davam 404 em producao
@@ -1521,8 +1572,12 @@ disponivel via `git log`.)
   existe endpoint de auto-promocao de proposito, entao o teste do caminho
   feliz precisa desse atalho so-local, mesmo espirito de
   `RATE_LIMIT_DISABLED`.
-- `test_assinatura_calculo.mjs` — 14 testes puros de `lib/assinatura.js`,
-  mesmo padrao de `test_custo_calculo.mjs`/`test_caixa_calculo.mjs`.
+- `test_assinatura_calculo.mjs` — 18 testes puros de `lib/assinatura.js`
+  (14 do status/aviso + 4 da pausa), mesmo padrao de
+  `test_custo_calculo.mjs`/`test_caixa_calculo.mjs`.
+- `tests/backend_test_onboarding.py` — B2 (onboarding), 10 testes:
+  empresa nasce vazia, cada item do checklist fecha com o dado certo,
+  seed sob demanda (cria, bloqueia rodar 2x, so OWNER/ADMIN).
 - `e2e/` (Playwright) — `login`, `pedido`, `comanda`, `caixa`, `kds`.
   `playwright.config.js`, `.github/workflows/e2e.yml` (CI contra Mongo
   efemero, nunca Supabase).
