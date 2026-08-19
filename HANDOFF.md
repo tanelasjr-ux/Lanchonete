@@ -1,12 +1,17 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-18, noite (Painel da Plataforma / assinaturas —
-backend + frontend completos, testados ponta a ponta via Playwright,
-**commitados e enviados** — `a8ad4aa` + `2eebf01`, ver §0.1. Antes disso,
-ja no ar: comercializacao — logo ETNA, saida da Emergent, balao de
-WhatsApp, tema claro padrao, boas-vindas no Dashboard; E2E Playwright
-(A4); contas a pagar/receber com edicao e recorrencia; rate limiting; A3.
-Ver §0.)
+Ultima atualizacao: 2026-08-19, madrugada. 🔴 **DEPLOY AUTOMATICO DO
+EASYPANEL PAROU DE DISPARAR** — 3 commits no `main` desde ~02:34 UTC
+(fix da logo, pausar-aviso completo com migration `0028`, texto da tela
+de login) ainda nao chegaram em producao. Ver §0.1, item mais urgente
+desta atualizacao. Tambem nesta retomada: Painel da Plataforma
+(assinaturas, bloqueio, aviso de atraso) — backend + frontend completos
+e testados via Playwright; pausar aviso ao cliente (cortesia sem perder
+o controle do dono); bug real achado e corrigido (logo/icones do PWA
+dando 404 em producao ha dias); novo texto da tela de login. Antes disso,
+ja no ar: comercializacao — saida da Emergent, balao de WhatsApp, tema
+claro padrao, boas-vindas no Dashboard; E2E Playwright (A4); contas a
+pagar/receber com edicao e recorrencia; rate limiting; A3. Ver §0.
 
 ## Como usar este arquivo
 
@@ -22,6 +27,46 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 ---
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
+
+## 0.0 🔴 URGENTE: deploy automatico do EasyPanel parou de disparar
+
+Confirmado por evidencia direta, nao suposicao: consultei
+`public.schema_migrations` em producao (via `pg` + `SUPABASE_DB_URL`,
+mesma ferramenta usada pra testar migrations) as ~03:19 UTC de
+2026-08-19 e a ultima migration aplicada continua sendo `0027_assinaturas`
+(aplicada as 02:33:56). Isso significa que **3 commits no `main` desde
+entao NAO chegaram em producao**, apesar do push ter funcionado (`git log`
+mostra os 3 no GitHub normalmente):
+
+```
+b7bbe01 fix(deploy): copia public/ para a imagem — logo e icones do PWA davam 404
+3dbaac9 feat(plataforma): pausar aviso de atraso ao cliente (cortesia) — backend
+f91c467 feat(plataforma): frontend da pausa de aviso + novo texto da tela de login
+```
+
+Em deploys anteriores nesta mesma sessao, uma migration nova aparecia em
+producao **2-3 minutos** depois do push (confirmado cronometrando o
+deploy do Painel da Plataforma, §0.1). Desta vez, mais de 20 minutos
+sem nenhum sinal de novo build.
+
+**O que eu NAO consigo fazer daqui:** nao tenho acesso ao dashboard do
+EasyPanel (sem credenciais/API configurada nesta sessao), entao nao
+consigo ver logs de build, fila de deploy, nem disparar um redeploy
+manual. So consigo observar o efeito de fora (curl em producao,
+`schema_migrations` via `pg`).
+
+**Ao retomar, primeiro passo:** conferir se o deploy ja chegou —
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://restaurante-app.ilmdzk.easypanel.host/etna-logo.png
+# 200 = fix da logo chegou. 404 = ainda nao (ou o proprio bug ainda nao corrigido).
+```
+
+ou consultar `schema_migrations` (ver §5.1 pra credenciais) e checar se
+`0028_assinatura_pausa_aviso` ja aparece. Se depois de checar o dashboard
+do EasyPanel o dono identificar a causa (build travado, webhook do GitHub
+desconfigurado, etc.), registrar aqui o que resolveu para nao repetir a
+investigacao numa proxima vez.
 
 ## 0.1 ✅ Painel da Plataforma — completo, testado e enviado
 
@@ -132,18 +177,92 @@ novos + 7 modificados, NADA commitado ainda:**
   migration `0027` em producao.
 
 **O que falta:**
-1. Promover o e-mail do proprio dono em `plataforma_admins` **em
-   producao**, depois que o deploy concluir (nenhum endpoint faz isso —
-   deliberado, ver decisao de seguranca acima — precisa de um insert
-   manual, uma vez, via `psql`/painel do Supabase).
-2. Conferir no EasyPanel que o deploy automatico rodou limpo e a migration
-   `0027` foi aplicada (log do container mostra `migrate.mjs` no boot).
-3. Opcional, sem pedido explicito: paginacao na tabela do Painel da
+1. Ver §0.0 — nada mais avanca em producao ate o deploy automatico voltar
+   a funcionar.
+2. Opcional, sem pedido explicito: paginacao na tabela do Painel da
    Plataforma — hoje lista TODAS as empresas sem paginar; inofensivo com 1
    cliente real em producao hoje, mas o dev local acumulou 2000+ empresas
    de teste ao longo das sessoes e a tela renderizou todas sem quebrar
    (so confirma que funciona, nao que escale bem visualmente com volume
    grande).
+
+**✅ JA FEITO — e-mail do dono promovido em producao.** Confirmado direto
+no banco (`select * from plataforma_admins`): `tanelas.jr@gmail.com` ja
+esta la, `ativo: true`, e ja existe um `usuario` com esse e-mail na
+empresa real (`Tanelas FooD`, papel `OWNER`). Assim que o login normal
+funcionar, o item "Painel ETNA" aparece na navegacao — nao precisa de
+nenhum passo a mais.
+
+## 0.1.1 Pausar aviso ao cliente (cortesia) — completo, testado, PUSH FEITO mas nao deployado (ver §0.0)
+
+Pedido do dono, no mesmo dia: *"preciso ter a possibilidade de pausar o
+aviso informativo de pagamento, caso eu queira dar um mes de cortesia"*.
+
+**Decisao de design, escolhida explicitamente pelo dono entre 2 opcoes
+que apresentei** ("conceder cortesia" vs. "pausar aviso"): a pausa **NAO
+mexe no vencimento real**. A assinatura continua contando como
+"atrasada" no Painel da Plataforma (entra em "valor em atraso") — o dono
+nunca perde o proprio controle sobre quem deve, mesmo perdoando o aviso
+que o cliente ve. Reaproveita 100% da maquina de status ja existente:
+`statusEfetivo()` fica intocado de proposito, so `avisoParaCliente()`
+ganha um curto-circuito (`aviso_pausado_ate`, `lib/assinatura.js`).
+Passada a data, o aviso volta sozinho no dia seguinte — sem robo, sem
+estado "pausa ativa/inativa" pra alguem esquecer de desligar.
+
+- migration `0028`: `assinaturas.aviso_pausado_ate` (date, nullable).
+  Testada com rollback contra producao.
+- `PUT /plataforma/assinaturas/:id/pausar-aviso` — `{ate: "YYYY-MM-DD"}`
+  pausa, `{ate: null}` cancela antes do prazo.
+- Frontend: botao "Pausar aviso" na tabela do Painel da Plataforma
+  (so quando ha assinatura), dialogo com aviso explicito de que o
+  vencimento nao muda, e indicador "pausado até DD/MM" ao lado do
+  badge "atrasada" — o dono sempre ve os dois fatos juntos.
+- 4 testes unitarios novos (`test_assinatura_calculo.mjs`, 18 no total) +
+  3 de integracao (`backend_test_plataforma.py`, 14 no total). Regressao
+  completa 16/17 verde (rate_limit e a excecao sempre esperada).
+  Verificado ponta a ponta via Playwright: pausar esconde o aviso do
+  cliente mesmo com atraso real; painel do dono continua "atrasada";
+  remover a pausa traz o aviso de volta na hora.
+- Commits: `3dbaac9` (backend) + `f91c467` (frontend, ver §0.1.3) —
+  **enviados ao GitHub, aguardando o deploy destravar (§0.0)**.
+
+## 0.1.2 Bug real corrigido: logo e icones do PWA davam 404 em producao
+
+Achado direto (nao teoria): o dono reportou a logo quebrada na tela de
+login; `curl` contra producao confirmou `404` em `/etna-logo.png`,
+`/etna-simbolo.png`, `/icon-192.png`, `/icon-512.png` e
+`/apple-touch-icon.png`. Causa raiz: `next.config.js` usa
+`output: 'standalone'`, e essa saida **NAO inclui `public/` automaticamente**
+— precisa de um `COPY` explicito no Dockerfile (mesmo motivo pelo qual
+`.next/static` ja tinha o seu proprio `COPY` uma linha acima). O
+Dockerfile nunca ganhou essa linha porque, quando foi escrito, o projeto
+de fato nao tinha pasta `public/` — um comentario dizia isso
+explicitamente, e ninguem voltou pra atualizar o Dockerfile quando a
+pasta passou a existir (icones do PWA, depois a logo ETNA). Effeito real:
+esses 5 arquivos estao quebrados em producao ha DIAS, sem que ninguem
+percebesse ate esbarrar visualmente num `<img>` quebrado.
+
+Corrigido com `COPY --from=builder --chown=nextjs:nodejs /app/public
+./public` (commit `b7bbe01`). **Nao foi possivel validar com um build
+Docker local** — o Avast intercepta TLS dentro do container nesta
+maquina (mesma classe de interferencia ja documentada para
+`X-Forwarded-For`, ver §0 sobre rate limiting), entao `yarn install` e
+`apk add` falham com "unable to verify the first certificate"/"TLS:
+server certificate not trusted" mesmo com `--network=host`. O fix segue
+o padrao oficial do Next.js e sera confirmado direto em producao — ver
+§0.0, ainda nao deployado.
+
+## 0.1.3 Novo texto da tela de login
+
+Pedido do dono, texto de marketing proprio para a tela de login (nao
+confundir com o `DashboardHero`, que fica DEPOIS do login — sao textos
+diferentes, em telas diferentes, ambos pedidos pelo dono em momentos
+distintos desta sessao). Substituiu o texto generico original
+("A plataforma definitiva para gestão de restaurantes"). Estrutura:
+overline + headline + subtexto + tags de modulo + 3 beneficios com
+emoji (🍽️⚡📱), no painel escuro `hidden lg:flex` de
+`app/page.js` (`AuthScreen`). Verificado visualmente via Playwright em
+1440×900 — cabe sem overflow. Commit `f91c467`.
 
 ## 0.2 Pendente do pedido de comercializacao (5 itens, 4 no ar)
 
@@ -838,7 +957,7 @@ commit — ver §0.1) NAO sao `contas`.** `contas` e o que o RESTAURANTE deve
 (fornecedor, aluguel); `assinaturas` e o que o restaurante deve PARA A
 ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
 
-## 4.3 Migrations (27 commitadas — `0027` aplica sozinha no proximo deploy — via `scripts/migrate.mjs` desde 2026-08-18)
+## 4.3 Migrations (28 commitadas — `0027`/`0028` aplicam sozinhas quando o deploy destravar, ver §0.0 — via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
 0001_init.sql               0009_repository_support_functions.sql
@@ -850,12 +969,13 @@ ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
 0007_webhook_events.sql      0015_pedidos_desconto_acrescimo.sql
 0008_conversas_mensagens.sql
 
-0016_kds.sql                 0022_despesa_natureza.sql
-0017_delivery.sql            0023_feature_flags_retrocompat.sql
-0018_caixa.sql                0024_pedido_tipo_para_levar.sql
-0019_estoque.sql              0025_contas.sql
-0020_custo.sql                0026_contas_recorrencia.sql
-0021_cardapio_imagem.sql      0027_assinaturas.sql
+0016_kds.sql                 0023_feature_flags_retrocompat.sql
+0017_delivery.sql            0024_pedido_tipo_para_levar.sql
+0018_caixa.sql                0025_contas.sql
+0019_estoque.sql              0026_contas_recorrencia.sql
+0020_custo.sql                0027_assinaturas.sql
+0021_cardapio_imagem.sql      0028_assinatura_pausa_aviso.sql
+0022_despesa_natureza.sql
 ```
 
 `0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
@@ -1031,6 +1151,9 @@ imagem apesar do padrao geral de ignorar).
 | Testes E2E Playwright (A4) | **Completo e no ar**, CI rodando contra Mongo efemero |
 | Comercializacao — logo ETNA, saida da Emergent, WhatsApp, tema claro, boas-vindas | **Completo e no ar** |
 | Painel da Plataforma (backend + frontend — assinaturas, bloqueio, admin por e-mail) | **Completo e no ar** (`a8ad4aa` + `2eebf01`), verificado via Playwright — ver §0.1 |
+| Pausar aviso ao cliente (cortesia) | **Completo, testado, enviado ao GitHub — deploy travado (§0.0)** — ver §0.1.1 |
+| Novo texto da tela de login | **Completo, enviado ao GitHub — deploy travado (§0.0)** — ver §0.1.3 |
+| Fix: logo/icones do PWA 404 em producao | **Corrigido no codigo, enviado ao GitHub — deploy travado (§0.0)** — ver §0.1.2 |
 | Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
@@ -1096,6 +1219,11 @@ servidor, `rm -rf .next`, subir de novo.
 11. **Identidade de admin da plataforma vive numa tabela separada por
     e-mail (`plataforma_admins`), nunca numa flag em `usuarios`.** Sem
     endpoint de auto-promocao, de proposito.
+12. **Pausar o aviso ao cliente (cortesia) nunca mexe no vencimento real
+    nem no `statusEfetivo`.** Decisao explicita do dono, escolhida entre
+    duas opcoes apresentadas: a assinatura continua "atrasada" no Painel
+    da Plataforma mesmo com o aviso pausado — o dono nao pode perder o
+    proprio controle sobre quem deve so por conceder uma cortesia.
 9. **Migrations sao imutaveis uma vez aplicadas.** Mudanca de schema sempre
    em arquivo novo, nunca editando um antigo.
 
@@ -1184,6 +1312,25 @@ navegador de verdade — nao suposicao:
     confundiu um resultado de teste real nesta sessao. Evitar editar
     dependencias transitivas de `route.js` enquanto uma suite esta em voo;
     se acontecer, rodar a suite de novo antes de confiar no resultado.
+26. **`output: 'standalone'` do Next.js NAO inclui `public/` sozinho —
+    precisa de `COPY` explicito no Dockerfile**, sempre, mesmo que
+    `public/` nao existisse quando o Dockerfile foi escrito originalmente.
+    Ficou faltando desde que a pasta passou a existir (icones do PWA,
+    depois a logo ETNA): 5 arquivos deram 404 em producao por dias, sem
+    ninguem perceber, ate um `<img>` quebrado aparecer na tela. Corrigido
+    em `b7bbe01` — ver §0.1.2. Regra geral: toda vez que uma pasta nova
+    de assets estatico for criada, conferir se o Dockerfile de producao
+    precisa de um `COPY` novo, nao so assumir que "ja funciona".
+27. **Build Docker local nesta maquina falha por causa do Avast** —
+    mesma classe de interferencia de rede ja documentada para
+    `X-Forwarded-For` no rate limiting (§0), agora tambem quebrando TLS
+    de `yarn install` e `apk add` DENTRO do container
+    (`unable to verify the first certificate` / `TLS: server certificate
+    not trusted`), mesmo com `docker build --network=host`. Mudancas no
+    Dockerfile nesta maquina nao podem ser validadas com `docker build`
+    local — a validacao real acontece no build do EasyPanel, apos o
+    deploy (ver §0.0 para o problema paralelo do deploy nao estar
+    disparando no momento em que isto foi escrito).
 
 ---
 
@@ -1199,12 +1346,22 @@ navegador de verdade — nao suposicao:
 - [x] ~~Painel da Plataforma (backend + frontend) + aviso de atraso ao
       cliente~~ — **DONE, verificado via Playwright, commitado
       (`a8ad4aa` + `2eebf01`) e enviado ao GitHub**. Ver §0.1.
+- [x] ~~E-mail do dono promovido em `plataforma_admins` em producao~~ —
+      **DONE**, confirmado direto no banco. Ver §0.1.
+- [x] ~~Pausar aviso ao cliente (cortesia)~~ — **DONE, testado via
+      Playwright, commitado (`3dbaac9` + `f91c467`) e enviado ao
+      GitHub**. Ver §0.1.1.
+- [x] ~~Novo texto da tela de login~~ — **DONE, commitado (`f91c467`) e
+      enviado ao GitHub**. Ver §0.1.3.
+- [x] ~~Fix: logo/icones do PWA 404 em producao~~ — **DONE no codigo,
+      commitado (`b7bbe01`) e enviado ao GitHub**. Ver §0.1.2.
 
-**Produto — falta so isto para fechar o item 4 do pedido do dono:**
+**Produto — bloqueado ate o deploy automatico voltar a funcionar (§0.0):**
 
-- [ ] Promover o e-mail do dono em `plataforma_admins` EM PRODUCAO, depois
-      que o deploy automatico concluir (insert manual, nenhum endpoint faz
-      isso de proposito — ver §0.1).
+- [ ] Confirmar em producao que os itens acima (backend/frontend de
+      pausar aviso, fix da logo/icones, texto novo do login) chegaram —
+      nenhum deles esta no ar ainda, apesar de estarem prontos e no
+      GitHub. Ver §0.0.
 
 **Produto — backlog conhecido, sem pedido explicito ainda:**
 
@@ -1237,6 +1394,10 @@ navegador de verdade — nao suposicao:
 # 12. Commits recentes (sessao atual + anteriores)
 
 ```
+f91c467 feat(plataforma): frontend da pausa de aviso + novo texto da tela de login
+3dbaac9 feat(plataforma): pausar aviso de atraso ao cliente (cortesia) — backend
+b7bbe01 fix(deploy): copia public/ para a imagem — logo e icones do PWA davam 404 em producao
+798419a docs: handoff — Painel da Plataforma completo (backend + frontend), verificado via Playwright
 2eebf01 feat(plataforma): frontend do Painel da Plataforma e aviso ao cliente
 a8ad4aa feat(plataforma): controle total do dono — assinaturas, bloqueio manual e aviso humanizado de atraso
 195bd7b feat(ux): tema claro como padrao + boas-vindas no Dashboard
@@ -1330,7 +1491,7 @@ disponivel via `git log`.)
 - `components/cupom.jsx` — renderiza e imprime o cupom (`window.print()`).
 
 **Banco**
-- `supabase/migrations/0001`…`0027` — lista completa e ordem no §4.3.
+- `supabase/migrations/0001`…`0028` — lista completa e ordem no §4.3.
 - `supabase/prod-ca-2021.crt` — CA raiz do Supabase, para TLS do migrator.
 
 **Deploy**
