@@ -300,11 +300,32 @@ function AuthScreen({ onAuth }) {
             `bg-background` (que vira branco no tema claro). */}
         <img src="/etna-logo.png" alt="ETNA — Tecnologia, Software e Soluções Digitais" className="relative h-20 w-auto self-start" />
         <div className="relative space-y-6">
-          <h1 className="text-4xl font-bold leading-tight">A plataforma definitiva para gestão de restaurantes.</h1>
-          <p className="text-white/80 text-lg">Cardápio, pedidos, clientes, financeiro e integrações WhatsApp — tudo em uma arquitetura multi-tenant pronta para escalar.</p>
-          <div className="flex gap-6 pt-4">
-            {[['Multi-tenant', 'Isolamento por empresa'], ['Tempo real', 'Pedidos & dashboard'], ['Integrado', 'WhatsApp & n8n']].map(([t, s]) => (
-              <div key={t}><div className="font-semibold">{t}</div><div className="text-sm text-white/70">{s}</div></div>
+          <div className="space-y-2">
+            <div className="text-primary font-semibold text-sm tracking-wide uppercase">Sua empresa no controle.</div>
+            <h1 className="text-4xl font-bold leading-tight">Sua operação mais simples. Seu negócio mais eficiente.</h1>
+          </div>
+          <p className="text-white/80 text-lg">Do pedido ao pagamento, tenha tudo o que precisa para administrar seu negócio em um único sistema.</p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-white/70">
+            {['Mesas', 'Balcão', 'Delivery', 'Cardápio', 'Cozinha', 'Clientes', 'Financeiro'].map((m, i) => (
+              <span key={m} className="flex items-center gap-2">
+                {i > 0 && <span className="text-white/30">•</span>}
+                {m}
+              </span>
+            ))}
+          </div>
+          <div className="space-y-4 pt-2">
+            {[
+              ['🍽️', 'Tudo conectado, em um só lugar!', 'Pedidos, mesas, cozinha, delivery e financeiro trabalhando juntos.'],
+              ['⚡', 'Mais agilidade no atendimento', 'Sua equipe sabe o que precisa fazer e acompanha cada pedido do início ao fim.'],
+              ['📱', 'Delivery conectado', 'Receba e organize seus pedidos de delivery automaticamente, sem precisar ficar alternando entre aplicativos.'],
+            ].map(([emoji, titulo, texto]) => (
+              <div key={titulo} className="flex gap-3">
+                <span className="text-xl leading-none">{emoji}</span>
+                <div>
+                  <div className="font-semibold text-sm">{titulo}</div>
+                  <div className="text-sm text-white/70">{texto}</div>
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -4187,10 +4208,62 @@ function PagamentoDialog({ empresa, onClose, onSaved }) {
   )
 }
 
+/**
+ * Pausa o aviso ao cliente (cortesia) sem tocar no vencimento real —
+ * pedido do dono (2026-08-19): "preciso ter a possibilidade de pausar o
+ * aviso... caso eu queira dar um mes de cortesia". A assinatura continua
+ * contando como atrasada NESTE painel (o dono nunca perde o controle
+ * sobre quem deve); so o banner do lado do cliente fica escondido.
+ */
+function PausarAvisoDialog({ empresa, onClose, onSaved }) {
+  const pausaAtual = empresa.assinatura?.aviso_pausado_ate || ''
+  const [ate, setAte] = useState(pausaAtual)
+  const [salvando, setSalvando] = useState(false)
+
+  const salvar = async (novoValor) => {
+    setSalvando(true)
+    try {
+      await api(`/plataforma/assinaturas/${empresa.assinatura.id}/pausar-aviso`, { method: 'PUT', body: { ate: novoValor } })
+      toast.success(novoValor ? 'Aviso pausado até a data escolhida' : 'Pausa removida — o aviso volta a valer')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSalvando(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Pausar aviso — {empresa.nome}</DialogTitle>
+          <DialogDescription>
+            O vencimento real não muda — aqui no seu painel a assinatura continua contando como atrasada. Isto só esconde o aviso que o cliente vê, até a data escolhida.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label>Pausar avisos até</Label>
+            <Input type="date" value={ate || ''} onChange={(e) => setAte(e.target.value)} />
+          </div>
+          {pausaAtual && (
+            <div className="text-xs text-muted-foreground">
+              Pausa registrada até {new Date(`${pausaAtual}T00:00:00`).toLocaleDateString('pt-BR')}.
+            </div>
+          )}
+        </div>
+        <DialogFooter className="gap-2 sm:gap-0">
+          {pausaAtual && <Button variant="outline" onClick={() => salvar(null)} disabled={salvando}>Remover pausa</Button>}
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => salvar(ate)} disabled={salvando || !ate}>{salvando ? 'Salvando…' : 'Pausar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function PainelPlataforma() {
   const [dados, setDados] = useState(null)
   const [editando, setEditando] = useState(null)
   const [pagando, setPagando] = useState(null)
+  const [pausando, setPausando] = useState(null)
   const [bloqueando, setBloqueando] = useState(null)
 
   const load = useCallback(async () => {
@@ -4250,11 +4323,21 @@ function PainelPlataforma() {
                   <TableCell className="text-sm text-muted-foreground">{linha.ultimo_acesso ? fmtDate(linha.ultimo_acesso) : 'nunca'}</TableCell>
                   <TableCell className="text-sm">{linha.assinatura ? `${linha.assinatura.plano} — ${brl(linha.assinatura.valor)}` : '—'}</TableCell>
                   <TableCell className="text-sm">{linha.assinatura ? new Date(`${linha.assinatura.proximo_vencimento}T00:00:00`).toLocaleDateString('pt-BR') : '—'}</TableCell>
-                  <TableCell>{statusBadge(linha)}</TableCell>
+                  <TableCell>
+                    {statusBadge(linha)}
+                    {/* Comparacao de string "YYYY-MM-DD" >= "YYYY-MM-DD" funciona
+                        direto, sem parsear Date — mesma disciplina de datas puras
+                        do resto do sistema. So cosmetico: quem decide de verdade
+                        se o aviso aparece e o backend (avisoParaCliente()). */}
+                    {linha.assinatura?.aviso_pausado_ate >= new Date().toISOString().slice(0, 10) && (
+                      <div className="text-xs text-muted-foreground mt-0.5">pausado até {new Date(`${linha.assinatura.aviso_pausado_ate}T00:00:00`).toLocaleDateString('pt-BR')}</div>
+                    )}
+                  </TableCell>
                   <TableCell>{linha.ativo ? <Badge variant="secondary">liberado</Badge> : <Badge className="bg-red-600 hover:bg-red-600">bloqueado</Badge>}</TableCell>
                   <TableCell className="text-right whitespace-nowrap space-x-1">
                     <Button size="sm" variant="outline" onClick={() => setEditando(linha)}>{linha.assinatura ? 'Editar' : 'Configurar'}</Button>
                     {linha.assinatura && <Button size="sm" variant="outline" onClick={() => setPagando(linha)}>Pagamento</Button>}
+                    {linha.assinatura && <Button size="sm" variant="outline" onClick={() => setPausando(linha)}>Pausar aviso</Button>}
                     <Button size="sm" variant={linha.ativo ? 'destructive' : 'default'} disabled={bloqueando === linha.empresa_id} onClick={() => alternarBloqueio(linha)}>
                       {linha.ativo ? 'Bloquear' : 'Desbloquear'}
                     </Button>
@@ -4268,6 +4351,7 @@ function PainelPlataforma() {
 
       {editando && <AssinaturaDialog empresa={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); load() }} />}
       {pagando && <PagamentoDialog empresa={pagando} onClose={() => setPagando(null)} onSaved={() => { setPagando(null); load() }} />}
+      {pausando && <PausarAvisoDialog empresa={pausando} onClose={() => setPausando(null)} onSaved={() => { setPausando(null); load() }} />}
     </div>
   )
 }
