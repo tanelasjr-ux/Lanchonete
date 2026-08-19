@@ -2493,7 +2493,7 @@ async function handler(request, { params }) {
         // Nunca expor credenciais sensiveis (access token / api key / segredo
         // de webhook) ao client — so sinalizar presenca via booleano.
         if (c.tipo === 'mercadopago' && c.config) {
-          c.config = { mode: c.config.mode || 'sandbox', hasAccessToken: Boolean(c.config.accessToken), hasWebhookSecret: Boolean(c.config.webhookSecret) }
+          c.config = { mode: c.config.mode || 'sandbox', hasAccessToken: Boolean(c.config.accessToken), hasWebhookSecret: Boolean(c.config.webhookSecret), terminalId: c.config.terminalId || '' }
         }
         if (c.tipo === 'evolution' && c.config) {
           c.config = { serverUrl: c.config.serverUrl || '', instance: c.config.instance || 'restaurant-os', hasApiKey: Boolean(c.config.apiKey), hasWebhookSecret: Boolean(c.config.webhookSecret) }
@@ -2511,11 +2511,13 @@ async function handler(request, { params }) {
         // mantem token existente se vier vazio (permite editar outros campos sem reenviar)
         accessToken: b.accessToken !== undefined && b.accessToken !== '' ? b.accessToken : current?.config?.accessToken || '',
         webhookSecret: b.webhookSecret !== undefined && b.webhookSecret !== '' ? b.webhookSecret : current?.config?.webhookSecret || '',
+        // Maquininha Point — opcional, so quem tem PDV fisico preenche.
+        terminalId: b.terminalId !== undefined && b.terminalId !== '' ? b.terminalId : current?.config?.terminalId || '',
       }
       const status = config.accessToken ? 'configurado' : 'nao_configurado'
       await integracaoRepo.upsert(ctx.empresa_id, 'mercadopago', { config, status })
-      await audit(repos, ctx, 'update', 'integracao', 'mercadopago', { status, mode: config.mode })
-      return json({ ok: true, status, mode: config.mode, hasAccessToken: Boolean(config.accessToken) })
+      await audit(repos, ctx, 'update', 'integracao', 'mercadopago', { status, mode: config.mode, temTerminal: Boolean(config.terminalId) })
+      return json({ ok: true, status, mode: config.mode, hasAccessToken: Boolean(config.accessToken), hasTerminal: Boolean(config.terminalId) })
     }
     if (route === '/integracoes/evolution' && method === 'PUT') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
