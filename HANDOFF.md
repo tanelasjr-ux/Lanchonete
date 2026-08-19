@@ -1,23 +1,22 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-19, manha. **B2 — Onboarding guiado**
-concluido e no ar (`0deb39d` + `8b78f26`): checklist de primeiros passos
-substitui o texto de marketing no Dashboard ate a empresa se configurar;
-seed de demonstracao parou de rodar sozinho no signup, virou botao
-opcional. Achado real no processo: o signup JA NAO entregava mais o app
-vazio (rodava seed automatico havia tempo) — a premissa original do B2
-estava desatualizada. Ver §0.2.
+Ultima atualizacao: 2026-08-19, tarde. 🟡 **PDV (cobranca no cartao pela
+maquininha Mercado Pago Point) EM ANDAMENTO** — brainstorming, spec e
+plano de 11 tasks completos; execucao via subagentes com 3/11 tasks
+completas e commitadas (`ad1dfe6`), pausada aqui a pedido do dono pra
+retomar depois. **Comece por §0.0** — tem o passo a passo exato de como
+continuar, incluindo 2 achados reais (um bug de producao no fluxo de Pix,
+corrigido; uma race condition adiada de proposito pra Task 8).
 
-O **deploy automatico do EasyPanel que tinha parado de disparar (~20min
-de atraso) se resolveu sozinho** — Painel da Plataforma, pausar aviso,
-fix da logo/PWA e texto do login, todos confirmados no ar. Ver §0.1.
-
-Nesta mesma retomada, tambem no ar: Painel da Plataforma (assinaturas,
-bloqueio, aviso de atraso) com pausa de aviso (cortesia sem perder o
-controle do dono); bug real corrigido (logo/icones do PWA em 404 havia
-dias); novo texto da tela de login. Antes disso: comercializacao — saida
-da Emergent, balao de WhatsApp, tema claro padrao; E2E Playwright (A4);
-contas a pagar/receber; rate limiting; A3. Ver §0.
+Antes disso, ja concluido e no ar nesta mesma sessao: **B2 — Onboarding
+guiado** (checklist substitui o marketing no Dashboard ate a empresa se
+configurar; seed de demonstracao virou botao opcional — achado real: o
+signup ja nao entregava mais o app vazio havia tempo, a premissa original
+do B2 estava desatualizada); Painel da Plataforma completo (assinaturas,
+bloqueio, aviso de atraso, pausa de aviso/cortesia); bug real corrigido
+(logo/icones do PWA em 404 em producao); novo texto da tela de login;
+deploy do EasyPanel que tinha atrasado se resolveu sozinho (§0.0.2). Ver
+§0.1 em diante para o historico completo desta sessao.
 
 ## Como usar este arquivo
 
@@ -34,7 +33,84 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 0.0 ✅ RESOLVIDO SOZINHO: deploy automatico do EasyPanel tinha atrasado
+## 0.0 🟡 EM ANDAMENTO: PDV — cobranca no cartao pela maquininha (Mercado Pago Point)
+
+**Pausado aqui a pedido do dono (handoff) — retomar exatamente por aqui.**
+
+Depois do B2 (onboarding), o dono pediu pra planejar juntos uma integracao
+com maquininha de cartao ("PDV"). Foi um processo completo:
+brainstorming arquitetural (`superpowers:brainstorming`) → spec escrita →
+plano de implementacao (`superpowers:writing-plans`) → execucao por
+subagentes (`superpowers:subagent-driven-development`, em andamento).
+
+**Documentos, nesta ordem de leitura:**
+1. `docs/superpowers/specs/2026-08-19-pdv-maquininha-design.md` — a decisao
+   e o porque (Mercado Pago Point, nao Stone/Cielo/PagBank — ver §0.0.2)
+2. `docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md` — as 11 tasks,
+   cada uma com codigo exato
+3. `.superpowers/sdd/2026-08-19-pdv-maquininha-plan/progress.md` — **o
+   ledger de execucao** (git-ignored, so nesta maquina). Tem cada decisao
+   tomada durante a implementacao, incluindo 2 achados reais que NAO
+   estavam na spec original (ver abaixo) e uma ruling sobre uma race
+   condition adiada de proposito pra Task 8.
+
+**Estado exato ao pausar:**
+
+| Task | Status |
+|---|---|
+| 1 — contrato de dominio + migration `0029` (`pedidos.pago_em`) | ✅ completa (commits `1bc7b72..a93873f`, 1 fix round) |
+| 2 — `comandaRepo.atualizarStatusPagamentoResumo` (Mongo real, Supabase no-op) | ✅ completa (commit `5e6c890`, review limpo) |
+| 3 — `confirmarPagamento()` + corrige bug real do Pix | ✅ completa (commits `5e6c890..ad1dfe6`, 1 fix round) |
+| 4 — adapter `lib/integrations/payments/point.js` (Orders API) + testes puros | 🟡 **brief ja extraido, NENHUM agente despachado ainda** — proximo passo |
+| 5-11 | ainda nao iniciadas |
+
+**HEAD atual do projeto:** `ad1dfe6` (tudo commitado, nada pendente de push
+— cada task deste plano tem sido commitada E enviada ao GitHub direto na
+`main`, mesma disciplina do resto da sessao, sem worktree isolado —
+decisao registrada no ledger).
+
+**Para retomar:** invocar `superpowers:subagent-driven-development` de
+novo com o plano (`docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md`)
+— a skill le o ledger, ve que as Tasks 1-3 tem linha `Task N: complete`, e
+resume sozinha a partir da Task 4. Nao precisa reexplicar nada disto ao
+retomar; o ledger e a spec carregam o contexto.
+
+## 0.0.1 Dois achados reais durante a implementacao (nao previstos na spec original)
+
+**1. Bug real de producao encontrado e corrigido na Task 3 (nao e do PDV
+em si — ja existia, afetava o Pix):** quando um pagamento assincrono
+(Pix, e agora Point) e confirmado por webhook, a comanda tinha DOIS
+problemas de sincronizacao que a spec original nao previu:
+- o array `comanda.pagamentos` nunca era atualizado pelo webhook (so a
+  tabela `pagamentos` avulsa) — corrigido com `confirmarPagamento()`,
+  reaproveitado por Pix e Point;
+- `comanda.pago`/`restante`/`total` sao campos CACHEADOS (nos dois
+  bancos, Mongo e Supabase) que so eram recalculados por `reloadComanda()`,
+  uma funcao que so roda dentro de handlers HTTP — nunca por um webhook.
+  Um Pix confirmado por webhook deixava o `restante` da comanda errado
+  ate a proxima acao manual naquela comanda. Corrigido junto.
+- **Ainda dentro disso**, a revisao da task encontrou que a mesa vinculada
+  tampouco tinha o status sincronizado (ficava "ocupada" mesmo com a
+  comanda paga) — corrigido no mesmo commit apos 1 rodada de fix.
+
+Isto e um bug real que ja estava em producao (afeta qualquer comanda paga
+por Pix hoje) — o PDV so obrigou a achar e consertar, porque o Point usa
+exatamente o mesmo caminho de confirmacao.
+
+**2. Decisao adiada de proposito: race condition (TOCTOU) na trava contra
+receita em dobro.** A funcao `confirmarPagamento()` tem uma checagem
+"ja pago?" antes de lancar receita (`!pedido.pago_em`) que NAO e atomica —
+duas confirmacoes genuinamente simultaneas do mesmo pagamento poderiam,
+em teoria, lancar receita duas vezes. Hoje isso e inofensivo porque so
+existe UM caminho de confirmacao (o webhook do Pix). Vira um risco real
+na Task 8, quando o Point ganhar um SEGUNDO caminho concorrente
+(webhook + polling de `GET /pagamentos/:id`). **Ruling registrada no
+ledger:** resolver isso dentro da propria Task 8 (com um update
+condicional/atomico no repository, filtrado por `pago_em IS NULL`), nao
+retroagir na Task 3. Ao despachar a Task 8, carregar esta exigencia
+explicitamente no dispatch do implementador.
+
+## 0.0.2 ✅ RESOLVIDO SOZINHO (historico): deploy automatico do EasyPanel tinha atrasado
 
 Registrado enquanto acontecia, resolvido antes do dono precisar mexer em
 nada — mantido aqui como referencia caso se repita.
@@ -163,8 +239,7 @@ novos + 7 modificados, NADA commitado ainda:**
   migration `0027` em producao.
 
 **O que falta:**
-1. Ver §0.0 — nada mais avanca em producao ate o deploy automatico voltar
-   a funcionar.
+1. ~~Deploy automatico~~ — resolvido sozinho, ver §0.0.2. Nada pendente aqui.
 2. Opcional, sem pedido explicito: paginacao na tabela do Painel da
    Plataforma — hoje lista TODAS as empresas sem paginar; inofensivo com 1
    cliente real em producao hoje, mas o dev local acumulou 2000+ empresas
@@ -235,8 +310,7 @@ maquina (mesma classe de interferencia ja documentada para
 `X-Forwarded-For`, ver §0 sobre rate limiting), entao `yarn install` e
 `apk add` falham com "unable to verify the first certificate"/"TLS:
 server certificate not trusted" mesmo com `--network=host`. O fix segue
-o padrao oficial do Next.js e sera confirmado direto em producao — ver
-§0.0, ainda nao deployado.
+o padrao oficial do Next.js — confirmado direto em producao, ver §0.0.2.
 
 ## 0.1.3 Novo texto da tela de login
 
@@ -1003,7 +1077,7 @@ commit — ver §0.1) NAO sao `contas`.** `contas` e o que o RESTAURANTE deve
 (fornecedor, aluguel); `assinaturas` e o que o restaurante deve PARA A
 ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
 
-## 4.3 Migrations (28 commitadas — `0027`/`0028` aplicam sozinhas quando o deploy destravar, ver §0.0 — via `scripts/migrate.mjs` desde 2026-08-18)
+## 4.3 Migrations (29 commitadas, todas aplicadas em producao — `0029` roda sozinha no proximo deploy — via `scripts/migrate.mjs` desde 2026-08-18)
 
 ```
 0001_init.sql               0009_repository_support_functions.sql
@@ -1021,7 +1095,7 @@ ETNA. Dominios e donos diferentes, nunca misturar num relatorio.
 0019_estoque.sql              0026_contas_recorrencia.sql
 0020_custo.sql                0027_assinaturas.sql
 0021_cardapio_imagem.sql      0028_assinatura_pausa_aviso.sql
-0022_despesa_natureza.sql
+0022_despesa_natureza.sql     0029_pdv_point.sql (pedidos.pago_em)
 ```
 
 `0001` a `0015` dependem de `triggers.sql`/`policies_rls.sql`/`seed.sql`
@@ -1202,6 +1276,7 @@ imagem apesar do padrao geral de ignorar).
 | Fix: logo/icones do PWA 404 em producao | **Completo e no ar** — ver §0.1.2 |
 | Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
 | Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
+| PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | 🟡 **EM ANDAMENTO** — spec + plano completos, 3/11 tasks implementadas (`ad1dfe6`) — ver §0.0 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -1376,8 +1451,7 @@ navegador de verdade — nao suposicao:
     not trusted`), mesmo com `docker build --network=host`. Mudancas no
     Dockerfile nesta maquina nao podem ser validadas com `docker build`
     local — a validacao real acontece no build do EasyPanel, apos o
-    deploy (ver §0.0 para o problema paralelo do deploy nao estar
-    disparando no momento em que isto foi escrito).
+    deploy.
 
 ---
 
@@ -1403,13 +1477,22 @@ navegador de verdade — nao suposicao:
 - [x] ~~Fix: logo/icones do PWA 404 em producao~~ — **DONE, commitado
       (`b7bbe01`) e confirmado no ar**. Ver §0.1.2.
 - [x] ~~Todos os itens acima confirmados em producao~~ — o deploy que
-      tinha atrasado se resolveu sozinho. Ver §0.0.
+      tinha atrasado se resolveu sozinho. Ver §0.0.2.
 
 **Tecnico — pedido do dono, concluido nesta sessao:**
 
 - [x] ~~B2 — Onboarding guiado (checklist + seed sob demanda)~~ —
       **DONE, testado via Playwright, commitado (`0deb39d` + `8b78f26`)
       e no ar**. Ver §0.1.4.
+
+**Tecnico — pedido do dono, EM ANDAMENTO (retomar por aqui, ver §0.0):**
+
+- [ ] **PDV — cobranca no cartao pela maquininha (Mercado Pago Point).**
+      Spec e plano completos, execucao via subagentes 3/11 tasks
+      completas (`ad1dfe6`). Retomar invocando
+      `superpowers:subagent-driven-development` com
+      `docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md` —
+      a skill le o ledger e resume sozinha na Task 4.
 
 **Produto — backlog conhecido, sem pedido explicito ainda:**
 
@@ -1442,6 +1525,13 @@ navegador de verdade — nao suposicao:
 # 12. Commits recentes (sessao atual + anteriores)
 
 ```
+ad1dfe6 fix(pdv): confirmarPagamento() tambem sincroniza status da mesa (Task 3, fix round 1)
+5fb5706 fix(pdv): comanda nao refletia pagamento Pix confirmado por webhook (Mongo) (Task 3)
+5e6c890 feat(pdv): comandaRepo.atualizarStatusPagamentoResumo (Mongo real, Supabase no-op) (Task 2)
+a93873f feat(pdv): contrato de dominio + migration para pago_em e provider Point (Task 1)
+1bc7b72 chore: ignora .superpowers/ (scratch do subagent-driven-development)
+6809026 docs(plan): plano de implementacao do PDV (Mercado Pago Point) — 11 tasks
+e37b6c9 docs(spec): design da cobranca no cartao pela maquininha (Mercado Pago Point)
 8b78f26 feat(onboarding): frontend do checklist guiado (B2)
 0deb39d feat(onboarding): checklist guiado + seed de demo sob demanda (B2) — backend
 2edcb06 docs: handoff — pausar aviso, fix da logo/PWA, texto do login; alerta de deploy travado
