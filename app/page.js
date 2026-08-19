@@ -10,6 +10,7 @@ import {
   MessageSquare, Workflow, Menu as MenuIcon,
   Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX, AlertCircle,
   Volume2, VolumeX, AlertTriangle, CalendarClock, CalendarCheck2, Ban, Crown,
+  Circle,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -786,14 +787,78 @@ function AvisoAssinatura() {
   )
 }
 
-function Dashboard({ temMod = () => true }) {
+/**
+ * Onboarding guiado (B2) — pedido do dono: um restaurante novo precisa
+ * conseguir registrar a primeira venda sem ninguem explicar nada. Cada
+ * item vem do servidor ja calculado (`GET /onboarding/status`), derivado
+ * de dados reais — nunca uma flag "concluido" que o frontend precisaria
+ * marcar manualmente. Substitui o `DashboardHero` (marketing) enquanto
+ * incompleto: quem acabou de se cadastrar precisa de guia, nao de
+ * pitch de venda — o Hero volta sozinho assim que os itens fecham.
+ */
+function OnboardingChecklist({ dados, onNavigate, onSeeded }) {
+  const [semeando, setSemeando] = useState(false)
+
+  const verComExemplo = async () => {
+    setSemeando(true)
+    try {
+      await api('/empresa/seed-demo', { method: 'POST' })
+      toast.success('Dados de exemplo criados')
+      // Seed cria pedidos/transacoes/mesas — mais simples e mais confiavel
+      // recarregar a pagina inteira do que invalidar cada pedaco de estado
+      // (metrics, mesas, cardapio) espalhado pelos componentes.
+      window.location.reload()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSemeando(false)
+    }
+  }
+
+  return (
+    <Card className="border-primary/30">
+      <CardHeader>
+        <CardTitle className="text-base">Primeiros passos</CardTitle>
+        <CardDescription>Complete estes passos para colocar seu restaurante no ar.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {dados.itens.map((item) => (
+          <div key={item.chave} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+            <div className="flex items-center gap-3 min-w-0">
+              {item.feito
+                ? <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+                : <Circle className="h-5 w-5 text-muted-foreground shrink-0" />}
+              <span className={`text-sm ${item.feito ? 'line-through text-muted-foreground' : ''}`}>{item.label}</span>
+            </div>
+            {!item.feito && item.destino && (
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => onNavigate?.(item.destino)}>Ir</Button>
+            )}
+          </div>
+        ))}
+        <Separator />
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="text-xs text-muted-foreground">Quer só dar uma olhada primeiro?</div>
+          <Button size="sm" variant="ghost" onClick={verComExemplo} disabled={semeando}>{semeando ? 'Criando…' : 'Ver com dados de exemplo'}</Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function Dashboard({ temMod = () => true, onNavigate }) {
   const [m, setM] = useState(null)
+  const [onboarding, setOnboarding] = useState(undefined) // undefined = carregando
   useEffect(() => { api('/dashboard/metrics').then(setM).catch((e) => toast.error(e.message)) }, [])
-  if (!m) return <Empty>Carregando métricas…</Empty>
+  useEffect(() => {
+    api('/onboarding/status').then(setOnboarding).catch(() => setOnboarding({ itens: [], completo: true }))
+  }, [])
+  if (!m || onboarding === undefined) return <Empty>Carregando métricas…</Empty>
   return (
     <div className="space-y-6">
       <AvisoAssinatura />
-      <DashboardHero />
+      {onboarding.completo
+        ? <DashboardHero />
+        : <OnboardingChecklist dados={onboarding} onNavigate={onNavigate} onSeeded={() => api('/onboarding/status').then(setOnboarding)} />}
       <PageHeader title="Dashboard" description="Visão geral da operação de hoje e dos últimos 7 dias." />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat icon={DollarSign} label="Faturamento hoje" value={brl(m.faturamentoHoje)} tone="emerald" />
@@ -4541,7 +4606,7 @@ function App() {
         </header>
 
         <main className="flex-1 overflow-auto ros-scroll p-4 lg:p-6">
-          {viewAtual === 'dashboard' && <Dashboard temMod={temMod} />}
+          {viewAtual === 'dashboard' && <Dashboard temMod={temMod} onNavigate={setView} />}
           {viewAtual === 'pedidos' && <Pedidos me={me} />}
           {viewAtual === 'mesas' && <Mesas />}
           {viewAtual === 'atendimento' && <Atendimento />}
