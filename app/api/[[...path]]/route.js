@@ -1144,6 +1144,26 @@ async function handler(request, { params }) {
     }
 
     /**
+     * Pausa o AVISO ao cliente (cortesia) sem tocar no vencimento real —
+     * decisao explicita do dono (2026-08-19): "preciso ter a possibilidade
+     * de pausar o aviso... caso eu queira dar um mes de cortesia". A
+     * assinatura continua "atrasada" de verdade no Painel da Plataforma
+     * (entra em "valor em atraso"); so o que o CLIENTE ve fica escondido
+     * ate `ate` (`avisoPausado()` em lib/assinatura.js). `ate: null`
+     * cancela uma pausa em andamento antes do prazo.
+     */
+    if (seg[0] === 'plataforma' && seg[1] === 'assinaturas' && seg[2] && seg[3] === 'pausar-aviso' && method === 'PUT') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const assinatura = await assinaturaRepo.findById(seg[2])
+      if (!assinatura) return err('Assinatura nao encontrada', 404)
+      const b = (await request.json()) || {}
+      if (b.ate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(b.ate || '')) return err('ate deve ser "YYYY-MM-DD" ou null')
+      const atualizada = await assinaturaRepo.update(assinatura.id, { aviso_pausado_ate: b.ate, updated_at: new Date() })
+      await auditoriaRepo.registrar({ empresa_id: assinatura.empresa_id, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: b.ate ? 'pausar_aviso_assinatura' : 'retomar_aviso_assinatura', entidade: 'assinatura', entidade_id: assinatura.id, dados: { ate: b.ate } })
+      return json(clean({ ...atualizada, status_efetivo: statusEfetivoAssinatura(atualizada) }))
+    }
+
+    /**
      * Bloqueio TOTAL de acesso — `empresas.ativo`, o mesmo campo que ja
      * existia (agora de fato aplicado no login, ver auth/login abaixo).
      * SEMPRE manual: nada neste sistema desliga uma empresa sozinho so

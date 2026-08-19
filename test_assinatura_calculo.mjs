@@ -62,6 +62,26 @@ teste('avisoParaCliente: 4+ dias de atraso e faixa vermelha', () => {
   assert.ok(a.mensagem.includes('8 dias'))
 })
 
+teste('avisoParaCliente: pausa ativa esconde o aviso mesmo com atraso real', () => {
+  const a = avisoParaCliente({ status: 'ativa', proximo_vencimento: '2026-08-01', aviso_pausado_ate: '2026-08-31' }, hoje('2026-08-18'))
+  assert.equal(a, null)
+})
+
+teste('avisoParaCliente: pausa vencida no dia seguinte volta a avisar sozinha', () => {
+  const a = avisoParaCliente({ status: 'ativa', proximo_vencimento: '2026-08-01', aviso_pausado_ate: '2026-08-17' }, hoje('2026-08-18'))
+  assert.notEqual(a, null)
+  assert.equal(a.nivel, 'vermelho')
+})
+
+teste('avisoParaCliente: pausa cobre exatamente ate o ultimo dia, inclusive', () => {
+  const a = avisoParaCliente({ status: 'ativa', proximo_vencimento: '2026-08-01', aviso_pausado_ate: '2026-08-18' }, hoje('2026-08-18'))
+  assert.equal(a, null)
+})
+
+teste('statusEfetivo: pausa NAO afeta o status real (continua atrasada pro dono)', () => {
+  assert.equal(statusEfetivo({ status: 'ativa', proximo_vencimento: '2026-08-01', aviso_pausado_ate: '2026-08-31' }, hoje('2026-08-18')), 'atrasada')
+})
+
 teste('resumoCarteira: MRR conta ativas e atrasadas, nao so em dia', () => {
   const r = resumoCarteira([
     { status_efetivo: 'ativa', valor: 100 },

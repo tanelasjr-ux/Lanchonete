@@ -294,6 +294,13 @@ export interface Assinatura extends TenantScoped {
   proximo_vencimento: string;
   status: 'ativa' | 'cancelada';
   ultimo_pagamento_em: string | null;
+  /**
+   * Enquanto hoje <= esta data, `avisoParaCliente()` (lib/assinatura.js)
+   * nao mostra nada ao cliente, mesmo com vencimento passado — cortesia
+   * manual do dono. NUNCA afeta `statusEfetivo`: a assinatura continua
+   * "atrasada" de verdade no Painel da Plataforma.
+   */
+  aviso_pausado_ate: string | null;
   observacoes: string;
   created_at: string;
   updated_at: string;

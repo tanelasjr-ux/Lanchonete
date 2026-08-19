@@ -222,6 +222,77 @@ def test_aviso_ao_cliente_segue_a_escada_sem_antecedencia():
     assert aviso["dias"] >= 1
 
 
+def test_pausar_aviso_esconde_do_cliente_mas_mantem_atrasada_pro_dono():
+    """Pedido do dono (2026-08-19): dar cortesia sem perder o controle real
+    sobre quem esta devendo. `aviso_pausado_ate` esconde o banner do
+    cliente, mas o Painel da Plataforma continua marcando "atrasada"."""
+    admin = criar_empresa("Admin Pausa Aviso")
+    promover_admin(admin["email"])
+    cliente = criar_empresa("Cliente Pausa Aviso")
+
+    criada = requests.put(
+        f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
+        headers=admin["headers"],
+        json={"valor": 150, "dia_vencimento": 10, "proximo_vencimento": "2026-08-01"},
+    ).json()
+    assert criada["status_efetivo"] == "atrasada"
+
+    ainda_avisa = requests.get(f"{BASE_URL}/assinatura/status", headers=cliente["headers"]).json()
+    assert ainda_avisa["aviso"] is not None, "sem pausa, o aviso normal tem que aparecer"
+
+    pausar = requests.put(
+        f"{BASE_URL}/plataforma/assinaturas/{criada['id']}/pausar-aviso",
+        headers=admin["headers"], json={"ate": "2026-12-31"},
+    )
+    assert pausar.status_code == 200, pausar.text
+    assert pausar.json()["status_efetivo"] == "atrasada", "pausa nao pode mexer no status real"
+
+    sem_aviso = requests.get(f"{BASE_URL}/assinatura/status", headers=cliente["headers"]).json()
+    assert sem_aviso["aviso"] is None, "com a pausa ativa, o cliente nao pode ver nada"
+
+    listagem = requests.get(f"{BASE_URL}/plataforma/empresas", headers=admin["headers"]).json()
+    linha = next(e for e in listagem["empresas"] if e["empresa_id"] == cliente["empresa_id"])
+    assert linha["assinatura"]["status_efetivo"] == "atrasada", "no painel do dono continua atrasada, mesmo pausada"
+
+
+def test_pausar_aviso_pode_ser_cancelado_antes_do_prazo():
+    admin = criar_empresa("Admin Cancela Pausa")
+    promover_admin(admin["email"])
+    cliente = criar_empresa("Cliente Cancela Pausa")
+
+    criada = requests.put(
+        f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
+        headers=admin["headers"],
+        json={"valor": 150, "dia_vencimento": 10, "proximo_vencimento": "2026-08-01"},
+    ).json()
+    requests.put(f"{BASE_URL}/plataforma/assinaturas/{criada['id']}/pausar-aviso", headers=admin["headers"], json={"ate": "2026-12-31"})
+
+    retomar = requests.put(f"{BASE_URL}/plataforma/assinaturas/{criada['id']}/pausar-aviso", headers=admin["headers"], json={"ate": None})
+    assert retomar.status_code == 200, retomar.text
+
+    de_volta = requests.get(f"{BASE_URL}/assinatura/status", headers=cliente["headers"]).json()
+    assert de_volta["aviso"] is not None, "cancelar a pausa tem que trazer o aviso de volta na hora"
+
+
+def test_pausar_aviso_so_admin_e_valida_formato_da_data():
+    admin = criar_empresa("Admin Valida Pausa")
+    promover_admin(admin["email"])
+    outro = criar_empresa("Outro Nao Admin Pausa")
+    cliente = criar_empresa("Cliente Valida Pausa")
+
+    criada = requests.put(
+        f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
+        headers=admin["headers"],
+        json={"valor": 100, "dia_vencimento": 10, "proximo_vencimento": "2026-08-01"},
+    ).json()
+
+    negado = requests.put(f"{BASE_URL}/plataforma/assinaturas/{criada['id']}/pausar-aviso", headers=outro["headers"], json={"ate": "2026-12-31"})
+    assert negado.status_code == 403
+
+    invalido = requests.put(f"{BASE_URL}/plataforma/assinaturas/{criada['id']}/pausar-aviso", headers=admin["headers"], json={"ate": "31/12/2026"})
+    assert invalido.status_code == 400
+
+
 def test_admin_nao_precisa_pertencer_a_empresa_nenhuma_para_ver_tudo():
     """`listTodas`/`list()` sao cross-tenant de proposito - o admin enxerga
     TODAS as empresas, nao so a propria."""
