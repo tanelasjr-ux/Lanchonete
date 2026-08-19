@@ -91,3 +91,6 @@ backups/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Scratch do subagent-driven-development (ledgers, briefs, reviews) — nunca faz parte do codigo
+/.superpowers/
