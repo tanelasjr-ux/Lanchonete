@@ -349,7 +349,7 @@ async function mapaCustoProdutos(repos, ctx, itens) {
  * `origem` e so para o audit log (ex: 'webhook_point', 'poll_mercadopago').
  */
 async function confirmarPagamento(repos, empresaId, pagamento, novoStatus, origem) {
-  const { pagamentoRepo, comandaRepo, pedidoRepo, transacaoRepo, clienteRepo, caixaRepo, auditoriaRepo } = repos
+  const { pagamentoRepo, comandaRepo, mesaRepo, pedidoRepo, transacaoRepo, clienteRepo, caixaRepo, auditoriaRepo } = repos
   if (pagamento.status === novoStatus) return // ja processado (idempotencia)
 
   await pagamentoRepo.update(empresaId, pagamento.id, { status: novoStatus, updated_at: new Date() })
@@ -357,19 +357,27 @@ async function confirmarPagamento(repos, empresaId, pagamento, novoStatus, orige
   if (pagamento.comanda_id) {
     await comandaRepo.atualizarStatusPagamentoResumo(empresaId, pagamento.comanda_id, pagamento.id, novoStatus)
     // `atualizarStatusPagamentoResumo` so atualiza o STATUS do item dentro do
-    // array `pagamentos`. `pago`/`restante`/`total`, porem, sao campos
-    // DERIVADOS e CACHEADOS no proprio documento/linha da comanda — em
-    // ambos os backends (Mongo e Supabase: ver `setDerivados()` em cada
-    // repo), recalculados e persistidos apenas por `reloadComanda()` em
-    // route.js, que so roda dentro dos handlers HTTP de comanda. Sem este
-    // passo aqui, um GET /comandas/:id logo apos o webhook confirmar
-    // continuaria mostrando o `restante` antigo ate a proxima mutacao da
-    // comanda por outro caminho (add item, transferir, etc.) — o que
-    // quebraria a propria verificacao manual desta task (Step 5) e a
-    // promessa desta funcao ("sincroniza a comanda"). Achado durante o
+    // array `pagamentos`. `pago`/`restante`/`total` (campos DERIVADOS e
+    // CACHEADOS no proprio documento/linha da comanda em ambos os backends —
+    // ver `setDerivados()` em cada repo) e o `status` da mesa vinculada, porem,
+    // so sao recalculados e persistidos por `reloadComanda()` em route.js, que
+    // roda exclusivamente dentro dos handlers HTTP de comanda. Sem este passo
+    // aqui, um GET /comandas/:id ou /mesas logo apos o webhook confirmar
+    // continuaria mostrando `restante` e status da mesa desatualizados ate a
+    // proxima mutacao da comanda por outro caminho (add item, transferir,
+    // etc.) — o que quebraria a propria verificacao manual desta task (Step 5)
+    // e a promessa desta funcao ("sincroniza a comanda"). Espelha exatamente a
+    // logica de `reloadComanda()` (derivados + sync de mesa). Achado durante o
     // teste manual, nao previsto no texto original do brief.
     const comandaAtualizada = await comandaRepo.findById(empresaId, pagamento.comanda_id)
-    if (comandaAtualizada) await comandaRepo.setDerivados(empresaId, pagamento.comanda_id, computeComanda(comandaAtualizada))
+    if (comandaAtualizada) {
+      const derivados = computeComanda(comandaAtualizada)
+      await comandaRepo.setDerivados(empresaId, pagamento.comanda_id, derivados)
+      if (comandaAtualizada.mesa_id) {
+        const mesaStatus = derivados.restante <= 0 && derivados.total > 0 ? 'aguardando_pagamento' : 'ocupada'
+        await mesaRepo.syncStatusOcupada(empresaId, comandaAtualizada.mesa_id, mesaStatus)
+      }
+    }
   }
 
   if (pagamento.pedido_id && novoStatus === 'approved') {
