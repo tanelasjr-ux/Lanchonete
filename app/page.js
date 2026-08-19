@@ -9,7 +9,7 @@ import {
   CheckCircle2, Clock, ChefHat as Chef, MoreVertical, X, Loader2, ShieldCheck,
   MessageSquare, Workflow, Menu as MenuIcon,
   Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX, AlertCircle,
-  Volume2, VolumeX, AlertTriangle, CalendarClock, CalendarCheck2, Ban,
+  Volume2, VolumeX, AlertTriangle, CalendarClock, CalendarCheck2, Ban, Crown,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -735,12 +735,43 @@ function DashboardHero() {
   )
 }
 
+/**
+ * Aviso de mensalidade atrasada, dentro do proprio sistema do cliente —
+ * pedido do dono (2026-08-18): "a possibilidade de aparecer na tela do
+ * cliente um aviso com uma mensagem humanizada de atraso de pagamento".
+ * So aparece a partir do vencimento, NUNCA antes (`avisoParaCliente()` em
+ * lib/assinatura.js) — `aviso: null` (sem assinatura cadastrada, ou em
+ * dia) nao renderiza nada, de proposito.
+ */
+function AvisoAssinatura() {
+  const [aviso, setAviso] = useState(null)
+  useEffect(() => { api('/assinatura/status').then((d) => setAviso(d.aviso)).catch(() => {}) }, [])
+  if (!aviso) return null
+  const vermelho = aviso.nivel === 'vermelho'
+  const msgWpp = encodeURIComponent(`Olá! Sobre a mensalidade do sistema: ${aviso.mensagem}`)
+  return (
+    <Card className={vermelho ? 'border-red-500/40 bg-red-500/5' : 'border-amber-500/40 bg-amber-500/5'}>
+      <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <AlertTriangle className={`h-5 w-5 shrink-0 ${vermelho ? 'text-red-600' : 'text-amber-600'}`} />
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className={`text-sm font-semibold ${vermelho ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>{aviso.titulo}</div>
+          <div className="text-sm text-muted-foreground">{aviso.mensagem}</div>
+        </div>
+        <Button size="sm" variant={vermelho ? 'destructive' : 'outline'} className="shrink-0" asChild>
+          <a href={`https://wa.me/5591982934763?text=${msgWpp}`} target="_blank" rel="noopener noreferrer">Falar no WhatsApp</a>
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
 function Dashboard({ temMod = () => true }) {
   const [m, setM] = useState(null)
   useEffect(() => { api('/dashboard/metrics').then(setM).catch((e) => toast.error(e.message)) }, [])
   if (!m) return <Empty>Carregando métricas…</Empty>
   return (
     <div className="space-y-6">
+      <AvisoAssinatura />
       <DashboardHero />
       <PageHeader title="Dashboard" description="Visão geral da operação de hoje e dos últimos 7 dias." />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -4041,6 +4072,206 @@ function Atendimento() {
   )
 }
 
+/* ============================ PAINEL DA PLATAFORMA (admin ETNA) ============================ */
+/**
+ * Controle total do dono sobre as empresas clientes: assinatura, ultimo
+ * acesso, bloqueio manual (nunca automatico por atraso — decisao do dono,
+ * 2026-08-18). So renderiza para quem `GET /plataforma/eu` confirmou como
+ * admin (App(), abaixo) — a seguranca de verdade e no backend
+ * (`plataforma_admins`, checado em toda rota `/plataforma/*`), este
+ * componente so evita mostrar a tela pra quem nao pode usa-la.
+ */
+function AssinaturaDialog({ empresa, onClose, onSaved }) {
+  const existente = empresa.assinatura
+  const [f, setF] = useState({
+    plano: existente?.plano || 'basico',
+    valor: existente?.valor ?? '',
+    dia_vencimento: existente?.dia_vencimento ?? 10,
+    proximo_vencimento: existente?.proximo_vencimento || '',
+    observacoes: existente?.observacoes || '',
+  })
+  const [salvando, setSalvando] = useState(false)
+
+  const salvar = async () => {
+    if (!f.valor || Number(f.valor) < 0) return toast.error('Informe um valor válido')
+    if (!f.proximo_vencimento) return toast.error('Informe o próximo vencimento')
+    setSalvando(true)
+    try {
+      await api(`/plataforma/empresas/${empresa.empresa_id}/assinatura`, {
+        method: 'PUT',
+        body: { ...f, valor: Number(f.valor), dia_vencimento: Number(f.dia_vencimento) },
+      })
+      toast.success('Assinatura salva')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSalvando(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{existente ? 'Editar' : 'Configurar'} assinatura — {empresa.nome}</DialogTitle>
+          <DialogDescription>Contrato comercial entre a ETNA e este restaurante.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Plano</Label>
+              <Input value={f.plano} onChange={(e) => setF((s) => ({ ...s, plano: e.target.value }))} placeholder="básico" />
+            </div>
+            <div className="space-y-1">
+              <Label>Valor mensal (R$)</Label>
+              <Input type="number" step="0.01" value={f.valor} onChange={(e) => setF((s) => ({ ...s, valor: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Dia de vencimento</Label>
+              <Input type="number" min={1} max={31} value={f.dia_vencimento} onChange={(e) => setF((s) => ({ ...s, dia_vencimento: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label>Próximo vencimento</Label>
+              <Input type="date" value={f.proximo_vencimento} onChange={(e) => setF((s) => ({ ...s, proximo_vencimento: e.target.value }))} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label>Observações</Label>
+            <Textarea value={f.observacoes} onChange={(e) => setF((s) => ({ ...s, observacoes: e.target.value }))} rows={2} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PagamentoDialog({ empresa, onClose, onSaved }) {
+  const [f, setF] = useState({ valor: empresa.assinatura?.valor ?? '', metodo: '', pago_em: new Date().toISOString().slice(0, 10), observacoes: '' })
+  const [salvando, setSalvando] = useState(false)
+
+  const salvar = async () => {
+    if (!f.valor || Number(f.valor) <= 0) return toast.error('Informe um valor válido')
+    setSalvando(true)
+    try {
+      await api(`/plataforma/assinaturas/${empresa.assinatura.id}/pagar`, {
+        method: 'PUT', body: { ...f, valor: Number(f.valor) },
+      })
+      toast.success('Pagamento registrado — vencimento avançou 1 mês')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSalvando(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Registrar pagamento — {empresa.nome}</DialogTitle>
+          <DialogDescription>Avança o próximo vencimento em 1 mês automaticamente.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1"><Label>Valor pago (R$)</Label><Input type="number" step="0.01" value={f.valor} onChange={(e) => setF((s) => ({ ...s, valor: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Data do pagamento</Label><Input type="date" value={f.pago_em} onChange={(e) => setF((s) => ({ ...s, pago_em: e.target.value }))} /></div>
+          </div>
+          <div className="space-y-1"><Label>Método</Label><Input value={f.metodo} onChange={(e) => setF((s) => ({ ...s, metodo: e.target.value }))} placeholder="pix, cartão…" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Registrar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PainelPlataforma() {
+  const [dados, setDados] = useState(null)
+  const [editando, setEditando] = useState(null)
+  const [pagando, setPagando] = useState(null)
+  const [bloqueando, setBloqueando] = useState(null)
+
+  const load = useCallback(async () => {
+    try { setDados(await api('/plataforma/empresas')) } catch (e) { toast.error(e.message) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const alternarBloqueio = async (linha) => {
+    setBloqueando(linha.empresa_id)
+    try {
+      await api(`/plataforma/empresas/${linha.empresa_id}/bloqueio`, { method: 'PUT', body: { ativo: !linha.ativo } })
+      toast.success(linha.ativo ? 'Acesso bloqueado' : 'Acesso desbloqueado')
+      await load()
+    } catch (e) { toast.error(e.message) } finally { setBloqueando(null) }
+  }
+
+  if (!dados) return <Empty>Carregando…</Empty>
+  const { empresas, resumo } = dados
+
+  const statusBadge = (linha) => {
+    if (!linha.assinatura) return <Badge variant="secondary">sem assinatura</Badge>
+    const s = linha.assinatura.status_efetivo
+    if (s === 'atrasada') return <Badge className="bg-red-600 hover:bg-red-600">atrasada</Badge>
+    if (s === 'cancelada') return <Badge variant="secondary">cancelada</Badge>
+    return <Badge className="bg-emerald-600 hover:bg-emerald-600">em dia</Badge>
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Painel da Plataforma" description="Controle total sobre as empresas clientes — assinaturas, acesso e bloqueio." />
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat icon={Users} label="Empresas ativas" value={resumo.ativas_qtd} tone="emerald" />
+        <Stat icon={DollarSign} label="MRR" value={brl(resumo.ativas_mrr)} tone="primary" />
+        <Stat icon={AlertTriangle} label="Assinaturas atrasadas" value={resumo.atrasadas_qtd} tone="amber" />
+        <Stat icon={CircleDollarSign} label="Valor em atraso" value={brl(resumo.atrasadas_valor)} tone="amber" />
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Empresa</TableHead>
+                <TableHead>Último acesso</TableHead>
+                <TableHead>Plano</TableHead>
+                <TableHead>Vencimento</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Acesso</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {empresas.map((linha) => (
+                <TableRow key={linha.empresa_id}>
+                  <TableCell className="font-medium">{linha.nome}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{linha.ultimo_acesso ? fmtDate(linha.ultimo_acesso) : 'nunca'}</TableCell>
+                  <TableCell className="text-sm">{linha.assinatura ? `${linha.assinatura.plano} — ${brl(linha.assinatura.valor)}` : '—'}</TableCell>
+                  <TableCell className="text-sm">{linha.assinatura ? new Date(`${linha.assinatura.proximo_vencimento}T00:00:00`).toLocaleDateString('pt-BR') : '—'}</TableCell>
+                  <TableCell>{statusBadge(linha)}</TableCell>
+                  <TableCell>{linha.ativo ? <Badge variant="secondary">liberado</Badge> : <Badge className="bg-red-600 hover:bg-red-600">bloqueado</Badge>}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap space-x-1">
+                    <Button size="sm" variant="outline" onClick={() => setEditando(linha)}>{linha.assinatura ? 'Editar' : 'Configurar'}</Button>
+                    {linha.assinatura && <Button size="sm" variant="outline" onClick={() => setPagando(linha)}>Pagamento</Button>}
+                    <Button size="sm" variant={linha.ativo ? 'destructive' : 'default'} disabled={bloqueando === linha.empresa_id} onClick={() => alternarBloqueio(linha)}>
+                      {linha.ativo ? 'Bloquear' : 'Desbloquear'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {editando && <AssinaturaDialog empresa={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); load() }} />}
+      {pagando && <PagamentoDialog empresa={pagando} onClose={() => setPagando(null)} onSaved={() => { setPagando(null); load() }} />}
+    </div>
+  )
+}
+
 /* ============================ SHELL ============================ */
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard' },
@@ -4065,6 +4296,10 @@ function App() {
   const [view, setView] = useState('dashboard')
   const [mobileNav, setMobileNav] = useState(false)
   const { theme, setTheme } = useTheme()
+  // Identidade de admin da PLATAFORMA (a ETNA), independente de `papel`/
+  // `permissions` — checada de novo no servidor a cada rota `/plataforma/*`
+  // (ver route.js). Isto so decide se o item de navegacao aparece.
+  const [souAdmin, setSouAdmin] = useState(false)
 
   // TV do KDS: acesso por link tokenizado, sem login. Lido direto do
   // browser (nao via useSearchParams do Next) para nao exigir <Suspense>
@@ -4113,6 +4348,9 @@ function App() {
       setMe(data)
       applyBranding(data.empresa)
       aplicarTemaInicial(data.empresa)
+      // Falha aqui (ex: rota indisponivel numa versao antiga) so mantem o
+      // item de navegacao escondido — nunca derruba o login de ninguem.
+      api('/plataforma/eu').then((r) => setSouAdmin(Boolean(r.admin))).catch(() => setSouAdmin(false))
     } catch {
       // Efeito visivel (kick pra tela de login), nao falha silenciosa — mas
       // trata qualquer erro (401 de token invalido OU 500/rede transitorio)
@@ -4127,6 +4365,7 @@ function App() {
   const logout = () => {
     localStorage.removeItem(TOKEN_KEY)
     setMe(null)
+    setSouAdmin(false)
     setView('dashboard')
     // Libera para que o tema padrao da PROXIMA empresa a logar seja aplicado
     // (sem isso, quem entrasse depois herdaria o tema de quem saiu).
@@ -4149,6 +4388,9 @@ function App() {
   const modulos = me.modulos ?? {}
   const temMod = (m) => modulos[m] !== false
   const nav = NAV.filter((n) => has(n.perm) && (!n.modulo || temMod(n.modulo)))
+  // Independente de `perms`/papel — identidade de admin da plataforma
+  // nunca passa pelo RBAC de tenant (ver `souAdmin` acima e route.js).
+  if (souAdmin) nav.push({ key: 'plataforma', label: 'Painel ETNA', icon: Crown })
   /**
    * A view inicial e "dashboard", mas nem todo papel tem Dashboard — um
    * ATENDENTE cairia numa tela que ele nao pode ver (e que o servidor agora
@@ -4195,7 +4437,7 @@ function App() {
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileNav(true)}><MenuIcon className="h-5 w-5" /></Button>
             <div>
-              <div className="font-semibold capitalize">{NAV.find((n) => n.key === viewAtual)?.label}</div>
+              <div className="font-semibold capitalize">{nav.find((n) => n.key === viewAtual)?.label}</div>
               <div className="text-xs text-muted-foreground">{me.empresa?.nome}</div>
             </div>
           </div>
@@ -4227,6 +4469,7 @@ function App() {
           {viewAtual === 'integracoes' && <Integracoes />}
           {viewAtual === 'auditoria' && <Auditoria />}
           {viewAtual === 'kds_concluir' && <CozinhaPendentes apiFetch={api} />}
+          {viewAtual === 'plataforma' && souAdmin && <PainelPlataforma />}
         </main>
       </div>
       {/* `has('cardapio')` alem do modulo: o alerta mostra saldo de estoque,
