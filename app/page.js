@@ -301,11 +301,8 @@ function AuthScreen({ onAuth }) {
             `bg-background` (que vira branco no tema claro). */}
         <img src="/etna-logo.png" alt="ETNA — Tecnologia, Software e Soluções Digitais" className="relative h-20 w-auto self-start" />
         <div className="relative space-y-6">
-          <div className="space-y-2">
-            <div className="text-primary font-semibold text-sm tracking-wide uppercase">Sua empresa no controle.</div>
-            <h1 className="text-4xl font-bold leading-tight">Sua operação mais simples. Seu negócio mais eficiente.</h1>
-          </div>
-          <p className="text-white/80 text-lg">Do pedido ao pagamento, tenha tudo o que precisa para administrar seu negócio em um único sistema.</p>
+          <h1 className="text-4xl font-bold leading-tight">Sua operação mais simples. Seu negócio mais eficiente.</h1>
+          <p className="text-white/80 text-lg">Do pedido ao pagamento, tenha tudo o que precisa para administrar seu restaurante em um único sistema.</p>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-white/70">
             {['Mesas', 'Balcão', 'Delivery', 'Cardápio', 'Cozinha', 'Clientes', 'Financeiro'].map((m, i) => (
               <span key={m} className="flex items-center gap-2">
@@ -314,18 +311,15 @@ function AuthScreen({ onAuth }) {
               </span>
             ))}
           </div>
-          <div className="space-y-4 pt-2">
+          <div className="grid gap-4 pt-2">
             {[
-              ['🍽️', 'Tudo conectado, em um só lugar!', 'Pedidos, mesas, cozinha, delivery e financeiro trabalhando juntos.'],
-              ['⚡', 'Mais agilidade no atendimento', 'Sua equipe sabe o que precisa fazer e acompanha cada pedido do início ao fim.'],
-              ['📱', 'Delivery conectado', 'Receba e organize seus pedidos de delivery automaticamente, sem precisar ficar alternando entre aplicativos.'],
-            ].map(([emoji, titulo, texto]) => (
-              <div key={titulo} className="flex gap-3">
-                <span className="text-xl leading-none">{emoji}</span>
-                <div>
-                  <div className="font-semibold text-sm">{titulo}</div>
-                  <div className="text-sm text-white/70">{texto}</div>
-                </div>
+              ['Tudo conectado', 'Pedidos, mesas, cozinha, delivery e financeiro trabalhando juntos.'],
+              ['Atendimento mais rápido', 'Sua equipe sabe o que precisa fazer e acompanha cada pedido do início ao fim.'],
+              ['Mais controle do negócio', 'Tenha uma visão clara das vendas, pedidos, clientes e resultados do seu restaurante.'],
+            ].map(([titulo, texto]) => (
+              <div key={titulo} className="space-y-1">
+                <div className="font-semibold text-sm">{titulo}</div>
+                <div className="text-sm text-white/70">{texto}</div>
               </div>
             ))}
           </div>
@@ -716,48 +710,6 @@ function CmvCards({ cmv }) {
 
 /* ============================ DASHBOARD ============================ */
 /**
- * Bloco de boas-vindas do Dashboard — texto e estrutura pedidos pelo dono
- * (2026-08-18): "Sua operação mais simples. Seu negócio mais eficiente."
- * Fica ACIMA dos cards operacionais, nunca no lugar deles — quem abre o
- * Dashboard toda hora ainda precisa ver faturamento/pedidos primeiro que
- * tudo, este bloco e o cabeçalho da pagina, nao o conteudo principal dela.
- */
-function DashboardHero() {
-  const beneficios = [
-    { titulo: 'Tudo conectado', texto: 'Pedidos, mesas, cozinha, delivery e financeiro trabalhando juntos.' },
-    { titulo: 'Atendimento mais rápido', texto: 'Sua equipe sabe o que precisa fazer e acompanha cada pedido do início ao fim.' },
-    { titulo: 'Mais controle do negócio', texto: 'Tenha uma visão clara das vendas, pedidos, clientes e resultados do seu restaurante.' },
-  ]
-  const modulos = ['Mesas', 'Balcão', 'Delivery', 'Cardápio', 'Cozinha', 'Clientes', 'Financeiro']
-  return (
-    <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
-      <CardContent className="p-6 space-y-5">
-        <div className="space-y-2">
-          <h2 className="text-2xl font-bold tracking-tight">Sua operação mais simples. Seu negócio mais eficiente.</h2>
-          <p className="text-muted-foreground">Do pedido ao pagamento, tenha tudo o que precisa para administrar seu restaurante em um único sistema.</p>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1 text-sm text-muted-foreground">
-            {modulos.map((m, i) => (
-              <span key={m} className="flex items-center gap-2">
-                {i > 0 && <span className="text-border">•</span>}
-                {m}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3 pt-1">
-          {beneficios.map((b) => (
-            <div key={b.titulo} className="space-y-1">
-              <div className="font-semibold text-sm">{b.titulo}</div>
-              <div className="text-sm text-muted-foreground">{b.texto}</div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-/**
  * Aviso de mensalidade atrasada, dentro do proprio sistema do cliente —
  * pedido do dono (2026-08-18): "a possibilidade de aparecer na tela do
  * cliente um aviso com uma mensagem humanizada de atraso de pagamento".
@@ -856,9 +808,9 @@ function Dashboard({ temMod = () => true, onNavigate }) {
   return (
     <div className="space-y-6">
       <AvisoAssinatura />
-      {onboarding.completo
-        ? <DashboardHero />
-        : <OnboardingChecklist dados={onboarding} onNavigate={onNavigate} onSeeded={() => api('/onboarding/status').then(setOnboarding)} />}
+      {!onboarding.completo && (
+        <OnboardingChecklist dados={onboarding} onNavigate={onNavigate} onSeeded={() => api('/onboarding/status').then(setOnboarding)} />
+      )}
       <PageHeader title="Dashboard" description="Visão geral da operação de hoje e dos últimos 7 dias." />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat icon={DollarSign} label="Faturamento hoje" value={brl(m.faturamentoHoje)} tone="emerald" />
