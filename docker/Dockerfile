@@ -52,9 +52,12 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 # Saida standalone: server.js + apenas as dependencias necessarias.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Sem `COPY /app/public`: o projeto nao tem pasta public/ (todo o visual vem
-# do bundle e do Tailwind). Se um dia ela existir, reintroduzir esta linha —
-# `COPY` de caminho inexistente falha o build.
+# O standalone do Next.js NAO inclui `public/` sozinho — precisa deste COPY
+# explicito, sempre (doc oficial do `output: 'standalone'`). Faltou aqui
+# desde que a pasta passou a existir (logo ETNA, icones do PWA): esses
+# arquivos vinham dando 404 em producao ha dias, so nao apareceu porque
+# ninguem tinha reparado num <img> quebrado ate agora (2026-08-19).
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 # Runner de migrations: driver, script, SQLs e a CA do Supabase.
 # Os SQLs sao lidos em runtime (o script varre o diretorio), entao precisam
