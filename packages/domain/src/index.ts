@@ -38,7 +38,7 @@ export type ConversaStatus = 'ABERTA' | 'AGUARDANDO_EQUIPE' | 'AGUARDANDO_CLIENT
 export type MensagemDirecao = 'in' | 'out';
 /** 'conversation' e o messageType bruto da Evolution API para texto simples (nao e bug). */
 export type MensagemTipo = 'text' | 'image' | 'audio' | 'document' | 'conversation';
-export type PagamentoProvider = 'manual' | 'mercadopago';
+export type PagamentoProvider = 'manual' | 'mercadopago' | 'mercadopago_point';
 export type CaixaStatus = 'aberto' | 'fechado';
 export type CaixaMovimentoTipo = 'sangria' | 'suprimento';
 
@@ -194,6 +194,14 @@ export interface Pedido extends TenantScoped {
   comanda_id?: UUID | null;
   /** Campos de delivery (migration 0017). */
   entrega_endereco: string; entrega_taxa: number; entrega_tempo_estimado_min: number | null;
+  /**
+   * Momento em que o pedido foi pago por uma cobranca RASTREADA (maquininha).
+   * NULL = nao pago por esse caminho (todo pagamento manual e todo pedido
+   * anterior a esta feature). Concluir um pedido com `pago_em` preenchido
+   * NAO lanca receita de novo — a receita ja foi lancada no momento do
+   * pagamento (ver route.js, confirmarPagamento()).
+   */
+  pago_em: string | null;
   entregador_id: UUID | null; entregador_nome: string; saiu_para_entrega_em: string | null;
   created_at: string; updated_at: string;
 }
@@ -612,6 +620,8 @@ export interface ComandaRepository extends Repository<Comanda> {
   removeItem(empresaId: UUID, comandaId: UUID, itemId: UUID): Promise<void>;
   /** $push no array `pagamentos` (copia denormalizada - ver auditoria: duplica dado do PagamentoRepository). */
   pushPagamentoResumo(empresaId: UUID, comandaId: UUID, resumo: PagamentoResumo): Promise<void>;
+  /** Atualiza o status de UM item ja existente no array `pagamentos` (nunca cria) — usado quando um pagamento assincrono (Pix/Point) confirma depois de criado. No-op no Supabase: o campo e reconstruido via JOIN a cada leitura. */
+  atualizarStatusPagamentoResumo(empresaId: UUID, comandaId: UUID, pagamentoId: UUID, status: string): Promise<void>;
   /** Persiste os campos ja computados por computeComanda() no Service - nunca recalcula aqui. */
   setDerivados(empresaId: UUID, comandaId: UUID, derivados: ComandaComputed): Promise<void>;
   /** GET /mesas: batch-fetch das comandas abertas para montar o resumo por mesa. */
