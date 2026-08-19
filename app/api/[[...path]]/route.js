@@ -31,6 +31,7 @@ import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorP
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
 import { statusEfetivo, resumoContas, adicionarMeses } from '@/lib/contas'
 import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
+import { statusEfetivo as statusEfetivoAssinatura, avisoParaCliente, resumoCarteira } from '@/lib/assinatura'
 
 /* ============================ INFRA: persistencia ========================
  * A escolha do backend (MongoDB ou Supabase) vive inteiramente em
@@ -543,6 +544,7 @@ async function handler(request, { params }) {
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
       kdsTokenRepo, entregadorRepo, caixaRepo, caixaMovimentoRepo, contaRepo,
+      assinaturaRepo, assinaturaPagamentoRepo, plataformaAdminRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -677,6 +679,10 @@ async function handler(request, { params }) {
       if (!usuario || !verifyPassword(senha, usuario.senha_hash)) return err('Credenciais invalidas', 401)
       if (!usuario.ativo) return err('Usuario inativo', 403)
       const empresa = await empresaRepo.findById(usuario.empresa_id)
+      // Bloqueio TOTAL do Painel da Plataforma (`empresas.ativo`) — sem essa
+      // checagem aqui, desligar uma empresa no painel nao teria efeito
+      // nenhum: o login continuaria emitindo token normalmente.
+      if (!empresa?.ativo) return err('Acesso suspenso. Fale com a ETNA para regularizar.', 403)
       const token = signToken({ usuario_id: usuario.id, empresa_id: usuario.empresa_id, papel: usuario.papel })
       await audit(repos, { empresa_id: usuario.empresa_id, usuario_id: usuario.id, nome: usuario.nome }, 'login', 'usuario', usuario.id)
       return json({ token, usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS[usuario.papel] || [] })
@@ -897,9 +903,19 @@ async function handler(request, { params }) {
     /* ---- a partir daqui, tudo autenticado ---- */
     const session = await auth(request)
     if (!session) return err('Nao autorizado', 401)
-    const usuario = await usuarioRepo.findById(session.empresa_id, session.usuario_id)
+    // usuario + empresa em paralelo: o Painel da Plataforma pode bloquear
+    // (`empresas.ativo`) a qualquer momento, e o token dura ate 7 dias
+    // (TOKEN_TTL_SEC) — sem checar aqui, um bloqueio so surtiria efeito no
+    // PROXIMO login, nao imediatamente. `usuario.ativo` ja pagava esta
+    // consulta a cada requisicao; buscar a empresa junto (Promise.all) nao
+    // serializa uma segunda viagem ao banco.
+    const [usuario, empresaSessao] = await Promise.all([
+      usuarioRepo.findById(session.empresa_id, session.usuario_id),
+      empresaRepo.findById(session.empresa_id),
+    ])
     if (!usuario || !usuario.ativo) return err('Sessao invalida', 401)
-    const ctx = { empresa_id: session.empresa_id, usuario_id: session.usuario_id, nome: usuario.nome, papel: usuario.papel }
+    if (!empresaSessao?.ativo) return err('Acesso suspenso. Fale com a ETNA para regularizar.', 403)
+    const ctx = { empresa_id: session.empresa_id, usuario_id: session.usuario_id, nome: usuario.nome, papel: usuario.papel, email: usuario.email }
     const tenant = { empresa_id: ctx.empresa_id } // escopo multitenant obrigatorio
     ctxParaErro = ctx
 
@@ -914,7 +930,7 @@ async function handler(request, { params }) {
      * TODAS elas para atender um punhado seria pagar caro pelo gate. O cache
      * vive no escopo do handler, entao nao vaza entre requisicoes.
      */
-    let _empresaCache
+    let _empresaCache = empresaSessao // ja buscada acima para checar `ativo` — nao refazer a consulta
     const empresaAtual = async () => {
       if (_empresaCache === undefined) _empresaCache = await empresaRepo.findById(ctx.empresa_id)
       return _empresaCache
@@ -991,6 +1007,184 @@ async function handler(request, { params }) {
       await empresaRepo.update(ctx.empresa_id, { config })
       _empresaCache = undefined // a empresa mudou nesta requisicao; nao servir o estado velho
       await audit(repos, ctx, b.ativo ? 'ativar_modulo' : 'desativar_modulo', 'empresa', ctx.empresa_id, { modulo: chave })
+      return json({ chave, label: mod.label, ativo: b.ativo })
+    }
+
+    /* ==================== ASSINATURA (visao do CLIENTE) ====================
+     * O restaurante consultando o proprio contrato com a ETNA. So leitura —
+     * mudar valor/vencimento/status e sempre acao do Painel da Plataforma
+     * (abaixo), nunca do proprio cliente.
+     */
+    if (route === '/assinatura/status' && method === 'GET') {
+      const assinatura = await assinaturaRepo.findByEmpresa(ctx.empresa_id)
+      // Empresa sem assinatura cadastrada (ainda nao aconteceu pra nenhuma
+      // em producao, mas o endpoint nao pode quebrar por isso): nada a
+      // avisar, silencio e a resposta correta.
+      if (!assinatura) return json({ aviso: null })
+      return json({ aviso: avisoParaCliente(assinatura) })
+    }
+
+    /* ==================== PLATAFORMA (admin da ETNA, nao de um restaurante) ====================
+     * Identidade por E-MAIL (`plataforma_admins`, migration 0027) — nunca por
+     * papel nem empresa_id. Um usuario comum de qualquer empresa cujo e-mail
+     * bata com a tabela vira admin da plataforma; ninguem mais chega perto
+     * destas rotas. Reconferido a cada requisicao (mesma disciplina do
+     * `papel`, que tambem nunca vem do token).
+     */
+    const souPlataformaAdmin = async () => Boolean(ctx.email && await plataformaAdminRepo.findByEmail(ctx.email))
+    const exigePlataformaAdmin = async () => (await souPlataformaAdmin()) ? null : err('Sem permissao', 403)
+
+    if (route === '/plataforma/eu' && method === 'GET') {
+      return json({ admin: await souPlataformaAdmin() })
+    }
+
+    if (route === '/plataforma/empresas' && method === 'GET') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const [empresas, assinaturas, logins] = await Promise.all([
+        empresaRepo.list(),
+        assinaturaRepo.listTodas(),
+        auditoriaRepo.listLogins(),
+      ])
+      const assinaturaPorEmpresa = new Map(assinaturas.map((a) => [a.empresa_id, a]))
+      // `logins` ja vem ordenado por data desc (ver repository) — o PRIMEIRO
+      // que aparece pra cada empresa_id e o mais recente. Reduzido aqui em
+      // vez de GROUP BY no banco, de proposito (ver nota no repository).
+      const ultimoLoginPorEmpresa = new Map()
+      for (const l of logins) if (!ultimoLoginPorEmpresa.has(l.empresa_id)) ultimoLoginPorEmpresa.set(l.empresa_id, l.created_at)
+
+      const linhas = empresas.map((e) => {
+        const assinatura = assinaturaPorEmpresa.get(e.id) || null
+        return {
+          empresa_id: e.id,
+          nome: e.nome_comercial || e.nome,
+          slug: e.slug,
+          ativo: e.ativo,
+          created_at: e.created_at,
+          ultimo_acesso: ultimoLoginPorEmpresa.get(e.id) || null,
+          assinatura: assinatura ? { ...clean(assinatura), status_efetivo: statusEfetivoAssinatura(assinatura) } : null,
+        }
+      })
+      const comStatus = linhas.filter((l) => l.assinatura).map((l) => l.assinatura)
+      return json({ empresas: linhas, resumo: resumoCarteira(comStatus) })
+    }
+
+    /**
+     * Cria OU atualiza a assinatura de uma empresa. Endpoint so de
+     * configuracao — nunca avanca vencimento nem gera pagamento (isso e
+     * `/plataforma/assinaturas/:id/pagar`, abaixo). `empresa_id` UNIQUE na
+     * tabela (migration 0027): upsert por empresa, nunca duplicata.
+     */
+    if (seg[0] === 'plataforma' && seg[1] === 'empresas' && seg[2] && seg[3] === 'assinatura' && method === 'PUT') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const empresaId = seg[2]
+      const empresaAlvo = await empresaRepo.findById(empresaId)
+      if (!empresaAlvo) return err('Empresa nao encontrada', 404)
+      const b = (await request.json()) || {}
+      const valor = Number(b.valor)
+      if (!Number.isFinite(valor) || valor < 0) return err('valor deve ser um numero valido')
+      const diaVencimento = Number(b.dia_vencimento)
+      if (!Number.isInteger(diaVencimento) || diaVencimento < 1 || diaVencimento > 31) return err('dia_vencimento deve ser um inteiro entre 1 e 31')
+      if (!b.proximo_vencimento) return err('proximo_vencimento obrigatorio')
+
+      const existente = await assinaturaRepo.findByEmpresa(empresaId)
+      let salva
+      if (existente) {
+        salva = await assinaturaRepo.update(existente.id, {
+          plano: b.plano || existente.plano, valor: round2(valor), dia_vencimento: diaVencimento,
+          proximo_vencimento: b.proximo_vencimento, status: 'ativa', observacoes: b.observacoes ?? existente.observacoes,
+          updated_at: new Date(),
+        })
+      } else {
+        salva = await assinaturaRepo.create({
+          id: uuidv4(), empresa_id: empresaId, plano: b.plano || 'basico', valor: round2(valor),
+          dia_vencimento: diaVencimento, proximo_vencimento: b.proximo_vencimento, status: 'ativa',
+          ultimo_pagamento_em: null, observacoes: b.observacoes || '', created_at: new Date(), updated_at: new Date(),
+        })
+      }
+      await auditoriaRepo.registrar({ empresa_id: empresaId, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: 'configurar_assinatura', entidade: 'assinatura', entidade_id: salva.id, dados: { plano: salva.plano, valor: salva.valor } })
+      return json(clean({ ...salva, status_efetivo: statusEfetivoAssinatura(salva) }))
+    }
+
+    /**
+     * Registra 1 mensalidade paga e AVANCA `proximo_vencimento` em 1 mes —
+     * `adicionarMeses()` (lib/contas.js, ja usado pra recorrencia de contas)
+     * clampa no ultimo dia do mes destino, entao "todo dia 31" nunca rola
+     * pra marco em fevereiro. O historico (`assinatura_pagamentos`) nunca e
+     * sobrescrito — e a memoria de quem sempre paga atrasado.
+     */
+    if (seg[0] === 'plataforma' && seg[1] === 'assinaturas' && seg[2] && seg[3] === 'pagar' && method === 'PUT') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const assinatura = await assinaturaRepo.findById(seg[2])
+      if (!assinatura) return err('Assinatura nao encontrada', 404)
+      const b = (await request.json()) || {}
+      const pagoEm = b.pago_em || new Date().toISOString().slice(0, 10)
+      const valorPago = Number(b.valor) || assinatura.valor
+
+      const pagamento = await assinaturaPagamentoRepo.create({
+        id: uuidv4(), empresa_id: assinatura.empresa_id, assinatura_id: assinatura.id,
+        valor: round2(valorPago), competencia: assinatura.proximo_vencimento, pago_em: pagoEm,
+        metodo: b.metodo || '', observacoes: b.observacoes || '', registrado_por: ctx.nome || '',
+        created_at: new Date(),
+      })
+      const novoVencimento = adicionarMeses(assinatura.proximo_vencimento, 1)
+      const atualizada = await assinaturaRepo.update(assinatura.id, {
+        proximo_vencimento: novoVencimento, ultimo_pagamento_em: pagoEm, updated_at: new Date(),
+      })
+      await auditoriaRepo.registrar({ empresa_id: assinatura.empresa_id, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: 'registrar_pagamento_assinatura', entidade: 'assinatura', entidade_id: assinatura.id, dados: { valor: pagamento.valor, novo_vencimento: novoVencimento } })
+      return json({ assinatura: clean({ ...atualizada, status_efetivo: statusEfetivoAssinatura(atualizada) }), pagamento: clean(pagamento) })
+    }
+
+    if (seg[0] === 'plataforma' && seg[1] === 'assinaturas' && seg[2] && seg[3] === 'cancelar' && method === 'PUT') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const assinatura = await assinaturaRepo.findById(seg[2])
+      if (!assinatura) return err('Assinatura nao encontrada', 404)
+      const atualizada = await assinaturaRepo.update(assinatura.id, { status: 'cancelada', updated_at: new Date() })
+      await auditoriaRepo.registrar({ empresa_id: assinatura.empresa_id, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: 'cancelar_assinatura', entidade: 'assinatura', entidade_id: assinatura.id, dados: {} })
+      return json(clean({ ...atualizada, status_efetivo: statusEfetivoAssinatura(atualizada) }))
+    }
+
+    /**
+     * Bloqueio TOTAL de acesso — `empresas.ativo`, o mesmo campo que ja
+     * existia (agora de fato aplicado no login, ver auth/login abaixo).
+     * SEMPRE manual: nada neste sistema desliga uma empresa sozinho so
+     * porque a mensalidade atrasou — decisao explicita do dono
+     * (2026-08-18): "eu devo ter a opcao de bloquear".
+     */
+    if (seg[0] === 'plataforma' && seg[1] === 'empresas' && seg[2] && seg[3] === 'bloqueio' && method === 'PUT') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const empresaId = seg[2]
+      const empresaAlvo = await empresaRepo.findById(empresaId)
+      if (!empresaAlvo) return err('Empresa nao encontrada', 404)
+      const b = (await request.json()) || {}
+      if (typeof b.ativo !== 'boolean') return err('ativo deve ser true ou false')
+      await empresaRepo.update(empresaId, { ativo: b.ativo })
+      await auditoriaRepo.registrar({ empresa_id: empresaId, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: b.ativo ? 'desbloquear_empresa' : 'bloquear_empresa', entidade: 'empresa', entidade_id: empresaId, dados: {} })
+      return json({ empresa_id: empresaId, ativo: b.ativo })
+    }
+
+    /**
+     * Bloqueio PARCIAL — desliga um modulo especifico de uma empresa
+     * qualquer. Mesma logica de PUT /modulos/:chave (que so o OWNER da
+     * PROPRIA empresa pode chamar); esta variante e o equivalente pra
+     * quando quem decide e o admin da plataforma, mirando qualquer empresa.
+     */
+    if (seg[0] === 'plataforma' && seg[1] === 'empresas' && seg[2] && seg[3] === 'modulos' && seg[4] && method === 'PUT') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const empresaId = seg[2]
+      const chave = seg[4]
+      const mod = MODULOS[chave]
+      if (!mod) return err(`Modulo "${chave}" nao pode ser configurado`, 404)
+      const empresaAlvo = await empresaRepo.findById(empresaId)
+      if (!empresaAlvo) return err('Empresa nao encontrada', 404)
+      const b = (await request.json()) || {}
+      if (typeof b.ativo !== 'boolean') return err('ativo deve ser true ou false')
+
+      const config = { ...(empresaAlvo.config || {}) }
+      const flags = { ...(config.feature_flags || {}) }
+      for (const f of mod.flags) flags[f] = b.ativo
+      config.feature_flags = flags
+      await empresaRepo.update(empresaId, { config })
+      await auditoriaRepo.registrar({ empresa_id: empresaId, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: b.ativo ? 'ativar_modulo' : 'desativar_modulo', entidade: 'empresa', entidade_id: empresaId, dados: { modulo: chave, via: 'plataforma' } })
       return json({ chave, label: mod.label, ativo: b.ativo })
     }
 

@@ -274,6 +274,61 @@ export interface Conta extends TenantScoped {
 }
 
 /**
+ * Assinatura — a mensalidade que O RESTAURANTE paga PARA A ETNA (migration
+ * 0027). NAO confundir com `Conta`: aquela e o financeiro do restaurante
+ * (fornecedor dele); esta e o contrato comercial da ETNA com o restaurante.
+ *
+ * `status: 'atrasada'` NUNCA e gravado — so existe como valor calculado na
+ * leitura (`statusEfetivo` em lib/assinatura.js), a partir de
+ * `proximo_vencimento` e `status === 'ativa'`. Mesma razao de
+ * `Conta.status`: um status de atraso gravado exigiria um robo revisando
+ * todo dia, e um dia sem rodar deixaria a carteira inteira mentindo.
+ */
+export interface Assinatura extends TenantScoped {
+  id: UUID;
+  plano: string;
+  valor: number;
+  /** Dia do mes (1-31) combinado com o cliente. */
+  dia_vencimento: number;
+  /** Proxima data de cobranca — `"YYYY-MM-DD"`. */
+  proximo_vencimento: string;
+  status: 'ativa' | 'cancelada';
+  ultimo_pagamento_em: string | null;
+  observacoes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Um pagamento de mensalidade recebido — historico, nunca sobrescrito. */
+export interface AssinaturaPagamento extends TenantScoped {
+  id: UUID;
+  assinatura_id: UUID;
+  valor: number;
+  /** Mes/ano a que este pagamento se refere — `"YYYY-MM-DD"` (dia 1 do mes). */
+  competencia: string;
+  pago_em: string;
+  metodo: string;
+  observacoes: string;
+  registrado_por: string;
+  created_at: string;
+}
+
+/**
+ * Administrador da PLATAFORMA (a ETNA), nao de um restaurante. Tabela
+ * SEPARADA de `Usuario` de proposito — ver migration 0027: um `Usuario`
+ * sempre pertence a uma empresa; a identidade de admin e o e-mail,
+ * desacoplada de qualquer tenant, para que o vazamento de uma conta de
+ * restaurante nunca entregue a plataforma inteira.
+ */
+export interface PlataformaAdmin {
+  id: UUID;
+  email: string;
+  nome: string;
+  ativo: boolean;
+  created_at: string;
+}
+
+/**
  * Sessao de caixa. Um caixa aberto por empresa por vez — garantido por
  * indice unico parcial no Postgres, nao so pela checagem na aplicacao.
  */
@@ -468,6 +523,24 @@ export interface ContaRepository {
   update(empresaId: UUID, id: UUID, patch: Partial<Conta>): Promise<Conta>;
 }
 
+export interface AssinaturaRepository {
+  create(entity: Assinatura): Promise<Assinatura>;
+  findByEmpresa(empresaId: UUID): Promise<Assinatura | null>;
+  findById(id: UUID): Promise<Assinatura | null>;
+  /** SEM filtro de empresa — so para o Painel da Plataforma (isPlataformaAdmin em route.js). */
+  listTodas(): Promise<Assinatura[]>;
+  update(id: UUID, patch: Partial<Assinatura>): Promise<Assinatura>;
+}
+
+export interface AssinaturaPagamentoRepository {
+  create(entity: AssinaturaPagamento): Promise<AssinaturaPagamento>;
+  listByEmpresa(empresaId: UUID, limite?: number): Promise<AssinaturaPagamento[]>;
+}
+
+export interface PlataformaAdminRepository {
+  findByEmail(email: string): Promise<PlataformaAdmin | null>;
+}
+
 export interface CaixaRepository extends Repository<Caixa> {
   findAberto(empresaId: UUID): Promise<Caixa | null>;
   listarFechados(empresaId: UUID, limite?: number): Promise<Caixa[]>;
@@ -483,6 +556,8 @@ export interface EmpresaRepository {
   findBySlug(slug: string): Promise<Empresa | null>;
   create(empresa: Empresa): Promise<Empresa>;
   update(id: UUID, patch: Partial<Empresa>): Promise<Empresa | null>;
+  /** TODAS as empresas, sem filtro — so para o Painel da Plataforma. */
+  list(): Promise<Empresa[]>;
 }
 
 export interface UsuarioRepository extends Repository<Usuario> {
@@ -494,6 +569,8 @@ export interface UsuarioRepository extends Repository<Usuario> {
 export interface AuditoriaRepository {
   list(empresaId: UUID, limit?: number): Promise<Auditoria[]>;
   registrar(entry: Omit<Auditoria, 'id' | 'created_at'>): Promise<Auditoria>;
+  /** Logins de TODAS as empresas — so para o Painel da Plataforma calcular "ultimo acesso". */
+  listLogins(limit?: number): Promise<Pick<Auditoria, 'empresa_id' | 'usuario_nome' | 'created_at'>[]>;
 }
 
 /** Chave e (empresaId, tipo) em vez de id — sempre upsert. */
