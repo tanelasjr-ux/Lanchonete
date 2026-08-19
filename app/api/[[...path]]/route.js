@@ -335,6 +335,71 @@ async function mapaCustoProdutos(repos, ctx, itens) {
   }
 }
 
+/**
+ * Reage a QUALQUER pagamento assincrono (Pix ou Point) que acabou de mudar
+ * de status — chamada pelo webhook do Mercado Pago (Pix), pelo webhook do
+ * Point, e pelo polling de GET /pagamentos/:id. E o UNICO lugar que
+ * sincroniza a comanda e lanca receita do pedido: sem essa centralizacao,
+ * cada gateway reimplementaria a mesma logica e divergiria com o tempo
+ * (mesmo raciocinio do achado #18 do HANDOFF — "if (!updated)" so vale se
+ * TODOS os callers passarem pelo mesmo caminho).
+ *
+ * `pagamento` precisa ser o registro JA CARREGADO do banco (com
+ * comanda_id/pedido_id/valor/metodo) — quem chama busca antes de confirmar.
+ * `origem` e so para o audit log (ex: 'webhook_point', 'poll_mercadopago').
+ */
+async function confirmarPagamento(repos, empresaId, pagamento, novoStatus, origem) {
+  const { pagamentoRepo, comandaRepo, pedidoRepo, transacaoRepo, clienteRepo, caixaRepo, auditoriaRepo } = repos
+  if (pagamento.status === novoStatus) return // ja processado (idempotencia)
+
+  await pagamentoRepo.update(empresaId, pagamento.id, { status: novoStatus, updated_at: new Date() })
+
+  if (pagamento.comanda_id) {
+    await comandaRepo.atualizarStatusPagamentoResumo(empresaId, pagamento.comanda_id, pagamento.id, novoStatus)
+    // `atualizarStatusPagamentoResumo` so atualiza o STATUS do item dentro do
+    // array `pagamentos`. `pago`/`restante`/`total`, porem, sao campos
+    // DERIVADOS e CACHEADOS no proprio documento/linha da comanda — em
+    // ambos os backends (Mongo e Supabase: ver `setDerivados()` em cada
+    // repo), recalculados e persistidos apenas por `reloadComanda()` em
+    // route.js, que so roda dentro dos handlers HTTP de comanda. Sem este
+    // passo aqui, um GET /comandas/:id logo apos o webhook confirmar
+    // continuaria mostrando o `restante` antigo ate a proxima mutacao da
+    // comanda por outro caminho (add item, transferir, etc.) — o que
+    // quebraria a propria verificacao manual desta task (Step 5) e a
+    // promessa desta funcao ("sincroniza a comanda"). Achado durante o
+    // teste manual, nao previsto no texto original do brief.
+    const comandaAtualizada = await comandaRepo.findById(empresaId, pagamento.comanda_id)
+    if (comandaAtualizada) await comandaRepo.setDerivados(empresaId, pagamento.comanda_id, computeComanda(comandaAtualizada))
+  }
+
+  if (pagamento.pedido_id && novoStatus === 'approved') {
+    const pedido = await pedidoRepo.findById(empresaId, pagamento.pedido_id)
+    // `pago_em` ja preenchido: outra notificacao (webhook + poll na mesma
+    // janela) chegou primeiro. Nunca lancar receita duas vezes.
+    if (pedido && !pedido.pago_em) {
+      const pagoEm = new Date()
+      await pedidoRepo.update(empresaId, pedido.id, { pago_em: pagoEm })
+      const caixaAberto = await caixaRepo.findAberto(empresaId)
+      const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
+      const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
+      await transacaoRepo.create({
+        id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
+        descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
+        forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
+        custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
+        data: pagoEm, created_at: pagoEm,
+      })
+      if (pedido.cliente_id) await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor)
+    }
+  }
+
+  await auditoriaRepo.registrar({
+    empresa_id: empresaId, usuario_id: null, usuario_nome: `Mercado Pago (${origem})`,
+    acao: 'pagamento_confirmado', entidade: 'pagamento', entidade_id: pagamento.id,
+    dados: { status: novoStatus, comanda_id: pagamento.comanda_id, pedido_id: pagamento.pedido_id },
+  })
+}
+
 /* ============================ SEED (demo) ============================= */
 async function seedEmpresa(repos, empresa_id, ctx) {
   const now = Date.now()
@@ -715,7 +780,9 @@ async function handler(request, { params }) {
       // busca status autoritativo no gateway
       let statusInfo
       try { statusInfo = await provider.getStatus(dataId) } catch { return json({ ok: true }) }
-      await pagamentoRepo.atualizarStatusPorProviderPaymentId(empresaId, 'mercadopago', String(dataId), statusInfo.status)
+      const pagamento = await pagamentoRepo.findByProviderPaymentId(empresaId, 'mercadopago', String(dataId))
+      if (!pagamento) return json({ ok: true }) // pagamento de outro fluxo, nunca aconteceu por aqui
+      await confirmarPagamento(repos, empresaId, pagamento, statusInfo.status, 'webhook_pix')
       return json({ ok: true, status: statusInfo.status })
     }
 
@@ -2704,6 +2771,10 @@ async function handler(request, { params }) {
         created_at: new Date(), updated_at: new Date(),
       }
       await pagamentoRepo.create(pagamento)
+      await comandaRepo.pushPagamentoResumo(ctx.empresa_id, comanda.id, {
+        id: pagamento.id, metodo: pagamento.metodo, valor: pagamento.valor,
+        status: pagamento.status, provider: pagamento.provider, created_at: pagamento.created_at,
+      })
       await audit(repos, ctx, 'pix_criado', 'comanda', comanda.id, { valor, provider_payment_id: result.providerPaymentId })
       return json({ id: pagamento.id, status: pagamento.status, valor, qr_code: result.qrCode, qr_code_base64: result.qrCodeBase64, ticket_url: result.ticketUrl }, 201)
     }
