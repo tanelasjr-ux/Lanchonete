@@ -20,7 +20,12 @@ def nova_empresa(nome):
     })
     r.raise_for_status()
     dados = r.json()
-    return {"Authorization": f"Bearer {dados['token']}"}, dados["empresa"]["id"]
+    headers = {"Authorization": f"Bearer {dados['token']}"}
+    # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia mais
+    # sozinho — ver route.js. Os testes desta suite ja contavam com a massa
+    # demo (mesas, "ruido" de vendas filtrado por pedido_id/comanda_id).
+    requests.post(f"{BASE_URL}/empresa/seed-demo", headers=headers)
+    return headers, dados["empresa"]["id"]
 
 
 def novo_produto(headers, nome, preco, custo):

@@ -648,8 +648,12 @@ async function handler(request, { params }) {
       }
       await usuarioRepo.create(usuario)
 
+      // Ate 2026-08-19 rodava `seedEmpresa()` aqui, sempre — toda empresa
+      // nova ja nascia com dados ficticios, o que esvaziava o checklist de
+      // onboarding (B2): "cadastrar categoria"/"criar mesas" apareceriam
+      // prontos sem o dono ter feito nada. Virou `POST /empresa/seed-demo`,
+      // sob demanda, oferecido como "quero ver com dados de exemplo".
       const ctx = { empresa_id, usuario_id, nome, papel: 'OWNER' }
-      await seedEmpresa(repos, empresa_id, ctx)
       await audit(repos, ctx, 'register', 'empresa', empresa_id, { empresa_nome })
 
       const token = signToken({ usuario_id, empresa_id, papel: 'OWNER' })
@@ -1008,6 +1012,50 @@ async function handler(request, { params }) {
       _empresaCache = undefined // a empresa mudou nesta requisicao; nao servir o estado velho
       await audit(repos, ctx, b.ativo ? 'ativar_modulo' : 'desativar_modulo', 'empresa', ctx.empresa_id, { modulo: chave })
       return json({ chave, label: mod.label, ativo: b.ativo })
+    }
+
+    /**
+     * Onboarding guiado (B2). Cada item e DERIVADO de dados reais que ja
+     * existem — nunca uma flag "concluido" gravada em algum lugar, mesma
+     * regra de "nunca guardar o que da pra recalcular" do resto do sistema
+     * (status_efetivo de contas/assinaturas). `destino` e a `view` do
+     * frontend (ver NAV em app/page.js) pra onde o botao "Ir" de cada item
+     * deve levar — o vocabulario de onde cada acao acontece mora aqui, nao
+     * duplicado no cliente.
+     */
+    if (route === '/onboarding/status' && method === 'GET') {
+      const empresa = await empresaAtual()
+      const [categorias, produtos, mesas, transacoes] = await Promise.all([
+        categoriaRepo.list(ctx.empresa_id),
+        produtoRepo.list(ctx.empresa_id),
+        temModulo(empresa, 'mesas') ? mesaRepo.list(ctx.empresa_id) : Promise.resolve([]),
+        transacaoRepo.list(ctx.empresa_id),
+      ])
+      const itens = [
+        { chave: 'categoria', label: 'Cadastre sua primeira categoria', destino: 'cardapio', feito: categorias.length > 0 },
+        { chave: 'produto_custo', label: 'Cadastre um produto com o custo preenchido', destino: 'cardapio', feito: produtos.some((p) => p.custo !== null && p.custo !== undefined) },
+        { chave: 'venda', label: 'Registre sua primeira venda', destino: 'pedidos', feito: transacoes.some((t) => t.tipo === 'receita') },
+      ]
+      if (temModulo(empresa, 'mesas')) {
+        itens.splice(2, 0, { chave: 'mesa', label: 'Configure suas mesas', destino: 'mesas', feito: mesas.length > 0 })
+      }
+      return json({ itens, completo: itens.every((i) => i.feito) })
+    }
+
+    /**
+     * Popula a empresa com dados de demonstracao (produtos, mesas, pedidos
+     * de exemplo etc.) — SOB DEMANDA, nunca mais automatico no signup (ate
+     * 2026-08-19 rodava sozinho em TODO cadastro, o que esvaziava o
+     * proposito do checklist de onboarding acima: toda empresa nova ja
+     * "nascia pronta"). Bloqueado se a empresa ja tem alguma categoria — nao
+     * ha como semear duas vezes sem duplicar tudo.
+     */
+    if (route === '/empresa/seed-demo' && method === 'POST') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      const categorias = await categoriaRepo.list(ctx.empresa_id)
+      if (categorias.length > 0) return err('Esta empresa ja tem dados cadastrados', 409)
+      await seedEmpresa(repos, ctx.empresa_id, ctx)
+      return json({ ok: true })
     }
 
     /* ==================== ASSINATURA (visao do CLIENTE) ====================

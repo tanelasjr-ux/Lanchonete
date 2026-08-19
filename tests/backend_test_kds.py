@@ -36,6 +36,10 @@ def registrar_tenant(nome_empresa):
     })
     assert resp.status_code == 200, f"register falhou: {resp.text}"
     data = resp.json()
+    # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia mais
+    # sozinho — ver route.js. Esta suite assume a comanda/mesa demo abaixo.
+    seed = requests.post(f"{BASE_URL}/empresa/seed-demo", headers={"Authorization": f"Bearer {data['token']}"})
+    assert seed.status_code == 200, f"seed-demo falhou: {seed.text}"
     return {"token": data["token"], "empresa": data["empresa"], "usuario": data["usuario"]}
 
 try:

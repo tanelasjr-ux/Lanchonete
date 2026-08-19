@@ -76,6 +76,15 @@ try:
         log_fail("Setup Tenant A", f"Status {resp.status_code}: {resp.text}", critical=True)
         raise Exception("Cannot proceed without tenant setup")
 
+    # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia mais
+    # sozinho — ver route.js. Esta suite assume as 2 conversas de
+    # demonstracao mais abaixo, entao aciona o seed explicitamente.
+    seed_resp = requests.post(f"{BASE_URL}/empresa/seed-demo", headers={"Authorization": f"Bearer {tenant_a['token']}"})
+    if seed_resp.status_code == 200:
+        log_pass("Seed demo data (Tenant A) - POST /empresa/seed-demo")
+    else:
+        log_fail("Seed demo data (Tenant A)", f"Status {seed_resp.status_code}: {seed_resp.text}", critical=True)
+
     # Webhook agora exige assinatura (mesmo padrao do webhook do Mercado
     # Pago): configura Evolution para a integracao ficar "configurado" e
     # capturar o webhookSecret gerado automaticamente. Sem isso, /whatsapp/webhook
@@ -449,6 +458,7 @@ try:
     if resp.status_code == 200:
         tenant_c_token = resp.json()["token"]
         tenant_c_headers = {"Authorization": f"Bearer {tenant_c_token}"}
+        requests.post(f"{BASE_URL}/empresa/seed-demo", headers=tenant_c_headers)  # ver nota B2 acima
         conversas_c = requests.get(f"{BASE_URL}/conversas", headers=tenant_c_headers).json()
         if conversas_c:
             msg_body = {"texto": "Ola! Como posso ajudar?"}
@@ -686,9 +696,15 @@ try:
         tenant_b["token"] = data["token"]
         tenant_b["empresa_id"] = data["empresa"]["id"]
         log_pass(f"Register Tenant B - empresa_id: {tenant_b['empresa_id']}")
-        
-        # Get conversas for Tenant B (should have only 2 from seed, not the webhook one from Tenant A)
+
         headers_b = {"Authorization": f"Bearer {tenant_b['token']}"}
+        seed_resp_b = requests.post(f"{BASE_URL}/empresa/seed-demo", headers=headers_b)
+        if seed_resp_b.status_code == 200:
+            log_pass("Seed demo data (Tenant B) - POST /empresa/seed-demo")
+        else:
+            log_fail("Seed demo data (Tenant B)", f"Status {seed_resp_b.status_code}: {seed_resp_b.text}", critical=True)
+
+        # Get conversas for Tenant B (should have only 2 from seed, not the webhook one from Tenant A)
         resp2 = requests.get(f"{BASE_URL}/conversas", headers=headers_b)
         if resp2.status_code == 200:
             conversas_b = resp2.json()

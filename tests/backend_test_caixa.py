@@ -52,7 +52,11 @@ def criar_empresa():
     r.raise_for_status()
     dados = r.json()
     token = dados["token"]
-    return {"Authorization": f"Bearer {token}"}, dados.get("empresa", {}).get("id")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia mais
+    # sozinho — ver route.js. Esta suite assume mesas demo prontas mais abaixo.
+    requests.post(f"{BASE_URL}/empresa/seed-demo", headers=headers)
+    return headers, dados.get("empresa", {}).get("id")
 
 
 def criar_produto(headers, preco, nome="Item Teste"):

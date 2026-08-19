@@ -76,9 +76,21 @@ try:
     else:
         log_fail("Register tenant", f"Status {resp.status_code}: {resp.text}", critical=True)
         exit(1)
-    
+
     headers = {"Authorization": f"Bearer {tenant['token']}"}
-    
+
+    # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia mais
+    # sozinho — ver route.js. Esta suite sempre assumiu dados de
+    # demonstracao prontos (8 mesas, Mesa 02 com comanda, etc.), entao
+    # aciona o seed explicitamente, restaurando o mesmo estado inicial de
+    # antes.
+    seed_resp = requests.post(f"{BASE_URL}/empresa/seed-demo", headers=headers)
+    if seed_resp.status_code == 200:
+        log_pass("Seed demo data", "POST /empresa/seed-demo")
+    else:
+        log_fail("Seed demo data", f"Status {seed_resp.status_code}: {seed_resp.text}", critical=True)
+        exit(1)
+
     # Verify seed created 8 mesas
     print("\nVerifying seed created 8 mesas...")
     resp = requests.get(f"{BASE_URL}/mesas", headers=headers)

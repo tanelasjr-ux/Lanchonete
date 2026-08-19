@@ -76,6 +76,15 @@ try:
             log_pass("Register Tenant A - returns 200 with token, usuario, empresa, permissions")
             print(f"   Empresa ID: {tenant_a['empresa']['id']}")
             print(f"   Usuario ID: {tenant_a['usuario']['id']}")
+            # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia
+            # mais sozinho — ver route.js. Esta suite assume dados de
+            # demonstracao prontos logo abaixo, entao aciona o seed
+            # explicitamente.
+            seed_resp = requests.post(f"{BASE_URL}/empresa/seed-demo", headers={"Authorization": f"Bearer {tenant_a['token']}"})
+            if seed_resp.status_code == 200:
+                log_pass("Seed demo data (Tenant A) - POST /empresa/seed-demo")
+            else:
+                log_fail("Seed demo data (Tenant A)", f"Status {seed_resp.status_code}: {seed_resp.text}", critical=True)
         else:
             log_fail("Register Tenant A - missing required fields in response", str(data), critical=True)
     else:
@@ -150,6 +159,11 @@ try:
             log_pass("Register Tenant B - returns 200 with token, usuario, empresa")
             print(f"   Empresa ID: {tenant_b['empresa']['id']}")
             print(f"   Usuario ID: {tenant_b['usuario']['id']}")
+            seed_resp_b = requests.post(f"{BASE_URL}/empresa/seed-demo", headers={"Authorization": f"Bearer {tenant_b['token']}"})
+            if seed_resp_b.status_code == 200:
+                log_pass("Seed demo data (Tenant B) - POST /empresa/seed-demo")
+            else:
+                log_fail("Seed demo data (Tenant B)", f"Status {seed_resp_b.status_code}: {seed_resp_b.text}", critical=True)
         else:
             log_fail("Register Tenant B - missing required fields", str(data), critical=True)
     else:
