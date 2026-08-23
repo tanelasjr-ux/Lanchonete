@@ -344,6 +344,24 @@ export interface PlataformaAdmin {
 }
 
 /**
+ * E-mail liberado pelo dono da ETNA para completar `POST /auth/register`.
+ * Sem `empresa_id` de proposito — igual a `PlataformaAdmin`, e
+ * infraestrutura da PLATAFORMA, nao de um tenant (a empresa ainda nem
+ * existe quando este registro e consultado). `usado_em` comeca `null` e e
+ * preenchido no momento em que o cadastro com aquele e-mail e aceito — da
+ * pro Painel ETNA mostrar "aguardando cadastro" vs "ja usado em DD/MM" sem
+ * cruzar com a tabela de usuarios.
+ */
+export interface EmailLiberado {
+  id: UUID;
+  email: string;
+  nome: string;
+  liberado_por: string;
+  usado_em: string | null;
+  created_at: string;
+}
+
+/**
  * Sessao de caixa. Um caixa aberto por empresa por vez — garantido por
  * indice unico parcial no Postgres, nao so pela checagem na aplicacao.
  */
@@ -554,6 +572,16 @@ export interface AssinaturaPagamentoRepository {
 
 export interface PlataformaAdminRepository {
   findByEmail(email: string): Promise<PlataformaAdmin | null>;
+}
+
+export interface EmailLiberadoRepository {
+  findByEmail(email: string): Promise<EmailLiberado | null>;
+  /** Mais recentes primeiro — mesma ordenacao que o Painel ETNA usa em toda listagem administrativa. */
+  list(): Promise<EmailLiberado[]>;
+  create(entity: EmailLiberado): Promise<EmailLiberado>;
+  /** Webhook logico do proprio cadastro: `POST /auth/register` chama isto ao aceitar um e-mail liberado. */
+  marcarUsado(email: string): Promise<void>;
+  delete(id: UUID): Promise<void>;
 }
 
 export interface CaixaRepository extends Repository<Caixa> {
