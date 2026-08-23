@@ -77,4 +77,23 @@ async function criarPedido(request, token, { produtoId, nome, preco, quantidade 
   return resp.json()
 }
 
-module.exports = { registrarEmpresa, autenticarComo, criarProduto, criarPedido, nomeUnico }
+/**
+ * Cria as mesas de demonstracao via API.
+ *
+ * Ate o B2 (onboarding guiado, 2026-08-19) o proprio `POST /auth/register`
+ * rodava o seed, entao toda empresa nova ja nascia com mesas 'livre' e os
+ * testes de mesa/comanda contavam com isso sem dizer. O B2 tirou o seed do
+ * cadastro e o transformou em `POST /empresa/seed-demo`, sob demanda — as
+ * suites Python foram atualizadas na epoca, mas os E2E nao, e o de comanda
+ * passou a falhar procurando uma mesa 'Livre' que nunca era criada. Quem
+ * precisa de mesa pre-existente chama isto explicitamente.
+ */
+async function semearDadosDemo(request, token) {
+  const resp = await request.post('/api/empresa/seed-demo', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok()) throw new Error(`seed demo falhou: ${resp.status()} ${await resp.text()}`)
+  return resp.json()
+}
+
+module.exports = { registrarEmpresa, autenticarComo, criarProduto, criarPedido, semearDadosDemo, nomeUnico }

@@ -3711,8 +3711,22 @@ function Mesas() {
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
         {mesas.map((m) => {
           const st = MESA_STATUS[m.status] || MESA_STATUS.livre
+          // `div role="button"` e nao `<button>`: o botao de renomear vive
+          // DENTRO do card, e botao aninhado em botao e HTML invalido — o
+          // navegador reestrutura o DOM sozinho para consertar, o que gerava
+          // erro de hidratacao do React no console e deixava o clique do card
+          // imprevisivel (o E2E de comanda nao conseguia mais clicar numa mesa
+          // "Livre"). Com div + role/tabIndex o card continua acessivel por
+          // teclado e o botao interno passa a ser HTML valido.
           return (
-            <button key={m.id} onClick={() => onClickMesa(m)} className={`relative text-left rounded-xl border-2 p-4 transition-all hover:shadow-md ${st.cls}`}>
+            <div
+              key={m.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onClickMesa(m)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClickMesa(m) } }}
+              className={`relative text-left rounded-xl border-2 p-4 transition-all hover:shadow-md cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${st.cls}`}
+            >
               <button
                 type="button"
                 title="Renomear mesa"
@@ -3744,7 +3758,7 @@ function Mesas() {
                   </div>
                 ) : null
               })()}
-            </button>
+            </div>
           )
         })}
         {mesas.length === 0 && <div className="col-span-full"><Empty>Nenhuma mesa configurada. Clique em "Configurar mesas".</Empty></div>}
