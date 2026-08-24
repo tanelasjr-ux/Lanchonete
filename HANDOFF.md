@@ -1,19 +1,27 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-19, noite. **Dois trabalhos em andamento em
-paralelo, pausados aqui por falta de tokens da sessao — comece por §0.0.**
+Ultima atualizacao: 2026-08-24. **Um trabalho em andamento, um concluido
+nesta retomada — comece por §0.0.**
 
 1. 🟡 **PDV (maquininha Mercado Pago Point)** — plano de 11 tasks,
-   **5/11 completas e commitadas** (`63414e5`), retomar na Task 6.
-2. 🟡 **Controle de acesso ao cadastro (allowlist de e-mail)** — spec
-   escrita e commitada (`794d165`), **plano de implementacao ainda NAO
-   escrito** — proximo passo antes de qualquer codigo e invocar
-   `superpowers:writing-plans` sobre essa spec.
+   **5/11 completas e commitadas** (`63414e5`), retomar na Task 6. Achado
+   nesta mesma retomada: a maquininha **TON nao pode ser usada** para
+   integracao (confirmado com a Stone e pelo dono) — ver §0.0.2 do
+   arquivo de memoria do assistente / decisao registrada, PDV segue com
+   Mercado Pago Point como planejado.
+2. ✅ **Controle de acesso ao cadastro (allowlist de e-mail)** —
+   **COMPLETO, revisado (task a task + revisao final do branch inteiro),
+   commitado e enviado ao GitHub (`f221a98`)**. **⚠️ Requer acao do dono
+   antes do proximo cadastro real — ver §0.0.2 abaixo, e importante.**
+3. ✅ **Bug corrigido nesta retomada: dialogo de "Novo pedido" cortava
+   os botoes de acao** no PC e no celular — corrigido, testado em varias
+   resolucoes, commitado (`abea854`). Achado no caminho: um teste E2E
+   estava quebrado desde o B2 (culpa da propria sessao anterior, corrigida
+   junto).
 
-Junto disso, **ja concluido, testado e no ar** nesta retomada: o texto
-"Sua operação mais simples..." saiu do Dashboard e ficou exclusivo da
-tela de login (commit `ae9a89f`) — pedido explicito do dono, feito fora
-dos dois planos acima, nao precisa de nenhuma acao futura.
+Junto disso, **ja concluido, testado e no ar** em retomada anterior: o
+texto "Sua operação mais simples..." saiu do Dashboard e ficou exclusivo
+da tela de login (commit `ae9a89f`).
 
 Antes disso, ja concluido e no ar em sessoes anteriores: **B2 — Onboarding
 guiado** (checklist substitui o marketing no Dashboard ate a empresa se
@@ -123,55 +131,68 @@ condicional/atomico no repository, filtrado por `pago_em IS NULL`), nao
 retroagir na Task 3. Ao despachar a Task 8, carregar esta exigencia
 explicitamente no dispatch do implementador.
 
-## 0.0.2 🟡 EM ANDAMENTO: Controle de acesso ao cadastro (allowlist de e-mail)
+## 0.0.2 ✅ Controle de acesso ao cadastro (allowlist de e-mail) — completo, revisado, no ar
 
-**Pedido do dono, no meio da execucao do PDV** (nao e do PDV, e um
-trabalho paralelo): *"eu como dono devo ter a possibilidade de adicionar
-os e-mails que podem ter acesso ao sistema... hoje qualquer empresa pode
-fazer o cadastro... corrija isso."* Junto disso, duas perguntas que ja
-foram respondidas em conversa (nao geraram trabalho):
-- "nao achei o botao que pausa o aviso de cobranca" — nao e bug: o botao
-  so aparece numa empresa que ja tem assinatura CONFIGURADA (confirmado:
-  nenhuma empresa em producao tem assinatura cadastrada ainda). Fluxo
-  certo: Painel ETNA → "Configurar" na empresa → so entao "Pagamento" e
-  "Pausar aviso" aparecem.
-- "como o sistema sabe que o cliente pagou a mensalidade da ETNA?" — hoje
-  100% manual (botao "Pagamento" no Painel ETNA). Nao ha integracao
-  bancaria; tecnicamente possivel via agregador de Open Finance (Pluggy/
-  Belvo), mas e projeto proprio, nao vale o esforco no volume atual.
+**⚠️ ACAO NECESSARIA DO DONO ANTES DE QUALQUER PROSPECT SE CADASTRAR:**
+esta feature deixa o cadastro (`POST /auth/register`) **fechado por
+padrao**. A tabela `emails_liberados` nasce vazia em producao — **ate o
+dono liberar pelo menos um e-mail pelo Painel ETNA (nova secao "E-mails
+liberados para cadastro"), NINGUEM consegue criar uma empresa nova**,
+nem o proprio dono numa conta nova. Isso e o comportamento pretendido
+(era o pedido), mas precisa ser comunicado ativamente — sem isso, o
+proximo prospect que tentar se cadastrar so ve um aviso pedindo pra
+chamar no WhatsApp.
 
-**Passou pelo brainstorming completo** (`superpowers:brainstorming`,
-classificado arquitetural) ate a spec escrita e commitada. **O plano de
-implementacao (`superpowers:writing-plans`) AINDA NAO FOI ESCRITO** —
-esse e o proximo passo antes de qualquer codigo.
+**Pedido original do dono** (2026-08-19, no meio da execucao do PDV):
+*"eu como dono devo ter a possibilidade de adicionar os e-mails que podem
+ter acesso ao sistema... hoje qualquer empresa pode fazer o cadastro...
+corrija isso."* Passou por brainstorming completo → spec → plano de 7
+tasks → execucao por subagentes → revisao final do branch inteiro →
+1 rodada de correcao → push. Ciclo completo, mesmo fluxo do PDV.
 
-**Documento:** `docs/superpowers/specs/2026-08-19-controle-acesso-cadastro-design.md`
-(commit `794d165`).
+**Documentos:**
+- Spec: `docs/superpowers/specs/2026-08-19-controle-acesso-cadastro-design.md`
+- Plano: `docs/superpowers/plans/2026-08-23-controle-acesso-cadastro-plan.md`
 
-**Decisoes ja tomadas (nao renegociar sem confirmar de novo):**
-- Mecanismo: **allowlist ANTES do cadastro** — dono libera o e-mail
-  primeiro (tabela nova `emails_liberados`, migration `0030`, mesmo
-  padrao de `plataforma_admins`), so entao aquele e-mail completa
-  `POST /auth/register`. Alternativas descartadas: aprovar DEPOIS do
-  cadastro, convite por link — ambas dao mais trabalho operacional ao
-  dono.
-- O link "Cadastre sua empresa" na tela de login **continua visivel** —
-  e-mail nao liberado vira erro claro + CTA do WhatsApp (funil de vendas,
-  nao beco sem saida).
-- **Achado durante o design, ja resolvido na spec:** as 17 suites de
-  teste deste projeto registram empresas descartaveis o tempo todo — sem
-  cuidado, o gate quebraria a regressao inteira (mesma classe de problema
-  que o B2 teve com o seed automatico). Solucao: `SIGNUP_ALLOWLIST_DISABLED=1`,
-  mesmo padrao ja usado para `RATE_LIMIT_DISABLED` — nunca setada em
-  producao. **Diferente do B2, nenhum arquivo de teste existente precisa
-  mudar** (o bypass e por variavel de ambiente, nao por dado semeado).
-- Revogar acesso de quem ja se cadastrou fica fora de escopo — ja existe
-  (bloquear a empresa inteira no Painel ETNA).
+**O que foi entregue:**
+- `POST /auth/register` recusa (403) e-mail nao liberado, com mensagem
+  clara + CTA de WhatsApp na tela de login (nao e beco sem saida, vira
+  funil de vendas).
+- Painel ETNA ganhou uma secao para liberar/listar/remover e-mails.
+- `SIGNUP_ALLOWLIST_DISABLED=1` desliga o gate — usado pelas suites de
+  teste (Python E `Playwright`, ambos precisavam da flag; achado real na
+  revisao final: o workflow de CI e o `playwright.config.js` tinham
+  ficado de fora, corrigido antes do merge) — **nunca setada em
+  producao**.
+- Migration `0030_emails_liberados.sql`, testada em transacao com
+  rollback contra producao antes de aplicar (mesma disciplina de sempre).
 
-**Para retomar:** ler a spec, confirmar que ainda faz sentido, invocar
-`superpowers:writing-plans` sobre ela pra gerar o plano de tasks, depois
-`superpowers:subagent-driven-development` pra executar — mesmo fluxo
-completo ja usado pro PDV.
+**Achado real corrigido durante a execucao (nao estava na spec):** o
+brief original mandava logar cada liberacao/remocao de e-mail pela
+funcao generica `audit()`, que grava sob o `empresa_id` do PRoprio admin
+da plataforma (que e so um usuario comum de alguma empresa, identificado
+por e-mail). Isso vazaria e-mails de prospects e acoes da plataforma no
+log de auditoria do restaurante do dono, visivel a qualquer funcionario
+com permissao de auditoria la. Corrigido removendo as duas chamadas de
+`audit()` — nao ha hoje conceito de "auditoria sem tenant" neste schema
+(`auditoria.empresa_id` e `NOT NULL` com FK). Quem liberou cada e-mail
+ainda fica registrado no proprio campo `liberado_por` da tabela; quem
+REMOVEU um e-mail nao fica registrado em lugar nenhum — aceito por ora
+(poucos admins da plataforma), revisitar com migration propria se um dia
+isso importar.
+
+**Pendencias nao-bloqueantes, registradas mas nao corrigidas** (avaliadas
+pela revisao final do branch, decidido nao valer a pena parar por elas):
+- Rota `DELETE /plataforma/emails-liberados/:id` sem teste de autorizacao
+  dedicado (a checagem existe e esta correta no codigo, so falta o teste).
+- Feature nunca foi exercitada de verdade contra o backend Supabase (que
+  e o de producao) — revisao auditou os dois backends linha a linha e nao
+  achou divergencia, mas vale um smoke test real (liberar + listar +
+  remover um e-mail de teste) assim que o deploy atual subir.
+- Verificacao do gate em si (403 real / aceitar apos liberar) e manual,
+  sem teste automatizado permanente — decisao deliberada do plano (
+  reiniciar o servidor no meio da suite automatizada seria mais fragil
+  que o ganho), documentada no proprio plano.
 
 ## 0.0.3 ✅ RESOLVIDO SOZINHO (historico): deploy automatico do EasyPanel tinha atrasado
 
@@ -1339,7 +1360,8 @@ imagem apesar do padrao geral de ignorar).
 | Fix: logo/icones do PWA 404 em producao | **Completo e no ar** — ver §0.1.2 |
 | Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
 | Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
-| PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | 🟡 **EM ANDAMENTO** — spec + plano completos, 3/11 tasks implementadas (`ad1dfe6`) — ver §0.0 |
+| PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | 🟡 **EM ANDAMENTO** — spec + plano completos, 5/11 tasks implementadas (`63414e5`) — ver §0.0 |
+| Controle de acesso ao cadastro (allowlist de e-mail) | ✅ **Completo, revisado e no ar** (`f221a98`) — requer o dono liberar ao menos 1 e-mail no Painel ETNA antes do proximo cadastro real — ver §0.0.2 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
@@ -1588,6 +1610,17 @@ navegador de verdade — nao suposicao:
 # 12. Commits recentes (sessao atual + anteriores)
 
 ```
+f221a98 fix(acesso): SIGNUP_ALLOWLIST_DISABLED no CI/E2E + docstring de teste (revisao final)
+dbeadea feat(acesso): aviso com CTA do WhatsApp quando o cadastro e bloqueado (Task 7)
+3565a92 feat(acesso): card de e-mails liberados no Painel ETNA (Task 6)
+f5e986d test(acesso): 6 testes de integracao das rotas admin de emails_liberados (Task 5)
+7f552c6 fix: remove audit calls from email-liberado routes (prevent cross-tenant leak) (Task 4, fix round 1)
+876739a feat(acesso): rotas admin GET/POST/DELETE /plataforma/emails-liberados (Task 4)
+d130833 feat(acesso): gate de allowlist em POST /auth/register (Task 3)
+f92d89d feat(acesso): emailLiberadoRepo (Mongo + Supabase), registrado na factory (Task 2)
+a22c594 feat(acesso): contrato de dominio + migration para emails_liberados (Task 1)
+abea854 fix(ui): dialogo alto vazava pelas duas bordas e travava a acao
+ae9a89f fix(ux): texto "Sua operação mais simples..." fica so na tela de login
 ad1dfe6 fix(pdv): confirmarPagamento() tambem sincroniza status da mesa (Task 3, fix round 1)
 5fb5706 fix(pdv): comanda nao refletia pagamento Pix confirmado por webhook (Mongo) (Task 3)
 5e6c890 feat(pdv): comandaRepo.atualizarStatusPagamentoResumo (Mongo real, Supabase no-op) (Task 2)
