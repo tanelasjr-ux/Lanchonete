@@ -1201,14 +1201,12 @@ async function handler(request, { params }) {
         liberado_por: ctx.email || ctx.nome || '', usado_em: null, created_at: new Date(),
       }
       await emailLiberadoRepo.create(entity)
-      await audit(repos, ctx, 'liberar_email', 'email_liberado', entity.id, { email: emailNorm })
       return json(clean(entity), 201)
     }
 
     if (seg[0] === 'plataforma' && seg[1] === 'emails-liberados' && seg[2] && method === 'DELETE') {
       const negado = await exigePlataformaAdmin(); if (negado) return negado
       await emailLiberadoRepo.delete(seg[2])
-      await audit(repos, ctx, 'remover_email_liberado', 'email_liberado', seg[2], {})
       return json({ ok: true })
     }
 
