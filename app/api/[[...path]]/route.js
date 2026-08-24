@@ -617,7 +617,7 @@ async function handler(request, { params }) {
       auditoriaRepo, integracaoRepo, mesaRepo, conversaRepo, mensagemRepo,
       pedidoRepo, comandaRepo, pagamentoRepo, empresaRepo, webhookEventsRepo,
       kdsTokenRepo, entregadorRepo, caixaRepo, caixaMovimentoRepo, contaRepo,
-      assinaturaRepo, assinaturaPagamentoRepo, plataformaAdminRepo,
+      assinaturaRepo, assinaturaPagamentoRepo, plataformaAdminRepo, emailLiberadoRepo,
     } = repos
 
     /* -------- health / meta -------- */
@@ -674,6 +674,18 @@ async function handler(request, { params }) {
       const exists = await usuarioRepo.findByEmail(emailNorm)
       if (exists) return err('E-mail ja cadastrado', 409)
 
+      // Controle de acesso ao cadastro (pedido do dono, 2026-08-19): so
+      // quem foi liberado no Painel ETNA consegue completar o cadastro.
+      // `SIGNUP_ALLOWLIST_DISABLED=1` desliga o gate — usado SO pela suite
+      // local/CI (mesmo padrao de RATE_LIMIT_DISABLED ja existente neste
+      // projeto), nunca setada em producao.
+      if (process.env.SIGNUP_ALLOWLIST_DISABLED !== '1') {
+        const liberado = await emailLiberadoRepo.findByEmail(emailNorm)
+        if (!liberado) {
+          return err('Este e-mail ainda nao foi liberado para cadastro. Fale com a ETNA para liberar seu acesso.', 403)
+        }
+      }
+
       const empresa_id = uuidv4()
       let slug = slugify(empresa_nome)
       if (await empresaRepo.findBySlug(slug)) slug = `${slug}-${empresa_id.slice(0, 6)}`
@@ -728,6 +740,9 @@ async function handler(request, { params }) {
       // sob demanda, oferecido como "quero ver com dados de exemplo".
       const ctx = { empresa_id, usuario_id, nome, papel: 'OWNER' }
       await audit(repos, ctx, 'register', 'empresa', empresa_id, { empresa_nome })
+      if (process.env.SIGNUP_ALLOWLIST_DISABLED !== '1') {
+        await emailLiberadoRepo.marcarUsado(emailNorm)
+      }
 
       const token = signToken({ usuario_id, empresa_id, papel: 'OWNER' })
       return json({ token, usuario: clean(usuario), empresa: clean(empresa), permissions: PERMISSIONS.OWNER })
