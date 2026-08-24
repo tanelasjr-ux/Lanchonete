@@ -2036,6 +2036,10 @@ async function handler(request, { params }) {
       if (travados.includes(pedido.status)) return err('Pedido ja concluido ou cancelado', 409)
       const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
       if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return err('Maquininha nao configurada', 400)
+      // mesma guarda da rota de comanda: sem isto, um clique duplo acenderia
+      // dois pedidos de cobranca na maquininha para o mesmo pedido.
+      const pendentes = await pagamentoRepo.list(ctx.empresa_id, { pedido_id: pedido.id, provider: 'mercadopago_point', status: 'pending' })
+      if (pendentes.length > 0) return err('Ja existe uma cobranca pendente neste pedido', 409)
       const valor = Number(pedido.total)
       if (valor <= 0) return err('Nada a pagar')
       const idempotency_key = uuidv4()
@@ -2916,6 +2920,11 @@ async function handler(request, { params }) {
       if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
       const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
       if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return err('Maquininha nao configurada', 400)
+      // sem isto, um clique duplo (ou uma segunda aba) acenderia DOIS
+      // pedidos de cobranca na maquininha para a mesma comanda - cobraria o
+      // cliente duas vezes de verdade no cartao, nao so um bug de UI.
+      const pendentes = await pagamentoRepo.list(ctx.empresa_id, { comanda_id: comanda.id, provider: 'mercadopago_point', status: 'pending' })
+      if (pendentes.length > 0) return err('Ja existe uma cobranca pendente nesta comanda', 409)
       const b = (await request.json()) || {}
       const totals = computeComanda(comanda)
       const valor = Number(b.valor || totals.restante || totals.total)

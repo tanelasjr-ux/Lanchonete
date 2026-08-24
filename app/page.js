@@ -3975,7 +3975,7 @@ function ComandaDialog({ comandaId, onClose }) {
               </div>
               <Button variant="outline" className="w-full h-9" onClick={() => setPay({ ...pay, valor: String(c.restante) })}>Preencher restante</Button>
               <Button variant="outline" className="w-full h-9" onClick={gerarPix}><QrCode className="h-4 w-4 mr-1" />Gerar Pix (Mercado Pago)</Button>
-              <Button variant="outline" className="w-full h-9" onClick={cobrarNoCartao} disabled={cobrando}>
+              <Button variant="outline" className="w-full h-9" onClick={cobrarNoCartao} disabled={cobrando || cartao?.status === 'pending'}>
                 <CreditCard className="h-4 w-4 mr-1" />{cobrando ? 'Acendendo maquininha…' : 'Cobrar no cartao (maquininha)'}
               </Button>
               {cartao && cartao.status === 'pending' && (
