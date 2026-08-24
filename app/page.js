@@ -270,11 +270,13 @@ function AuthScreen({ onAuth }) {
   const [mode, setMode] = useState('login')
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ empresa_nome: '', nome: '', email: '', senha: '' })
+  const [emailNaoLiberado, setEmailNaoLiberado] = useState(false)
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
   const submit = async (e) => {
     e.preventDefault()
     setLoading(true)
+    setEmailNaoLiberado(false)
     try {
       const path = mode === 'login' ? '/auth/login' : '/auth/register'
       const payload = mode === 'login' ? { email: form.email, senha: form.senha } : form
@@ -283,7 +285,11 @@ function AuthScreen({ onAuth }) {
       toast.success(mode === 'login' ? 'Bem-vindo de volta!' : 'Empresa criada com sucesso!')
       onAuth()
     } catch (err) {
-      toast.error(err.message)
+      if (mode === 'register' && err.message.includes('nao foi liberado')) {
+        setEmailNaoLiberado(true)
+      } else {
+        toast.error(err.message)
+      }
     } finally {
       setLoading(false)
     }
@@ -355,9 +361,23 @@ function AuthScreen({ onAuth }) {
               {mode === 'login' ? 'Entrar' : 'Criar empresa'}
             </Button>
           </form>
+          {emailNaoLiberado && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-2">
+              <p className="text-sm font-medium">Este e-mail ainda nao foi liberado para cadastro.</p>
+              <p className="text-sm text-muted-foreground">Fale com a ETNA para liberar seu acesso — e rapido.</p>
+              <a
+                href={`https://wa.me/${WHATSAPP_ETNA}?text=${encodeURIComponent(`Olá! Tentei me cadastrar no Restaurant OS com o e-mail ${form.email} e recebi um aviso de que preciso liberar meu acesso. Pode me ajudar?`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm font-medium text-emerald-600 hover:underline"
+              >
+                Falar no WhatsApp
+              </a>
+            </div>
+          )}
           <p className="text-sm text-center text-muted-foreground">
             {mode === 'login' ? 'Não tem conta?' : 'Já possui conta?'}{' '}
-            <button className="text-primary font-medium hover:underline" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+            <button className="text-primary font-medium hover:underline" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setEmailNaoLiberado(false) }}>
               {mode === 'login' ? 'Cadastre sua empresa' : 'Fazer login'}
             </button>
           </p>
