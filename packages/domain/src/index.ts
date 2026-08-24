@@ -540,6 +540,8 @@ export interface PedidoRepository extends Repository<Pedido>, BulkCreatable<Pedi
   listRecentes(empresaId: UUID, filter: Partial<Pedido>, limit: number): Promise<Pedido[]>;
   /** Usado na Central de Atendimento para achar o pedido ativo do cliente. */
   findByCliente(empresaId: UUID, clienteId: UUID): Promise<Pedido[]>;
+  /** Update atomico condicional a pago_em ainda nao setado - fecha a race entre webhook e poll do mesmo pagamento. Retorna true so na chamada que efetivamente setou. */
+  marcarPagoSeNaoPago(empresaId: UUID, id: UUID, pagoEm: Date): Promise<boolean>;
 }
 export interface TransacaoRepository extends Repository<Transacao>, BulkCreatable<Transacao> {
   /** GET /financeiro/transacoes: mais recentes primeiro, com limite. */

@@ -383,22 +383,27 @@ async function confirmarPagamento(repos, empresaId, pagamento, novoStatus, orige
 
   if (pagamento.pedido_id && novoStatus === 'approved') {
     const pedido = await pedidoRepo.findById(empresaId, pagamento.pedido_id)
-    // `pago_em` ja preenchido: outra notificacao (webhook + poll na mesma
-    // janela) chegou primeiro. Nunca lancar receita duas vezes.
-    if (pedido && !pedido.pago_em) {
+    if (pedido) {
       const pagoEm = new Date()
-      await pedidoRepo.update(empresaId, pedido.id, { pago_em: pagoEm })
-      const caixaAberto = await caixaRepo.findAberto(empresaId)
-      const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
-      const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
-      await transacaoRepo.create({
-        id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
-        descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
-        forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
-        custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
-        data: pagoEm, created_at: pagoEm,
-      })
-      if (pedido.cliente_id) await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor)
+      // Update atomico condicional (pedidoRepo.marcarPagoSeNaoPago) - so uma
+      // chamada concorrente (webhook vs poll do mesmo pagamento) recebe
+      // `true` e lanca receita. A antiga checagem em memoria (!pedido.pago_em)
+      // tinha uma janela entre leitura e escrita onde as duas chegariam a
+      // tempo de passar no if. Ver ledger da Task 8.
+      const marcou = await pedidoRepo.marcarPagoSeNaoPago(empresaId, pedido.id, pagoEm)
+      if (marcou) {
+        const caixaAberto = await caixaRepo.findAberto(empresaId)
+        const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
+        const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
+        await transacaoRepo.create({
+          id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
+          descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
+          forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
+          custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
+          data: pagoEm, created_at: pagoEm,
+        })
+        if (pedido.cliente_id) await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor)
+      }
     }
   }
 
@@ -808,6 +813,39 @@ async function handler(request, { params }) {
       if (!pagamento) return json({ ok: true }) // pagamento de outro fluxo, nunca aconteceu por aqui
       await confirmarPagamento(repos, empresaId, pagamento, statusInfo.status, 'webhook_pix')
       return json({ ok: true, status: statusInfo.status })
+    }
+
+    /**
+     * Webhook do Point — topico `order.processed`, DIFERENTE do topico
+     * `payment` que o Pix usa (verificado na documentacao MP, 2026-08-19).
+     * Mesmo esquema de assinatura da plataforma inteira (nao muda por
+     * topico) — reaproveita o mesmo verifyWebhook do adapter.
+     */
+    if (route === '/pagamentos/webhook/point' && method === 'POST') {
+      const url = new URL(request.url)
+      const empresaId = url.searchParams.get('tenant')
+      const dataId = url.searchParams.get('data.id') || url.searchParams.get('id')
+      if (!empresaId || !dataId) return json({ error: 'params ausentes' }, 400)
+      const integ = await integracaoRepo.findByTipo(empresaId, 'mercadopago')
+      if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return json({ error: 'nao configurado' }, 404)
+      let provider
+      try { provider = getPaymentProvider('mercadopago_point', integ.config) } catch { return json({ error: 'provider' }, 404) }
+      const ok = provider.verifyWebhook({
+        signature: request.headers.get('x-signature') || undefined,
+        requestId: request.headers.get('x-request-id') || undefined,
+        dataId,
+      })
+      if (!ok) return json({ error: 'assinatura invalida' }, 401)
+      const eventKey = `${empresaId}:${dataId}:${request.headers.get('x-request-id') || ''}`
+      const dedupe = await webhookEventsRepo.upsert(empresaId, eventKey, 'mercadopago_point')
+      if (!dedupe.isNew) return json({ ok: true, duplicated: true })
+      // busca status autoritativo — nunca confia no corpo do webhook
+      let orderInfo
+      try { orderInfo = await provider.getOrder(dataId) } catch { return json({ ok: true }) }
+      const pagamento = await pagamentoRepo.findByProviderPaymentId(empresaId, 'mercadopago_point', String(dataId))
+      if (!pagamento) return json({ ok: true })
+      await confirmarPagamento(repos, empresaId, pagamento, orderInfo.status, 'webhook_point')
+      return json({ ok: true, status: orderInfo.status })
     }
 
     /* ==================== WEBHOOK WHATSAPP (Evolution, pre-auth, assinado) ====================
@@ -3019,14 +3057,21 @@ async function handler(request, { params }) {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
       const p = await pagamentoRepo.findById(ctx.empresa_id, seg[1])
       if (!p) return err('Pagamento nao encontrado', 404)
-      // se pix mercadopago pendente, consulta status autoritativo
-      if (p.provider === 'mercadopago' && p.status === 'pending' && p.provider_payment_id) {
+      // pagamento assincrono (Pix ou Point) pendente: consulta status
+      // autoritativo — o webhook e um atalho, NUNCA a unica fonte. Sem
+      // isso, uma rede instavel na loja deixaria o caixa sem saber se pode
+      // liberar o cliente.
+      if (p.status === 'pending' && p.provider_payment_id && (p.provider === 'mercadopago' || p.provider === 'mercadopago_point')) {
         const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
-        if (integ && isGatewayConfigured('mercadopago', integ.config)) {
+        if (integ && isGatewayConfigured(p.provider, integ.config)) {
           try {
-            const st = await getPaymentProvider('mercadopago', integ.config).getStatus(p.provider_payment_id)
-            if (st.status !== p.status) { await pagamentoRepo.update(ctx.empresa_id, p.id, { status: st.status, updated_at: new Date() }); p.status = st.status }
-          } catch { /* ignora */ }
+            const provider = getPaymentProvider(p.provider, integ.config)
+            const st = p.provider === 'mercadopago_point' ? await provider.getOrder(p.provider_payment_id) : await provider.getStatus(p.provider_payment_id)
+            if (st.status !== p.status) {
+              await confirmarPagamento(repos, ctx.empresa_id, p, st.status, `poll_${p.provider}`)
+              p.status = st.status
+            }
+          } catch { /* ignora — tela tenta de novo no proximo poll */ }
         }
       }
       const { _id, ...rest } = p
