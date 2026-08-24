@@ -4290,6 +4290,105 @@ function PausarAvisoDialog({ empresa, onClose, onSaved }) {
   )
 }
 
+/**
+ * Card do Painel ETNA para liberar/remover e-mails que podem completar
+ * POST /auth/register. Componente proprio (nao estado de PainelPlataforma)
+ * porque tem seu ciclo de carregamento independente da tabela de empresas.
+ */
+function EmailsLiberadosCard() {
+  const [lista, setLista] = useState(null)
+  const [novoEmail, setNovoEmail] = useState('')
+  const [novoNome, setNovoNome] = useState('')
+  const [liberando, setLiberando] = useState(false)
+  const [removendo, setRemovendo] = useState(null)
+
+  const load = useCallback(async () => {
+    try { setLista(await api('/plataforma/emails-liberados')) } catch (e) { toast.error(e.message) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const liberar = async (e) => {
+    e.preventDefault()
+    if (!novoEmail) return toast.error('Informe o e-mail')
+    setLiberando(true)
+    try {
+      await api('/plataforma/emails-liberados', { method: 'POST', body: { email: novoEmail, nome: novoNome } })
+      toast.success('E-mail liberado')
+      setNovoEmail(''); setNovoNome('')
+      await load()
+    } catch (e) { toast.error(e.message) } finally { setLiberando(false) }
+  }
+
+  const remover = async (item) => {
+    setRemovendo(item.id)
+    try {
+      await api(`/plataforma/emails-liberados/${item.id}`, { method: 'DELETE' })
+      toast.success('Liberacao removida')
+      await load()
+    } catch (e) { toast.error(e.message) } finally { setRemovendo(null) }
+  }
+
+  if (!lista) return <Empty>Carregando…</Empty>
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2"><UserPlus className="h-4 w-4" />E-mails liberados para cadastro</CardTitle>
+        <CardDescription>Somente e-mails liberados aqui conseguem completar o cadastro de uma empresa nova.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <form onSubmit={liberar} className="flex flex-wrap gap-2 items-end">
+          <div className="space-y-1 flex-1 min-w-[200px]">
+            <Label className="text-xs">E-mail</Label>
+            <Input type="email" placeholder="prospect@email.com" value={novoEmail} onChange={(e) => setNovoEmail(e.target.value)} />
+          </div>
+          <div className="space-y-1 flex-1 min-w-[160px]">
+            <Label className="text-xs">Nome (opcional)</Label>
+            <Input placeholder="Para voce lembrar quem e" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
+          </div>
+          <Button type="submit" disabled={liberando}>
+            <Plus className="h-4 w-4 mr-1" />{liberando ? 'Liberando…' : 'Liberar e-mail'}
+          </Button>
+        </form>
+        {lista.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Nenhum e-mail liberado ainda.</div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>E-mail</TableHead>
+                <TableHead>Nome</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Acoes</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {lista.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell className="font-medium">{item.email}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{item.nome || '—'}</TableCell>
+                  <TableCell>
+                    {item.usado_em
+                      ? <Badge variant="secondary">usado em {new Date(item.usado_em).toLocaleDateString('pt-BR')}</Badge>
+                      : <Badge className="bg-amber-600 hover:bg-amber-600">aguardando cadastro</Badge>}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {!item.usado_em && (
+                      <Button size="sm" variant="outline" disabled={removendo === item.id} onClick={() => remover(item)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function PainelPlataforma() {
   const [dados, setDados] = useState(null)
   const [editando, setEditando] = useState(null)
@@ -4379,6 +4478,8 @@ function PainelPlataforma() {
           </Table>
         </CardContent>
       </Card>
+
+      <EmailsLiberadosCard />
 
       {editando && <AssinaturaDialog empresa={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); load() }} />}
       {pagando && <PagamentoDialog empresa={pagando} onClose={() => setPagando(null)} onSaved={() => { setPagando(null); load() }} />}
