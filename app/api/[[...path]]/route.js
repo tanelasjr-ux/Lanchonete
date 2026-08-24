@@ -23,6 +23,7 @@ import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations/supabase'
 import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
+import { montarExternalReference } from '@/lib/integrations/payments/point'
 import { capturarErro } from '@/lib/integrations/monitoring'
 import { checarLimite, ipDoCliente } from '@/lib/rateLimit'
 import { getRepositories, getProviderName } from '@/lib/repositories/factory'
@@ -2836,6 +2837,53 @@ async function handler(request, { params }) {
       })
       await audit(repos, ctx, 'pix_criado', 'comanda', comanda.id, { valor, provider_payment_id: result.providerPaymentId })
       return json({ id: pagamento.id, status: pagamento.status, valor, qr_code: result.qrCode, qr_code_base64: result.qrCodeBase64, ticket_url: result.ticketUrl }, 201)
+    }
+    if (seg[0] === 'comandas' && seg[1] && seg[2] === 'cartao' && method === 'POST') {
+      if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
+      const comanda = await comandaRepo.findById(ctx.empresa_id, seg[1])
+      if (!comanda || comanda.status !== 'aberta') return err('Comanda nao esta aberta', 400)
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
+      if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return err('Maquininha nao configurada', 400)
+      const b = (await request.json()) || {}
+      const totals = computeComanda(comanda)
+      const valor = Number(b.valor || totals.restante || totals.total)
+      if (valor <= 0) return err('Nada a pagar')
+      const idempotency_key = uuidv4()
+      const provider = getPaymentProvider('mercadopago_point', integ.config)
+      let result
+      try {
+        result = await provider.createOrder({
+          amount: valor, description: `Comanda ${comanda.mesa_nome}`,
+          externalReference: montarExternalReference(ctx.empresa_id, 'comanda', comanda.id),
+          idempotencyKey: idempotency_key,
+        })
+      } catch (e) { return err(`Falha ao acender a maquininha: ${e.message}`, 502) }
+      const pagamento = {
+        id: uuidv4(), empresa_id: ctx.empresa_id, comanda_id: comanda.id, pedido_id: null,
+        metodo: 'cartao_credito', valor, status: result.status || 'pending', provider: 'mercadopago_point',
+        provider_payment_id: result.providerPaymentId, external_reference: montarExternalReference(ctx.empresa_id, 'comanda', comanda.id),
+        idempotency_key, created_at: new Date(), updated_at: new Date(),
+      }
+      await pagamentoRepo.create(pagamento)
+      await comandaRepo.pushPagamentoResumo(ctx.empresa_id, comanda.id, {
+        id: pagamento.id, metodo: pagamento.metodo, valor: pagamento.valor,
+        status: pagamento.status, provider: pagamento.provider, created_at: pagamento.created_at,
+      })
+      await audit(repos, ctx, 'cartao_criado', 'comanda', comanda.id, { valor, provider_payment_id: result.providerPaymentId })
+      return json({ id: pagamento.id, status: pagamento.status, valor }, 201)
+    }
+    if (seg[0] === 'pagamentos' && seg[1] && seg[2] === 'cancelar-cobranca' && method === 'POST') {
+      if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
+      const pagamento = await pagamentoRepo.findById(ctx.empresa_id, seg[1])
+      if (!pagamento) return err('Pagamento nao encontrado', 404)
+      if (pagamento.provider !== 'mercadopago_point') return err('So cobrancas da maquininha podem ser canceladas por aqui', 400)
+      if (pagamento.status !== 'pending') return err('So cobrancas pendentes podem ser canceladas', 400)
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
+      if (!integ) return err('Maquininha nao configurada', 400)
+      const provider = getPaymentProvider('mercadopago_point', integ.config)
+      try { await provider.cancelOrder(pagamento.provider_payment_id) } catch (e) { return err(`Falha ao cancelar: ${e.message}`, 502) }
+      await confirmarPagamento(repos, ctx.empresa_id, pagamento, 'cancelled', 'cancelamento_manual')
+      return json({ ok: true })
     }
     if (seg[0] === 'comandas' && seg[1] && seg[2] === 'fechar' && method === 'POST') {
       if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
