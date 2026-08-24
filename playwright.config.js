@@ -51,6 +51,11 @@ module.exports = defineConfig({
     // ambiente de producao restrito) nao importa aqui, e dev:no-reload
     // sobe mais rapido, o que importa pra CI.
     command: 'npm run dev:no-reload',
+    // Todo spec E2E abre chamando registrarEmpresa() (e2e/helpers.js), que faz
+    // um POST /api/auth/register real. O gate de allowlist (Task 3 do plano de
+    // controle-acesso-cadastro, ver app/api/[[...path]]/route.js) rejeitaria
+    // essas 10 chamadas (nos 5 specs) com 403 num servidor fresco sem esta flag.
+    env: { SIGNUP_ALLOWLIST_DISABLED: '1' },
     url: `${process.env.BASE_URL || 'http://localhost:3000'}/api/health`,
     // Localmente, reaproveita um servidor que ja esteja no ar (fluxo normal
     // de desenvolvimento desta sessao: o dev server fica de pe entre

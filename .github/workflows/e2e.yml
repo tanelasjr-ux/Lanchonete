@@ -37,6 +37,9 @@ jobs:
       JWT_SECRET: e2e-ci-secret-nao-usar-em-producao
       CORS_ORIGINS: http://localhost:3000
       NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      # Os 5 specs E2E registram empresas reais via registrarEmpresa() (e2e/
+      # helpers.js); sem isso o gate de allowlist (Task 3) rejeitaria com 403.
+      SIGNUP_ALLOWLIST_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
 

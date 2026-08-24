@@ -3,8 +3,10 @@ dono da ETNA (Painel ETNA) para completar POST /auth/register.
 
 O gate em si (POST /auth/register recusando e-mail nao liberado) NAO e
 testavel nesta suite rodando com SIGNUP_ALLOWLIST_DISABLED=1 (ambiente
-padrao de toda a regressao local) — ver test_gate_manual.py para os 2
-testes que precisam de um servidor SEM a flag.
+padrao de toda a regressao local) — verificado manualmente via curl
+(Task 5 do plano de implementacao — ver
+docs/superpowers/plans/2026-08-23-controle-acesso-cadastro-plan.md,
+Task 5 Step 3), nao como suite pytest separada.
 """
 import os
 import pytest
