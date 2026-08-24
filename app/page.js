@@ -1207,6 +1207,67 @@ function ClienteDialog({ data, onClose, onSave }) {
   )
 }
 
+/**
+ * Cobranca no cartao pela maquininha Point, para um pedido de balcao/
+ * delivery. Componente proprio (nao estado de Pedidos()) porque cada card
+ * na tela precisa da sua propria janela de espera/polling, independente
+ * dos outros pedidos na lista.
+ */
+function CobrarCartaoPedido({ pedidoId, onPago }) {
+  const [cartao, setCartao] = useState(null) // { id, status, valor }
+  const [cobrando, setCobrando] = useState(false)
+
+  const cobrarNoCartao = async () => {
+    setCobrando(true)
+    try {
+      const r = await api(`/pedidos/${pedidoId}/cartao`, { method: 'POST', body: {} })
+      setCartao(r)
+      toast.success('Maquininha acesa — aguardando o cliente')
+    } catch (e) { toast.error(e.message) } finally { setCobrando(false) }
+  }
+
+  const cancelarCobranca = async () => {
+    if (!cartao) return
+    try {
+      await api(`/pagamentos/${cartao.id}/cancelar-cobranca`, { method: 'POST' })
+      setCartao(null)
+      toast.success('Cobranca cancelada')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  useEffect(() => {
+    if (!cartao || cartao.status !== 'pending') return
+    const t = setInterval(async () => {
+      try {
+        const r = await api(`/pagamentos/${cartao.id}`)
+        if (r.status !== 'pending') {
+          setCartao(r)
+          if (r.status === 'approved') { toast.success('Pagamento aprovado!'); onPago?.() }
+          else if (r.status === 'rejected') toast.error('Pagamento recusado')
+        }
+      } catch { /* tenta de novo no proximo tick */ }
+    }, 2000)
+    return () => clearInterval(t)
+  }, [cartao, onPago])
+
+  if (cartao && cartao.status === 'pending') {
+    return (
+      <div className="rounded-lg border p-2 space-y-1.5 bg-amber-500/5 border-amber-500/30 text-xs">
+        <div className="flex items-center gap-1.5 font-medium"><Loader2 className="h-3.5 w-3.5 animate-spin" />Aguardando maquininha…</div>
+        <Button size="sm" variant="outline" className="w-full h-7" onClick={cancelarCobranca}>Cancelar</Button>
+      </div>
+    )
+  }
+  if (cartao && cartao.status === 'approved') {
+    return <div className="rounded-lg border p-2 text-xs text-emerald-600 bg-emerald-500/5 border-emerald-500/30">Pago no cartao</div>
+  }
+  return (
+    <Button size="sm" variant="outline" className="h-8" onClick={cobrarNoCartao} disabled={cobrando}>
+      <CreditCard className="h-3.5 w-3.5 mr-1" />{cobrando ? 'Acendendo…' : 'Cobrar no cartao'}
+    </Button>
+  )
+}
+
 /* ============================ PEDIDOS (Kanban) ============================ */
 function Pedidos({ me }) {
   const [pedidos, setPedidos] = useState([])
@@ -1394,6 +1455,9 @@ function Pedidos({ me }) {
                               <Button size="sm" variant="outline" className="h-8" title="Ajustar valor (desconto/acrescimo)" onClick={() => setAjuste(p)}>
                                 <Percent className="h-3.5 w-3.5" />
                               </Button>
+                            )}
+                            {!p.pago_em && !FINAIS.includes(p.status) && (
+                              <CobrarCartaoPedido pedidoId={p.id} onPago={load} />
                             )}
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -3608,8 +3672,8 @@ function Integracoes() {
   const saveN8 = async () => { try { await api('/integracoes/n8n', { method: 'PUT', body: n8 }); toast.success('n8n salvo'); load() } catch (e) { toast.error(e.message) } }
   const testEv = async () => { setTesting('ev'); try { const r = await api('/integracoes/evolution/testar', { method: 'POST' }); r.connected ? toast.success('WhatsApp conectado!') : toast.warning(r.message || `Estado: ${r.state}`) } catch (e) { toast.error(e.message) } finally { setTesting('') } }
   const testN8 = async () => { setTesting('n8'); try { const r = await api('/integracoes/n8n/testar', { method: 'POST' }); r.connected ? toast.success('Webhook n8n respondeu!') : toast.warning(r.message || 'Sem resposta') } catch (e) { toast.error(e.message) } finally { setTesting('') } }
-  const [mp, setMp] = useState({ mode: 'sandbox', accessToken: '', webhookSecret: '' })
-  useEffect(() => { if (data?.mercadopago?.config) setMp((s) => ({ ...s, mode: data.mercadopago.config.mode || 'sandbox' })) }, [data])
+  const [mp, setMp] = useState({ mode: 'sandbox', accessToken: '', webhookSecret: '', terminalId: '' })
+  useEffect(() => { if (data?.mercadopago?.config) setMp((s) => ({ ...s, mode: data.mercadopago.config.mode || 'sandbox', terminalId: data.mercadopago.config.terminalId || '' })) }, [data])
   const saveMp = async () => { try { await api('/integracoes/mercadopago', { method: 'PUT', body: mp }); toast.success('Mercado Pago salvo'); setMp((s) => ({ ...s, accessToken: '', webhookSecret: '' })); load() } catch (e) { toast.error(e.message) } }
   if (!data) return <Empty>Carregando…</Empty>
   const StatusBadge = ({ ok }) => <Badge variant="outline" className={ok ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{ok ? 'Configurado' : 'Não configurado'}</Badge>
@@ -3652,7 +3716,7 @@ function Integracoes() {
       </Card>
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
-          <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-lg bg-sky-500/10 text-sky-500 grid place-items-center"><CircleDollarSign className="h-5 w-5" /></div><div><CardTitle className="text-base">Mercado Pago — Pagamentos Pix</CardTitle><CardDescription>Access Token fica somente no backend. Webhook validado por assinatura.</CardDescription></div></div>
+          <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-lg bg-sky-500/10 text-sky-500 grid place-items-center"><CircleDollarSign className="h-5 w-5" /></div><div><CardTitle className="text-base">Mercado Pago — Pix e Maquininha (Point)</CardTitle><CardDescription>Access Token fica somente no backend. Webhook validado por assinatura.</CardDescription></div></div>
           <StatusBadge ok={data.mercadopago?.config?.hasAccessToken} />
         </CardHeader>
         <CardContent className="space-y-4">
@@ -3661,6 +3725,7 @@ function Integracoes() {
             <div className="space-y-2"><Label>Webhook Secret</Label><Input value={mp.webhookSecret} onChange={(e) => setMp({ ...mp, webhookSecret: e.target.value })} placeholder={data.mercadopago?.config?.hasWebhookSecret ? '•••• (mantido)' : 'assinatura'} /></div>
           </div>
           <div className="space-y-2"><Label>Access Token</Label><Input type="password" value={mp.accessToken} onChange={(e) => setMp({ ...mp, accessToken: e.target.value })} placeholder={data.mercadopago?.config?.hasAccessToken ? '•••• (mantido — preencha para trocar)' : 'APP_USR-... ou TEST-...'} /></div>
+          <div className="space-y-2"><Label>ID da maquininha (Terminal ID)</Label><Input value={mp.terminalId} onChange={(e) => setMp({ ...mp, terminalId: e.target.value })} placeholder="ex: NEWLAND_N950__SBX0000001" /><div className="text-xs text-muted-foreground">Painel de desenvolvedor do Mercado Pago. Opcional — so quem tem uma Point fisica preenche.</div></div>
           <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">URL do webhook: <code className="bg-background px-1.5 py-0.5 rounded">/api/pagamentos/webhook/mercadopago?tenant=SUA_EMPRESA</code>. Suporta Pix (QR Code + Copia e Cola), status por webhook e idempotência.</div>
           <Button onClick={saveMp}>Salvar credenciais</Button>
         </CardContent>
