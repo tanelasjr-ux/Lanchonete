@@ -1989,6 +1989,37 @@ async function handler(request, { params }) {
       await emitEvent(repos, ctx, 'order.created', { pedido: clean(doc) })
       return json(clean(doc), 201)
     }
+    if (seg[0] === 'pedidos' && seg[1] && seg[2] === 'cartao' && method === 'POST') {
+      if (!can(ctx.papel, 'pagamentos')) return err('Sem permissao', 403)
+      const pedido = await pedidoRepo.findById(ctx.empresa_id, seg[1])
+      if (!pedido) return err('Pedido nao encontrado', 404)
+      const travados = ['concluido', 'ENTREGUE', 'cancelado', 'CANCELADO']
+      if (pedido.pago_em) return err('Este pedido ja foi pago', 409)
+      if (travados.includes(pedido.status)) return err('Pedido ja concluido ou cancelado', 409)
+      const integ = await integracaoRepo.findByTipo(ctx.empresa_id, 'mercadopago')
+      if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return err('Maquininha nao configurada', 400)
+      const valor = Number(pedido.total)
+      if (valor <= 0) return err('Nada a pagar')
+      const idempotency_key = uuidv4()
+      const provider = getPaymentProvider('mercadopago_point', integ.config)
+      let result
+      try {
+        result = await provider.createOrder({
+          amount: valor, description: `Pedido #${pedido.numero}`,
+          externalReference: montarExternalReference(ctx.empresa_id, 'pedido', pedido.id),
+          idempotencyKey: idempotency_key,
+        })
+      } catch (e) { return err(`Falha ao acender a maquininha: ${e.message}`, 502) }
+      const pagamento = {
+        id: uuidv4(), empresa_id: ctx.empresa_id, comanda_id: null, pedido_id: pedido.id,
+        metodo: 'cartao_credito', valor, status: result.status || 'pending', provider: 'mercadopago_point',
+        provider_payment_id: result.providerPaymentId, external_reference: montarExternalReference(ctx.empresa_id, 'pedido', pedido.id),
+        idempotency_key, created_at: new Date(), updated_at: new Date(),
+      }
+      await pagamentoRepo.create(pagamento)
+      await audit(repos, ctx, 'cartao_criado', 'pedido', pedido.id, { valor, provider_payment_id: result.providerPaymentId })
+      return json({ id: pagamento.id, status: pagamento.status, valor }, 201)
+    }
     if (seg[0] === 'pedidos' && seg[1] && method === 'PUT') {
       if (!can(ctx.papel, 'pedidos')) return err('Sem permissao', 403)
       const b = (await request.json()) || {}
@@ -2090,7 +2121,10 @@ async function handler(request, { params }) {
       // snapshot lido antes: sem isso, ajustar o valor e concluir de uma vez so
       // lancaria a receita com o valor antigo.
       const totalFinal = upd.total !== undefined ? upd.total : pedido.total
-      if (finais.includes(b.status) && !finais.includes(pedido.status)) {
+      // pago_em preenchido = a receita ja foi lancada no momento do
+      // pagamento (POST /pedidos/:id/cartao + confirmarPagamento). Concluir
+      // sem esta guarda lancaria a receita DUAS VEZES.
+      if (finais.includes(b.status) && !finais.includes(pedido.status) && !pedido.pago_em) {
         const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
         const itensVendidos = upd.itens !== undefined ? upd.itens : (pedido.itens || [])
         const custoMapa = await mapaCustoProdutos(repos, ctx, itensVendidos)
