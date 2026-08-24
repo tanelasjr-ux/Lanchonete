@@ -3865,9 +3865,43 @@ function ComandaDialog({ comandaId, onClose }) {
   const [obsPendente, setObsPendente] = useState('')
   const [pay, setPay] = useState({ metodo: 'dinheiro', valor: '' })
   const [pix, setPix] = useState(null)
+  const [cartao, setCartao] = useState(null) // { id, status, valor }
+  const [cobrando, setCobrando] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const load = useCallback(async () => { const d = await api(`/comandas/${comandaId}`); setC(d) }, [comandaId])
   useEffect(() => { load().catch((e) => toast.error(e.message)); api('/produtos').then(setProds).catch(() => {}); api('/mesas').then((m) => setMesasLivres((m || []).filter((x) => x.status === 'livre'))).catch(() => {}) }, [load])
+  const cobrarNoCartao = async () => {
+    setCobrando(true)
+    try {
+      const r = await api(`/comandas/${comandaId}/cartao`, { method: 'POST', body: {} })
+      setCartao(r)
+      toast.success('Maquininha acesa — aguardando o cliente')
+    } catch (e) { toast.error(e.message) } finally { setCobrando(false) }
+  }
+  const cancelarCobranca = async () => {
+    if (!cartao) return
+    try {
+      await api(`/pagamentos/${cartao.id}/cancelar-cobranca`, { method: 'POST' })
+      setCartao(null)
+      toast.success('Cobranca cancelada')
+    } catch (e) { toast.error(e.message) }
+  }
+  // Polling a cada 2s enquanto pendente — mesma logica de GET /pagamentos/:id
+  // que ja faz o servidor consultar o Mercado Pago quando necessario.
+  useEffect(() => {
+    if (!cartao || cartao.status !== 'pending') return
+    const t = setInterval(async () => {
+      try {
+        const r = await api(`/pagamentos/${cartao.id}`)
+        if (r.status !== 'pending') {
+          setCartao(r)
+          if (r.status === 'approved') toast.success('Pagamento aprovado!')
+          else if (r.status === 'rejected') toast.error('Pagamento recusado')
+        }
+      } catch { /* tenta de novo no proximo tick */ }
+    }, 2000)
+    return () => clearInterval(t)
+  }, [cartao])
   if (!c) return <Dialog open onOpenChange={onClose}><DialogContent><Empty>Carregando comanda…</Empty></DialogContent></Dialog>
   const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1, observacao: obsPendente } }); setC(d); setObsPendente('') } catch (e) { toast.error(e.message) } }
   const setQty = async (item, q) => { if (q <= 0) { const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'DELETE' }); setC(d); return } const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'PUT', body: { quantidade: q } }); setC(d) }
@@ -3941,6 +3975,28 @@ function ComandaDialog({ comandaId, onClose }) {
               </div>
               <Button variant="outline" className="w-full h-9" onClick={() => setPay({ ...pay, valor: String(c.restante) })}>Preencher restante</Button>
               <Button variant="outline" className="w-full h-9" onClick={gerarPix}><QrCode className="h-4 w-4 mr-1" />Gerar Pix (Mercado Pago)</Button>
+              <Button variant="outline" className="w-full h-9" onClick={cobrarNoCartao} disabled={cobrando}>
+                <CreditCard className="h-4 w-4 mr-1" />{cobrando ? 'Acendendo maquininha…' : 'Cobrar no cartao (maquininha)'}
+              </Button>
+              {cartao && cartao.status === 'pending' && (
+                <div className="rounded-lg border p-3 space-y-2 bg-amber-500/5 border-amber-500/30">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Loader2 className="h-4 w-4 animate-spin" />Aguardando o cliente na maquininha…
+                  </div>
+                  <div className="text-xs text-muted-foreground">{brl(cartao.valor)}</div>
+                  <Button size="sm" variant="outline" className="w-full" onClick={cancelarCobranca}>Cancelar</Button>
+                </div>
+              )}
+              {cartao && cartao.status === 'approved' && (
+                <div className="rounded-lg border p-3 text-sm text-emerald-600 bg-emerald-500/5 border-emerald-500/30">
+                  Pagamento aprovado — {brl(cartao.valor)}
+                </div>
+              )}
+              {cartao && (cartao.status === 'rejected' || cartao.status === 'cancelled') && (
+                <div className="rounded-lg border p-3 text-sm text-red-600 bg-red-500/5 border-red-500/30">
+                  {cartao.status === 'rejected' ? 'Pagamento recusado — tente outra forma.' : 'Cobranca cancelada.'}
+                </div>
+              )}
               {(c.pagamentos || []).length > 0 && <div className="space-y-1 pt-1">{c.pagamentos.map((p) => <div key={p.id} className="flex justify-between text-xs"><span className="text-muted-foreground capitalize">{p.metodo.replace('_', ' ')}</span><span className="text-emerald-500">{brl(p.valor)}</span></div>)}</div>}
             </CardContent></Card>
 
