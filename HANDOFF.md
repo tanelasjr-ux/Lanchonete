@@ -10,9 +10,13 @@ nesta retomada — comece por §0.0.**
    arquivo de memoria do assistente / decisao registrada, PDV segue com
    Mercado Pago Point como planejado.
 2. ✅ **Controle de acesso ao cadastro (allowlist de e-mail)** —
-   **COMPLETO, revisado (task a task + revisao final do branch inteiro),
-   commitado e enviado ao GitHub (`f221a98`)**. **⚠️ Requer acao do dono
-   antes do proximo cadastro real — ver §0.0.2 abaixo, e importante.**
+   **codigo COMPLETO, revisado (task a task + revisao final do branch
+   inteiro), commitado e enviado ao GitHub (`7f4525f`)**. 🟡 **Deploy em
+   producao ainda NAO confirmado** (verificado 2026-08-24 a noite — a
+   tabela nova ainda nao existia). **Primeiro passo da proxima sessao:
+   confirmar se o deploy ja subiu. Depois disso, acao do dono e
+   necessaria antes do proximo cadastro real** — ver §0.0.2, e
+   importante.
 3. ✅ **Bug corrigido nesta retomada: dialogo de "Novo pedido" cortava
    os botoes de acao** no PC e no celular — corrigido, testado em varias
    resolucoes, commitado (`abea854`). Achado no caminho: um teste E2E
@@ -131,17 +135,28 @@ condicional/atomico no repository, filtrado por `pago_em IS NULL`), nao
 retroagir na Task 3. Ao despachar a Task 8, carregar esta exigencia
 explicitamente no dispatch do implementador.
 
-## 0.0.2 ✅ Controle de acesso ao cadastro (allowlist de e-mail) — completo, revisado, no ar
+## 0.0.2 ✅ Controle de acesso ao cadastro (allowlist de e-mail) — completo e revisado, 🟡 DEPLOY AINDA PENDENTE
 
-**⚠️ ACAO NECESSARIA DO DONO ANTES DE QUALQUER PROSPECT SE CADASTRAR:**
-esta feature deixa o cadastro (`POST /auth/register`) **fechado por
-padrao**. A tabela `emails_liberados` nasce vazia em producao — **ate o
-dono liberar pelo menos um e-mail pelo Painel ETNA (nova secao "E-mails
-liberados para cadastro"), NINGUEM consegue criar uma empresa nova**,
-nem o proprio dono numa conta nova. Isso e o comportamento pretendido
-(era o pedido), mas precisa ser comunicado ativamente — sem isso, o
-proximo prospect que tentar se cadastrar so ve um aviso pedindo pra
-chamar no WhatsApp.
+**Verificado em 2026-08-24, noite: o codigo esta 100% no GitHub
+(`main`, commit `7f4525f`), mas o EasyPanel AINDA NAO aplicou o deploy —
+a tabela `emails_liberados` ainda nao existe em producao.** Isso e
+normal (o deploy automatico as vezes demora, ja aconteceu antes nesta
+sessao — ver §0.0.3). **Primeira coisa a fazer na proxima sessao:**
+conferir se o deploy ja passou (`curl .../api/health` ou consultar
+`information_schema.tables` por `emails_liberados`) antes de qualquer
+outra coisa.
+
+**⚠️ ACAO NECESSARIA DO DONO ASSIM QUE O DEPLOY SUBIR, ANTES DE QUALQUER
+PROSPECT SE CADASTRAR:** esta feature deixa o cadastro
+(`POST /auth/register`) **fechado por padrao**. A tabela
+`emails_liberados` nasce vazia — **ate o dono liberar pelo menos um
+e-mail pelo Painel ETNA (nova secao "E-mails liberados para cadastro"),
+NINGUEM consegue criar uma empresa nova**, nem o proprio dono numa conta
+nova. Isso e o comportamento pretendido (era o pedido), mas precisa ser
+comunicado ativamente — sem isso, o proximo prospect que tentar se
+cadastrar so ve um aviso pedindo pra chamar no WhatsApp. **Ate o deploy
+subir, o cadastro em producao continua ABERTO normalmente (comportamento
+antigo) — nao ha risco de ninguem ficar trancado para fora antes disso.**
 
 **Pedido original do dono** (2026-08-19, no meio da execucao do PDV):
 *"eu como dono devo ter a possibilidade de adicionar os e-mails que podem
@@ -169,7 +184,7 @@ tasks → execucao por subagentes → revisao final do branch inteiro →
 
 **Achado real corrigido durante a execucao (nao estava na spec):** o
 brief original mandava logar cada liberacao/remocao de e-mail pela
-funcao generica `audit()`, que grava sob o `empresa_id` do PRoprio admin
+funcao generica `audit()`, que grava sob o `empresa_id` do proprio admin
 da plataforma (que e so um usuario comum de alguma empresa, identificado
 por e-mail). Isso vazaria e-mails de prospects e acoes da plataforma no
 log de auditoria do restaurante do dono, visivel a qualquer funcionario
@@ -1361,7 +1376,7 @@ imagem apesar do padrao geral de ignorar).
 | Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
 | Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
 | PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | 🟡 **EM ANDAMENTO** — spec + plano completos, 5/11 tasks implementadas (`63414e5`) — ver §0.0 |
-| Controle de acesso ao cadastro (allowlist de e-mail) | ✅ **Completo, revisado e no ar** (`f221a98`) — requer o dono liberar ao menos 1 e-mail no Painel ETNA antes do proximo cadastro real — ver §0.0.2 |
+| Controle de acesso ao cadastro (allowlist de e-mail) | ✅ Codigo completo e revisado, 🟡 **deploy em producao nao confirmado** (`7f4525f`) — confirmar deploy, depois liberar ao menos 1 e-mail no Painel ETNA antes do proximo cadastro real — ver §0.0.2 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
