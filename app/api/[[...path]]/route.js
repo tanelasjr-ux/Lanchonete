@@ -1176,6 +1176,42 @@ async function handler(request, { params }) {
       return json({ admin: await souPlataformaAdmin() })
     }
 
+    if (route === '/plataforma/emails-liberados' && method === 'GET') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const lista = await emailLiberadoRepo.list()
+      return json(lista.map(clean))
+    }
+
+    /**
+     * Libera um e-mail para completar o cadastro. `email` e a UNICA chave
+     * de negocio (coluna UNIQUE na migration 0030) — tentar liberar o mesmo
+     * e-mail duas vezes e erro do operador, nao caso normal, entao devolve
+     * 409 em vez de silenciosamente devolver o registro existente.
+     */
+    if (route === '/plataforma/emails-liberados' && method === 'POST') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      const b = (await request.json()) || {}
+      if (!b.email) return err('email obrigatorio')
+      const emailNorm = String(b.email).toLowerCase().trim()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) return err('email invalido')
+      const existente = await emailLiberadoRepo.findByEmail(emailNorm)
+      if (existente) return err('Este e-mail ja esta liberado', 409)
+      const entity = {
+        id: uuidv4(), email: emailNorm, nome: b.nome || '',
+        liberado_por: ctx.email || ctx.nome || '', usado_em: null, created_at: new Date(),
+      }
+      await emailLiberadoRepo.create(entity)
+      await audit(repos, ctx, 'liberar_email', 'email_liberado', entity.id, { email: emailNorm })
+      return json(clean(entity), 201)
+    }
+
+    if (seg[0] === 'plataforma' && seg[1] === 'emails-liberados' && seg[2] && method === 'DELETE') {
+      const negado = await exigePlataformaAdmin(); if (negado) return negado
+      await emailLiberadoRepo.delete(seg[2])
+      await audit(repos, ctx, 'remover_email_liberado', 'email_liberado', seg[2], {})
+      return json({ ok: true })
+    }
+
     if (route === '/plataforma/empresas' && method === 'GET') {
       const negado = await exigePlataformaAdmin(); if (negado) return negado
       const [empresas, assinaturas, logins] = await Promise.all([
