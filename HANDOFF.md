@@ -1,27 +1,32 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-24. **Um trabalho em andamento, um concluido
-nesta retomada — comece por §0.0.**
+Ultima atualizacao: 2026-08-24, fim de tarde. **Um trabalho EM ANDAMENTO
+AGORA MESMO — comece por §0.0.**
 
 1. 🟡 **PDV (maquininha Mercado Pago Point)** — plano de 11 tasks,
-   **5/11 completas e commitadas** (`63414e5`), retomar na Task 6. Achado
-   nesta mesma retomada: a maquininha **TON nao pode ser usada** para
-   integracao (confirmado com a Stone e pelo dono) — ver §0.0.2 do
-   arquivo de memoria do assistente / decisao registrada, PDV segue com
-   Mercado Pago Point como planejado.
+   **10/11 completas e revisadas** (Tasks 1-10), **Task 11 (a ULTIMA do
+   plano) ja foi IMPLEMENTADA E COMMITADA (`733ac78`) pelo subagente, que
+   agora esta rodando a checklist de fim-de-plano (`test_point_calculo.mjs`
+   + regressao completa `tests/run_all.py`) em background — NAO
+   redespachar a Task 11, so checar se o relatorio dela ja foi escrito
+   e reagir.** Detalhe completo em §0.0.
+   **⚠️ Achado critico durante a revisao da Task 10, ja corrigido e em
+   producao:** a feature de cobranca no cartao estava **quebrada em
+   producao desde a Task 6** (um CHECK do Postgres nunca foi ampliado
+   pra aceitar o novo tipo de pagamento) — corrigido pela migration
+   `0031`, testada e ja enviada ao GitHub. Ninguem foi afetado de
+   verdade (a tabela de pagamentos estava com 0 linhas em producao —
+   nenhum dono chegou a tentar usar a feature ainda). Ver §0.0.1.
 2. ✅ **Controle de acesso ao cadastro (allowlist de e-mail)** —
-   **codigo COMPLETO, revisado (task a task + revisao final do branch
-   inteiro), commitado e enviado ao GitHub (`7f4525f`)**. 🟡 **Deploy em
-   producao ainda NAO confirmado** (verificado 2026-08-24 a noite — a
-   tabela nova ainda nao existia). **Primeiro passo da proxima sessao:
-   confirmar se o deploy ja subiu. Depois disso, acao do dono e
-   necessaria antes do proximo cadastro real** — ver §0.0.2, e
-   importante.
-3. ✅ **Bug corrigido nesta retomada: dialogo de "Novo pedido" cortava
-   os botoes de acao** no PC e no celular — corrigido, testado em varias
-   resolucoes, commitado (`abea854`). Achado no caminho: um teste E2E
-   estava quebrado desde o B2 (culpa da propria sessao anterior, corrigida
-   junto).
+   codigo completo, revisado, commitado, enviado ao GitHub e **DEPLOY
+   CONFIRMADO EM PRODUCAO** (migration `0030` aplicada, tabela
+   `emails_liberados` existe e esta vazia — cadastro de empresa nova
+   esta **FECHADO** em producao ate o dono liberar pelo menos um e-mail
+   pelo Painel ETNA). Ver §0.0.2 — **acao do dono ainda pendente, nao e
+   so um "ok tecnico"**.
+3. ✅ **Bug corrigido em retomada anterior: dialogo de "Novo pedido"
+   cortava os botoes de acao** no PC e no celular — corrigido, testado,
+   commitado (`abea854`).
 
 Junto disso, **ja concluido, testado e no ar** em retomada anterior: o
 texto "Sua operação mais simples..." saiu do Dashboard e ficou exclusivo
@@ -52,9 +57,47 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 0.0 🟡 EM ANDAMENTO: PDV — cobranca no cartao pela maquininha (Mercado Pago Point)
+## 0.0 🟡 EM ANDAMENTO (quase terminando): PDV — cobranca no cartao pela maquininha (Mercado Pago Point)
 
 **Pausado aqui a pedido do dono (handoff) — retomar exatamente por aqui.**
+
+**⚠️ ESTADO ESPECIAL: a Task 11 (ultima do plano) ja foi implementada e
+commitada, mas o subagente ainda esta rodando a checklist final do
+plano em background quando esta sessao foi pausada.** Nada foi perdido
+— o trabalho de codigo em si (commit `733ac78`) ja esta seguro no git.
+Falta so a checklist de fim-de-plano e a revisao. **Primeiro passo da
+proxima sessao:**
+1. Checar se `.superpowers/sdd/2026-08-19-pdv-maquininha-plan/task-11-report.md`
+   existe — se sim, o subagente terminou (ou foi interrompido depois de
+   escrever o relatorio); ler o relatorio pra saber o resultado real de
+   `test_point_calculo.mjs` e da regressao completa.
+2. Se o relatorio NAO existir ainda: checar `ps aux | grep python` — se
+   houver um `tests/run_all.py` rodando, e provavelmente a checklist
+   final ainda em andamento (pode levar ~15-20min); se nao houver
+   nenhum processo, o subagente foi cortado no meio e a checklist final
+   precisa ser rodada manualmente (rodar UMA UNICA instancia de
+   `python tests/run_all.py` — ver a armadilha registrada abaixo antes
+   de rodar).
+3. Depois da checklist final confirmada: gerar o pacote de revisao da
+   Task 11 (`review-733ac78..HEAD.diff` ou equivalente) e despachar o
+   revisor da task, exatamente como as Tasks 6-10. Se aprovada (ou apos
+   corrigir achados), Task 11 = ultima do plano → despachar a **revisao
+   final do branch inteiro** (`superpowers:subagent-driven-development`,
+   secao "Dispatch final code reviewer", modelo mais capaz disponivel),
+   tratar achados numa unica rodada de fix + re-revisao escopada, e so
+   entao apagar o workspace do plano (`.superpowers/sdd/2026-08-19-pdv-maquininha-plan/`)
+   e considerar o PDV **100% concluido**.
+
+**⚠️ Armadilha real, ja aconteceu 2x nesta sessao — leia antes de rodar
+`tests/run_all.py`:** um subagente ja perdeu o controle do proprio
+processo em background e lancou 3 copias concorrentes da suite inteira
+contra o mesmo Mongo local, contaminando um fixture compartilhado
+(`backend_test_plataforma.py`, `limpar_admins`) e produzindo uma falsa
+regressao que custou tempo real de investigacao pra descartar (ver
+ledger da Task 9). **Nunca lance uma segunda copia sem confirmar que a
+anterior terminou** (`ps aux | grep python`); se encontrar mais de um
+`run_all.py` rodando ao mesmo tempo, mate os extras antes de confiar em
+qualquer resultado.
 
 Depois do B2 (onboarding), o dono pediu pra planejar juntos uma integracao
 com maquininha de cartao ("PDV"). Foi um processo completo:
@@ -82,25 +125,41 @@ subagentes (`superpowers:subagent-driven-development`, em andamento).
 | 3 — `confirmarPagamento()` + corrige bug real do Pix | ✅ completa (commits `5e6c890..ad1dfe6`, 1 fix round) |
 | 4 — adapter `lib/integrations/payments/point.js` (Orders API) + testes puros | ✅ completa (commit `2c0395f`, review limpo) |
 | 5 — `terminalId` configuravel na integracao Mercado Pago | ✅ completa (commit `63414e5`, review limpo) |
-| 6 — Cobranca na comanda + cancelamento | 🟡 **proximo passo, nenhum agente despachado ainda** |
-| 7-11 | ainda nao iniciadas |
+| 6 — Cobranca na comanda (`POST /comandas/:id/cartao`) + cancelamento | ✅ completa (commit `80140ec`, review limpo — 1 minor adiado: rota de cancelar nao checa `isGatewayConfigured` antes de `getPaymentProvider`, cai num 500 generico em vez de 400 limpo se o terminal for removido entre criar e cancelar a cobranca; seguro, sem fake-success, gap do proprio brief) |
+| 7 — Cobranca no pedido (`POST /pedidos/:id/cartao`) + guarda contra receita em dobro | ✅ completa (commit `b27450f`, review limpo, 0 achados) |
+| 8 — Webhook do Point + polling + fecha a race TOCTOU | ✅ completa (commit `f952fe0`; implementador original foi cortado pelo limite de sessao da API no meio do trabalho, controller terminou verificacao+commit; review Approved com 1 achado Important sobre cobertura de prova em Postgres, fechado pelo controller com prova real contra `ros-pg-test` local — ver ledger) |
+| 9 — Testes de integracao (`tests/backend_test_pdv.py`) | ✅ completa (commit `a946fd1`, 6/6 passando; uma falha aparente na regressao completa foi investigada e confirmada como contaminacao entre processos concorrentes de teste, nao uma regressao real — ver armadilha registrada abaixo) |
+| 10 — Frontend: cobrar na comanda | ✅ completa (commits `bea31d2` implementacao + `2fa205e` fix/duplo-clique + `70fe7e5` fix/migration critica — ver §0.0.1) |
+| 11 — Frontend: cobrar no pedido + config do terminal (ULTIMA task) | 🟡 **implementada e commitada (`733ac78`), checklist final de fim-de-plano rodando em background quando a sessao pausou — ver instrucoes no topo desta secao** |
 
 **Commits do PDV, em ordem:** `a93873f` (1) → `5e6c890` (2) → `5fb5706`
-+`ad1dfe6` (3, com 1 fix round) → `2c0395f` (4) → `63414e5` (5). Todos
-direto na `main`, sem worktree isolado (decisao registrada no ledger).
-Entre esses, dois commits de OUTRO trabalho tambem foram para a `main`
-(`ba1d633` handoff, `ae9a89f` fix do texto do login/dashboard) — nao
-tocam em nada do PDV, so intercalados no historico.
++`ad1dfe6` (3) → `2c0395f` (4) → `63414e5` (5) → `80140ec` (6) →
+`b27450f` (7) → `f952fe0` (8) → `a946fd1` (9) → `bea31d2`+`2fa205e`+`70fe7e5`
+(10) → `733ac78` (11, ultimo). **Todos ja enviados ao GitHub** (`git push
+origin main` feito com HEAD em `70fe7e5`, antes da Task 11 — confirmar
+se `733ac78` tambem ja foi pushado, pode ter ficado local dependendo de
+onde a sessao foi cortada). Todos direto na `main`, sem worktree isolado
+(decisao registrada no ledger).
 
 **Para retomar:** invocar `superpowers:subagent-driven-development` de
 novo com o plano (`docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md`)
-— a skill le o ledger, ve que as Tasks 1-5 tem linha `Task N: complete`, e
-resume sozinha a partir da Task 6. Nao precisa reexplicar nada disto ao
-retomar; o ledger e a spec carregam o contexto. **Antes de despachar,
-confirmar o HEAD real com `git log` — nao supor que e o ultimo commit
-listado acima, pode ter avancado por outro trabalho.**
+— a skill le o ledger, ve que as Tasks 1-10 tem linha `Task N: complete`,
+e resume na Task 11 (revisao, ja que a implementacao esta pronta) ou
+direto na revisao final do branch inteiro, se a Task 11 ja tiver sido
+revisada tambem. Nao precisa reexplicar nada disto ao retomar; o ledger
+e a spec carregam o contexto. **Antes de despachar qualquer coisa,
+confirmar o HEAD real com `git log`.**
 
-## 0.0.1 Dois achados reais durante a implementacao (nao previstos na spec original)
+**Ambiente local:** dev server e container Mongo (`ros-mongo-local`)
+foram religados nesta retomada com
+`RATE_LIMIT_DISABLED=1 SIGNUP_ALLOWLIST_DISABLED=1` (a segunda flag e
+necessaria pros helpers de teste continuarem registrando empresas, ja
+que o gate de allowlist esta ativo em producao — ver §0.0.2). Podem ter
+caido de novo se a maquina reiniciou entre sessoes; checar
+`curl -s http://localhost:3000/api/health` antes de supor que estao de
+pe.
+
+## 0.0.1 Achados reais durante a implementacao (nao previstos na spec original)
 
 **1. Bug real de producao encontrado e corrigido na Task 3 (nao e do PDV
 em si — ja existia, afetava o Pix):** quando um pagamento assincrono
@@ -122,41 +181,64 @@ Isto e um bug real que ja estava em producao (afeta qualquer comanda paga
 por Pix hoje) — o PDV so obrigou a achar e consertar, porque o Point usa
 exatamente o mesmo caminho de confirmacao.
 
-**2. Decisao adiada de proposito: race condition (TOCTOU) na trava contra
-receita em dobro.** A funcao `confirmarPagamento()` tem uma checagem
-"ja pago?" antes de lancar receita (`!pedido.pago_em`) que NAO e atomica —
-duas confirmacoes genuinamente simultaneas do mesmo pagamento poderiam,
-em teoria, lancar receita duas vezes. Hoje isso e inofensivo porque so
-existe UM caminho de confirmacao (o webhook do Pix). Vira um risco real
-na Task 8, quando o Point ganhar um SEGUNDO caminho concorrente
-(webhook + polling de `GET /pagamentos/:id`). **Ruling registrada no
-ledger:** resolver isso dentro da propria Task 8 (com um update
-condicional/atomico no repository, filtrado por `pago_em IS NULL`), nao
-retroagir na Task 3. Ao despachar a Task 8, carregar esta exigencia
-explicitamente no dispatch do implementador.
+**2. Race condition (TOCTOU) na trava contra receita em dobro — RESOLVIDA
+na Task 8.** A funcao `confirmarPagamento()` tinha uma checagem "ja
+pago?" antes de lancar receita (`!pedido.pago_em`) que NAO era atomica —
+duas confirmacoes genuinamente simultaneas do mesmo pagamento (webhook +
+polling do Point, que a Task 8 introduziu como segundo caminho
+concorrente) poderiam lancar receita duas vezes. Corrigido com
+`pedidoRepo.marcarPagoSeNaoPago()`, um update atomico condicional
+(filtrado por `pago_em` ausente/null) implementado nos DOIS backends.
+Prova real, nao so por inspecao de codigo: duas chamadas genuinamente
+concorrentes (`Promise.all`) contra o Mongo local resultaram em
+exatamente uma `true`; a mesma prova foi repetida direto em SQL contra
+um Postgres local (`UPDATE ... WHERE pago_em IS NULL` disparado por
+dois processos `psql` concorrentes de verdade) depois que a revisao da
+Task 8 apontou que a primeira prova so cobria Mongo, nao o backend real
+de producao (Supabase/Postgres).
 
-## 0.0.2 ✅ Controle de acesso ao cadastro (allowlist de e-mail) — completo e revisado, 🟡 DEPLOY AINDA PENDENTE
+**3. Bug critico de producao achado na revisao da Task 10, ja corrigido:
+`pagamentos.provider` nunca aceitava `'mercadopago_point'` no Postgres.**
+A migration `0006` (bem antiga, de antes do PDV existir) so previa
+`'manual'` e `'mercadopago'` no CHECK de `pagamentos.provider`. As Tasks
+6, 7 e 8 (ja mergeadas) criam pagamentos com `provider='mercadopago_point'`
+— **todo INSERT desses estava violando esse CHECK em producao desde que
+a Task 6 foi ao ar.** Ninguem percebeu porque toda verificacao manual
+das Tasks 6-8 rodou contra o Mongo local (sem constraint equivalente),
+nunca contra o Postgres de producao de verdade. Corrigido pela migration
+`0031_pagamentos_provider_point.sql` (amplia o CHECK), testada em
+transacao com ROLLBACK contra producao (insercao real com o novo valor
+funcionou; controle negativo com valor invalido continuou bloqueado;
+confirmado que producao voltou ao estado original apos o rollback).
+**Dano real: nenhum** — a tabela `pagamentos` tinha ZERO linhas em
+producao no momento do achado, confirmando que nenhum dono chegou a
+tentar usar a cobranca por cartao de verdade ainda (o frontend so foi
+existir a partir da Task 10, no mesmo dia). Commit `70fe7e5`, ja enviado
+ao GitHub — aplica no proximo deploy automatico do EasyPanel. **Se
+retomar esta secao antes de confirmar que o deploy ja rodou, verificar
+com uma query direta em producao** (`SELECT pg_get_constraintdef(oid)
+FROM pg_constraint WHERE conname='pagamentos_provider_check'` deve
+mostrar os 3 valores, nao so 2) **antes de considerar a cobranca por
+cartao funcional em producao.**
 
-**Verificado em 2026-08-24, noite: o codigo esta 100% no GitHub
-(`main`, commit `7f4525f`), mas o EasyPanel AINDA NAO aplicou o deploy —
-a tabela `emails_liberados` ainda nao existe em producao.** Isso e
-normal (o deploy automatico as vezes demora, ja aconteceu antes nesta
-sessao — ver §0.0.3). **Primeira coisa a fazer na proxima sessao:**
-conferir se o deploy ja passou (`curl .../api/health` ou consultar
-`information_schema.tables` por `emails_liberados`) antes de qualquer
-outra coisa.
+## 0.0.2 ✅ Controle de acesso ao cadastro (allowlist de e-mail) — completo, revisado e DEPLOY CONFIRMADO EM PRODUCAO
 
-**⚠️ ACAO NECESSARIA DO DONO ASSIM QUE O DEPLOY SUBIR, ANTES DE QUALQUER
-PROSPECT SE CADASTRAR:** esta feature deixa o cadastro
-(`POST /auth/register`) **fechado por padrao**. A tabela
-`emails_liberados` nasce vazia — **ate o dono liberar pelo menos um
-e-mail pelo Painel ETNA (nova secao "E-mails liberados para cadastro"),
-NINGUEM consegue criar uma empresa nova**, nem o proprio dono numa conta
-nova. Isso e o comportamento pretendido (era o pedido), mas precisa ser
-comunicado ativamente — sem isso, o proximo prospect que tentar se
-cadastrar so ve um aviso pedindo pra chamar no WhatsApp. **Ate o deploy
-subir, o cadastro em producao continua ABERTO normalmente (comportamento
-antigo) — nao ha risco de ninguem ficar trancado para fora antes disso.**
+**Confirmado nesta retomada (2026-08-24, manha): a migration `0030`
+ja aplicou em producao, a tabela `emails_liberados` existe e esta com
+0 linhas.** O deploy que estava pendente na noite anterior subiu
+sozinho durante a madrugada (mesmo padrao ja visto em §0.0.3).
+
+**⚠️ ACAO NECESSARIA DO DONO AGORA — NAO E SO UM "OK TECNICO":** o
+cadastro (`POST /auth/register`) esta **fechado por padrao** em
+producao neste exato momento. Com a tabela vazia, **NINGUEM consegue
+criar uma empresa nova ate o dono liberar pelo menos um e-mail** pelo
+Painel ETNA (nova secao "E-mails liberados para cadastro"), nem o
+proprio dono numa conta nova. Isso e o comportamento pretendido (era o
+pedido original), mas precisa ser comunicado ativamente pro dono — sem
+isso, o proximo prospect que tentar se cadastrar so ve um aviso pedindo
+pra chamar no WhatsApp, e ninguem vai saber por que ate perguntar.
+**Confirmar com o dono se ele ja sabe disso e ja liberou os e-mails que
+precisa liberar.**
 
 **Pedido original do dono** (2026-08-19, no meio da execucao do PDV):
 *"eu como dono devo ter a possibilidade de adicionar os e-mails que podem
