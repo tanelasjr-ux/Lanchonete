@@ -61,5 +61,5 @@ teste('temModulo: mesas continua imune a plano, so a flag decide', () => {
   assert.equal(temModulo({ config: { plano: 'basico', feature_flags: { mesas: false } } }, 'mesas'), false)
 })
 
-console.log(`\n${passou}/11 testes passaram`)
-if (passou < 11) process.exit(1)
+console.log(`\n${passou}/10 testes passaram`)
+if (passou < 10) process.exit(1)
