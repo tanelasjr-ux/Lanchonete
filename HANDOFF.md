@@ -1,22 +1,21 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-24, fim de tarde. **Um trabalho EM ANDAMENTO
-AGORA MESMO — comece por §0.0.**
+Ultima atualizacao: 2026-08-25, madrugada. **Nada em andamento agora —
+tudo commitado, testado e enviado ao GitHub. Bom ponto de partida pra
+qualquer proximo pedido.**
 
-1. 🟡 **PDV (maquininha Mercado Pago Point)** — plano de 11 tasks,
-   **10/11 completas e revisadas** (Tasks 1-10), **Task 11 (a ULTIMA do
-   plano) ja foi IMPLEMENTADA E COMMITADA (`733ac78`) pelo subagente, que
-   agora esta rodando a checklist de fim-de-plano (`test_point_calculo.mjs`
-   + regressao completa `tests/run_all.py`) em background — NAO
-   redespachar a Task 11, so checar se o relatorio dela ja foi escrito
-   e reagir.** Detalhe completo em §0.0.
-   **⚠️ Achado critico durante a revisao da Task 10, ja corrigido e em
-   producao:** a feature de cobranca no cartao estava **quebrada em
-   producao desde a Task 6** (um CHECK do Postgres nunca foi ampliado
-   pra aceitar o novo tipo de pagamento) — corrigido pela migration
-   `0031`, testada e ja enviada ao GitHub. Ninguem foi afetado de
-   verdade (a tabela de pagamentos estava com 0 linhas em producao —
-   nenhum dono chegou a tentar usar a feature ainda). Ver §0.0.1.
+1. ✅ **PDV (maquininha Mercado Pago Point) — PLANO COMPLETO, 11/11
+   tasks.** Cobranca por cartao na comanda e no pedido (balcao/delivery),
+   webhook + polling, guarda contra receita duplicada e contra cobranca
+   dupla no cartao fisico do cliente, configuracao de terminal pela tela.
+   Passou pelo ciclo inteiro: 11 tasks implementadas e revisadas
+   individualmente → revisao final do branch completo (achou 3 bugs
+   criticos reais que nenhuma revisao por task capturaria) → correcao →
+   re-revisao escopada (achou um risco real na propria correcao) →
+   segunda correcao → adjudicacao final. Ver §0.0 pro retrato completo
+   (o que foi achado, o que foi corrigido, o que ficou registrado como
+   pendencia deliberada) — **vale ler antes da primeira cobranca real com
+   uma Point Smart fisica**, ha 2 pendencias que importam pra isso.
 2. ✅ **Controle de acesso ao cadastro (allowlist de e-mail)** —
    codigo completo, revisado, commitado, enviado ao GitHub e **DEPLOY
    CONFIRMADO EM PRODUCAO** (migration `0030` aplicada, tabela
@@ -57,107 +56,69 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 0.0 🟡 EM ANDAMENTO (quase terminando): PDV — cobranca no cartao pela maquininha (Mercado Pago Point)
-
-**Pausado aqui a pedido do dono (handoff) — retomar exatamente por aqui.**
-
-**⚠️ ESTADO ESPECIAL: a Task 11 (ultima do plano) ja foi implementada e
-commitada, mas o subagente ainda esta rodando a checklist final do
-plano em background quando esta sessao foi pausada.** Nada foi perdido
-— o trabalho de codigo em si (commit `733ac78`) ja esta seguro no git.
-Falta so a checklist de fim-de-plano e a revisao. **Primeiro passo da
-proxima sessao:**
-1. Checar se `.superpowers/sdd/2026-08-19-pdv-maquininha-plan/task-11-report.md`
-   existe — se sim, o subagente terminou (ou foi interrompido depois de
-   escrever o relatorio); ler o relatorio pra saber o resultado real de
-   `test_point_calculo.mjs` e da regressao completa.
-2. Se o relatorio NAO existir ainda: checar `ps aux | grep python` — se
-   houver um `tests/run_all.py` rodando, e provavelmente a checklist
-   final ainda em andamento (pode levar ~15-20min); se nao houver
-   nenhum processo, o subagente foi cortado no meio e a checklist final
-   precisa ser rodada manualmente (rodar UMA UNICA instancia de
-   `python tests/run_all.py` — ver a armadilha registrada abaixo antes
-   de rodar).
-3. Depois da checklist final confirmada: gerar o pacote de revisao da
-   Task 11 (`review-733ac78..HEAD.diff` ou equivalente) e despachar o
-   revisor da task, exatamente como as Tasks 6-10. Se aprovada (ou apos
-   corrigir achados), Task 11 = ultima do plano → despachar a **revisao
-   final do branch inteiro** (`superpowers:subagent-driven-development`,
-   secao "Dispatch final code reviewer", modelo mais capaz disponivel),
-   tratar achados numa unica rodada de fix + re-revisao escopada, e so
-   entao apagar o workspace do plano (`.superpowers/sdd/2026-08-19-pdv-maquininha-plan/`)
-   e considerar o PDV **100% concluido**.
-
-**⚠️ Armadilha real, ja aconteceu 2x nesta sessao — leia antes de rodar
-`tests/run_all.py`:** um subagente ja perdeu o controle do proprio
-processo em background e lancou 3 copias concorrentes da suite inteira
-contra o mesmo Mongo local, contaminando um fixture compartilhado
-(`backend_test_plataforma.py`, `limpar_admins`) e produzindo uma falsa
-regressao que custou tempo real de investigacao pra descartar (ver
-ledger da Task 9). **Nunca lance uma segunda copia sem confirmar que a
-anterior terminou** (`ps aux | grep python`); se encontrar mais de um
-`run_all.py` rodando ao mesmo tempo, mate os extras antes de confiar em
-qualquer resultado.
+## 0.0 ✅ CONCLUIDO: PDV — cobranca no cartao pela maquininha (Mercado Pago Point)
 
 Depois do B2 (onboarding), o dono pediu pra planejar juntos uma integracao
-com maquininha de cartao ("PDV"). Foi um processo completo:
-brainstorming arquitetural (`superpowers:brainstorming`) → spec escrita →
-plano de implementacao (`superpowers:writing-plans`) → execucao por
-subagentes (`superpowers:subagent-driven-development`, em andamento).
+com maquininha de cartao ("PDV"). Processo completo: brainstorming
+arquitetural (`superpowers:brainstorming`) → spec escrita → plano de
+implementacao (`superpowers:writing-plans`) → execucao por subagentes
+(`superpowers:subagent-driven-development`) → **revisao final do branch
+inteiro → correcao → re-revisao escopada → segunda correcao →
+adjudicacao final**. Workspace do plano (`.superpowers/sdd/...`) ja
+apagado — este arquivo e a fonte de verdade sobre o que aconteceu.
 
-**Documentos, nesta ordem de leitura:**
-1. `docs/superpowers/specs/2026-08-19-pdv-maquininha-design.md` — a decisao
-   e o porque (Mercado Pago Point, nao Stone/Cielo/PagBank — ver §0.0.3)
-2. `docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md` — as 11 tasks,
-   cada uma com codigo exato
-3. `.superpowers/sdd/2026-08-19-pdv-maquininha-plan/progress.md` — **o
-   ledger de execucao** (git-ignored, so nesta maquina). Tem cada decisao
-   tomada durante a implementacao, incluindo 2 achados reais que NAO
-   estavam na spec original (ver abaixo) e uma ruling sobre uma race
-   condition adiada de proposito pra Task 8.
+**Documentos:**
+1. `docs/superpowers/specs/2026-08-19-pdv-maquininha-design.md` — a
+   decisao e o porque (Mercado Pago Point, nao Stone/Cielo/PagBank)
+2. `docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md` — as 11
+   tasks originais, cada uma com codigo exato
 
-**Estado exato ao pausar:**
+**As 11 tasks, todas completas e revisadas:**
 
-| Task | Status |
+| Task | Commit(s) |
 |---|---|
-| 1 — contrato de dominio + migration `0029` (`pedidos.pago_em`) | ✅ completa (commits `1bc7b72..a93873f`, 1 fix round) |
-| 2 — `comandaRepo.atualizarStatusPagamentoResumo` (Mongo real, Supabase no-op) | ✅ completa (commit `5e6c890`, review limpo) |
-| 3 — `confirmarPagamento()` + corrige bug real do Pix | ✅ completa (commits `5e6c890..ad1dfe6`, 1 fix round) |
-| 4 — adapter `lib/integrations/payments/point.js` (Orders API) + testes puros | ✅ completa (commit `2c0395f`, review limpo) |
-| 5 — `terminalId` configuravel na integracao Mercado Pago | ✅ completa (commit `63414e5`, review limpo) |
-| 6 — Cobranca na comanda (`POST /comandas/:id/cartao`) + cancelamento | ✅ completa (commit `80140ec`, review limpo — 1 minor adiado: rota de cancelar nao checa `isGatewayConfigured` antes de `getPaymentProvider`, cai num 500 generico em vez de 400 limpo se o terminal for removido entre criar e cancelar a cobranca; seguro, sem fake-success, gap do proprio brief) |
-| 7 — Cobranca no pedido (`POST /pedidos/:id/cartao`) + guarda contra receita em dobro | ✅ completa (commit `b27450f`, review limpo, 0 achados) |
-| 8 — Webhook do Point + polling + fecha a race TOCTOU | ✅ completa (commit `f952fe0`; implementador original foi cortado pelo limite de sessao da API no meio do trabalho, controller terminou verificacao+commit; review Approved com 1 achado Important sobre cobertura de prova em Postgres, fechado pelo controller com prova real contra `ros-pg-test` local — ver ledger) |
-| 9 — Testes de integracao (`tests/backend_test_pdv.py`) | ✅ completa (commit `a946fd1`, 6/6 passando; uma falha aparente na regressao completa foi investigada e confirmada como contaminacao entre processos concorrentes de teste, nao uma regressao real — ver armadilha registrada abaixo) |
-| 10 — Frontend: cobrar na comanda | ✅ completa (commits `bea31d2` implementacao + `2fa205e` fix/duplo-clique + `70fe7e5` fix/migration critica — ver §0.0.1) |
-| 11 — Frontend: cobrar no pedido + config do terminal (ULTIMA task) | 🟡 **implementada e commitada (`733ac78`), checklist final de fim-de-plano rodando em background quando a sessao pausou — ver instrucoes no topo desta secao** |
+| 1 — contrato de dominio + migration `0029` (`pedidos.pago_em`) | `1bc7b72..a93873f` |
+| 2 — `comandaRepo.atualizarStatusPagamentoResumo` | `5e6c890` |
+| 3 — `confirmarPagamento()` + corrige bug real do Pix (§0.0.1) | `5e6c890..ad1dfe6` |
+| 4 — adapter `lib/integrations/payments/point.js` (Orders API) | `2c0395f` |
+| 5 — `terminalId` configuravel na integracao Mercado Pago | `63414e5` |
+| 6 — Cobranca na comanda (`POST /comandas/:id/cartao`) + cancelamento | `80140ec` |
+| 7 — Cobranca no pedido (`POST /pedidos/:id/cartao`) + guarda contra receita em dobro | `b27450f` |
+| 8 — Webhook do Point + polling + fecha race TOCTOU (§0.0.1) | `f952fe0` |
+| 9 — Testes de integracao (`tests/backend_test_pdv.py`) | `a946fd1` |
+| 10 — Frontend: cobrar na comanda | `bea31d2`, `2fa205e`, `70fe7e5` |
+| 11 — Frontend: cobrar no pedido + config do terminal | `733ac78` |
+| **Revisao final do branch inteiro + 2 rodadas de correcao** (§0.0.1) | `db58f3d`, `754bb41` |
 
-**Commits do PDV, em ordem:** `a93873f` (1) → `5e6c890` (2) → `5fb5706`
-+`ad1dfe6` (3) → `2c0395f` (4) → `63414e5` (5) → `80140ec` (6) →
-`b27450f` (7) → `f952fe0` (8) → `a946fd1` (9) → `bea31d2`+`2fa205e`+`70fe7e5`
-(10) → `733ac78` (11, ultimo). **Todos ja enviados ao GitHub** (`git push
-origin main` feito com HEAD em `70fe7e5`, antes da Task 11 — confirmar
-se `733ac78` tambem ja foi pushado, pode ter ficado local dependendo de
-onde a sessao foi cortada). Todos direto na `main`, sem worktree isolado
-(decisao registrada no ledger).
+**Todos os commits ja enviados ao GitHub** (`main`, HEAD atual `754bb41`
+no momento deste handoff — confirmar com `git log` se avancou desde
+entao). Tudo direto na `main`, sem worktree isolado (decisao registrada
+desde o inicio do plano — convencao ja estabelecida nesta sessao pra
+todo trabalho de dev).
 
-**Para retomar:** invocar `superpowers:subagent-driven-development` de
-novo com o plano (`docs/superpowers/plans/2026-08-19-pdv-maquininha-plan.md`)
-— a skill le o ledger, ve que as Tasks 1-10 tem linha `Task N: complete`,
-e resume na Task 11 (revisao, ja que a implementacao esta pronta) ou
-direto na revisao final do branch inteiro, se a Task 11 ja tiver sido
-revisada tambem. Nao precisa reexplicar nada disto ao retomar; o ledger
-e a spec carregam o contexto. **Antes de despachar qualquer coisa,
-confirmar o HEAD real com `git log`.**
+**⚠️ Duas pendencias deliberadas — leia antes da primeira cobranca real
+com uma Point Smart fisica** (nao sao bugs esquecidos, foram avaliadas e
+adiadas conscientemente, ver §0.0.1 pro detalhe completo de cada uma):
+1. **Forma de pagamento sempre gravada como "credito"**, mesmo quando o
+   cliente paga no debito — a resposta do Mercado Pago tem essa
+   informacao, so nao foi capturada ainda (exigiria confirmar o formato
+   exato contra um payload real). Impacto: relatorio por forma de
+   pagamento fica errado pra vendas no debito, nao afeta o valor da
+   receita nem a conferencia de caixa.
+2. **Sem reconciliador automatico de cobrancas pendentes.** Se uma
+   cobranca ficar pendente e a tela fechar/F5 sem o webhook chegar, ela
+   so e retomada quando alguem volta e clica em "Cobrar no cartao" de
+   novo naquele mesmo pedido/comanda (o 409 agora devolve o id e a tela
+   retoma o polling — mas so acontece se alguem voltar la). Nao ha hoje
+   um job/rota que varra pagamentos pending antigos sozinho.
 
-**Ambiente local:** dev server e container Mongo (`ros-mongo-local`)
-foram religados nesta retomada com
-`RATE_LIMIT_DISABLED=1 SIGNUP_ALLOWLIST_DISABLED=1` (a segunda flag e
-necessaria pros helpers de teste continuarem registrando empresas, ja
-que o gate de allowlist esta ativo em producao — ver §0.0.2). Podem ter
-caido de novo se a maquina reiniciou entre sessoes; checar
-`curl -s http://localhost:3000/api/health` antes de supor que estao de
-pe.
+**Validacao que so acontece com hardware real, ainda pendente (fora do
+alcance de qualquer sessao de codigo):** a primeira cobranca de teste
+com uma Point Smart fisica **precisa incluir um cartao RECUSADO**, nao
+so um aprovado — e o unico jeito de confirmar que o mapeamento
+`failed -> rejected` (corrigido na revisao final, ver §0.0.1) bate com o
+payload real do Mercado Pago em producao. Colar o `GET /v1/orders/{id}`
+dessa cobranca recusada num commit/nota seria a prova final que falta.
 
 ## 0.0.1 Achados reais durante a implementacao (nao previstos na spec original)
 
@@ -220,6 +181,68 @@ com uma query direta em producao** (`SELECT pg_get_constraintdef(oid)
 FROM pg_constraint WHERE conname='pagamentos_provider_check'` deve
 mostrar os 3 valores, nao so 2) **antes de considerar a cobranca por
 cartao funcional em producao.**
+
+**4. Revisao final do branch inteiro (apos as 11 tasks completas) achou
+3 bugs criticos reais que NENHUMA revisao por task capturaria** — cada
+um so aparece olhando o conjunto, porque o PDV alimentava codigo
+pre-existente que nenhuma das 11 tasks tinha editado:
+
+- **Fechar comanda lancava receita de cobranca AINDA PENDENTE no
+  cartao.** O laco de `POST /comandas/:id/fechar` criava uma transacao
+  pra CADA item de `comanda.pagamentos`, sem olhar o status — diferente
+  de `computeComanda()` (que calcula `restante`), que so soma
+  `status==='approved'`. Cenario real: cliente desiste do cartao, paga
+  em dinheiro, comanda fecha → duas transacoes de receita, uma delas de
+  um cartao que nunca foi de fato pago. Corrigido filtrando pelo mesmo
+  criterio. Prova real (nao so leitura de codigo): teste novo
+  `test_fechar_comanda_nao_lanca_receita_de_cobranca_pendente`, e
+  confirmado por MUTACAO — reintroduzindo o bug de proposito, o teste
+  falha; com a correcao, passa.
+- **Pedido pago pela maquininha nunca baixava estoque.** A guarda
+  `!pedido.pago_em` em `PUT /pedidos/:id` (criada so pra nao lancar
+  receita duas vezes) tambem suprimia a baixa de estoque — todo pedido
+  de balcao/delivery pago no cartao saia da casa sem baixar estoque,
+  CMV e alerta de minimo desalinhando em silencio. Corrigido movendo a
+  baixa de estoque pra fora da guarda (acontece sempre que o pedido
+  conclui, pago ou nao). Prova real: teste novo
+  `test_pedido_pago_no_cartao_ainda_baixa_estoque`, tambem confirmado
+  por mutacao.
+- **Cartao recusado nunca virava "recusado".** `normalizeStatus` mapeava
+  `processed -> approved` mas nao tinha nenhum caso pra recusa —
+  pesquisado contra a documentacao oficial do Mercado Pago
+  (status-order-transaction) pra confirmar com dados reais, nao
+  suposicao: `processed` SO ocorre com pagamento creditado (esse
+  mapeamento ja estava certo), mas existe um status SEPARADO, `failed`
+  (recusa do emissor, `status_detail: rejected_by_issuer`), que o
+  adapter nunca tratava — caia em `unknown`, deixando a cobranca presa
+  sem nunca virar `rejected`. Corrigido adicionando o caso que faltava.
+  **Isto e a validacao pendente com hardware real mencionada acima —
+  ainda nao confirmado contra um payload de producao de verdade.**
+
+**Correcao teve uma SEGUNDA rodada**, porque a re-revisao escopada da
+primeira correcao achou, tambem por teste de mutacao, um problema mais
+serio que o que a primeira correcao resolvia: a compensacao adicionada
+em `confirmarPagamento()` (reverter `pago_em` se a criacao da receita
+falhasse) reabria a possibilidade de uma SEGUNDA cobranca real no
+cartao de um cliente que ja tinha sido debitado com sucesso — pior que
+o problema original (receita nao lancada, so um numero de relatorio
+errado). Corrigido de novo: `pago_em` nunca e revertido (o pagamento no
+cartao e irreversivel); se a receita falhar, o erro estoura de proposito
+e cai no monitoramento, pra reconciliacao manual — nunca cobranca
+dupla, nunca silencio total.
+
+**Outros achados da revisao final, ja fechados na mesma rodada:**
+cobranca pendente orfa (F5/troca de aba) agora retoma sozinha ao clicar
+de novo (o 409 devolve o id do pagamento); `ComandaDialog` recarrega
+apos aprovacao (paridade com a tela de pedido); webhook do Point
+configuravel pela tela de Integracoes; `terminalId` pode ser apagado
+(nao e mais tratado como segredo mascarado); polling para sozinho apos
+~3min nas duas telas; lista de pagamentos da comanda nao mostra mais
+pendente/cancelado em verde (parecia dinheiro recebido).
+
+**Pendencias deliberadas, nao corrigidas** (ver aviso no topo desta
+secao): forma de pagamento sempre "credito"; sem reconciliador
+automatico de cobranca pendente.
 
 ## 0.0.2 ✅ Controle de acesso ao cadastro (allowlist de e-mail) — completo, revisado e DEPLOY CONFIRMADO EM PRODUCAO
 
@@ -1457,8 +1480,8 @@ imagem apesar do padrao geral de ignorar).
 | Fix: logo/icones do PWA 404 em producao | **Completo e no ar** — ver §0.1.2 |
 | Aviso de atraso na tela do cliente | **Completo e no ar** (banner amber/vermelho no Dashboard) |
 | Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
-| PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | 🟡 **EM ANDAMENTO** — spec + plano completos, 5/11 tasks implementadas (`63414e5`) — ver §0.0 |
-| Controle de acesso ao cadastro (allowlist de e-mail) | ✅ Codigo completo e revisado, 🟡 **deploy em producao nao confirmado** (`7f4525f`) — confirmar deploy, depois liberar ao menos 1 e-mail no Painel ETNA antes do proximo cadastro real — ver §0.0.2 |
+| PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | ✅ **Completo, 11/11 tasks + revisao final do branch inteiro** (`754bb41`) — 2 pendencias deliberadas (forma de pagamento, reconciliador automatico) — ver §0.0 |
+| Controle de acesso ao cadastro (allowlist de e-mail) | ✅ **Completo e no ar**, deploy confirmado em producao — cadastro fechado ate o dono liberar e-mails no Painel ETNA — ver §0.0.2 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
