@@ -14,7 +14,7 @@ teste('financeiro entra no catalogo de modulos', () => {
 
 teste('PLANO_MODULOS: basico nao inclui nada restrito, completo inclui estoque/caixa/financeiro', () => {
   assert.deepEqual(PLANO_MODULOS.basico, [])
-  assert.deepEqual(PLANO_MODULOS.completo.sort(), ['caixa', 'estoque', 'financeiro'].sort())
+  assert.deepEqual([...PLANO_MODULOS.completo].sort(), ['caixa', 'estoque', 'financeiro'].sort())
 })
 
 teste('planoInclui: modulo fora de PLANO_MODULOS nunca e restringido (mesas)', () => {
@@ -61,5 +61,17 @@ teste('temModulo: mesas continua imune a plano, so a flag decide', () => {
   assert.equal(temModulo({ config: { plano: 'basico', feature_flags: { mesas: false } } }, 'mesas'), false)
 })
 
-console.log(`\n${passou}/10 testes passaram`)
-if (passou < 10) process.exit(1)
+teste('planoInclui: nomes de propriedade especiais do JS nunca vazam acesso nem quebram', () => {
+  for (const plano of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    assert.equal(planoInclui({ config: { plano } }, 'estoque'), false, `plano='${plano}' deveria negar, nunca lancar excecao`)
+  }
+})
+
+teste('planoInclui/temModulo: empresa totalmente null ou modulo desconhecido nao quebram', () => {
+  assert.equal(planoInclui(null, 'estoque'), false)
+  assert.equal(temModulo(null, 'estoque'), false)
+  assert.equal(planoInclui({ config: { plano: 'completo' } }, 'modulo_que_nao_existe'), true, 'modulo fora do catalogo nunca e restringido por plano')
+})
+
+console.log(`\n${passou}/12 testes passaram`)
+if (passou < 12) process.exit(1)
