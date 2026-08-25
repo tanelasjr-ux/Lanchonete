@@ -315,5 +315,26 @@ def test_completo_liga_estoque_pelo_toggle_normalmente():
     assert r.status_code == 200, r.text
 
 
+def test_financeiro_desligado_bloqueia_todas_as_rotas_financeiras():
+    """Mesmo padrao de test_caixa_desligado_bloqueia_todas_as_rotas_de_caixa
+    — modulo desligado (por nascer no Basico) barra TODAS as rotas
+    financeiras, nao so a primeira.
+    """
+    conta = criar_empresa("Financeiro Off")
+    headers = conta["headers"]
+
+    for metodo, rota, corpo in [
+        ("GET", "/financeiro/transacoes", None),
+        ("GET", "/financeiro/categorias-despesa", None),
+        ("POST", "/financeiro/transacoes", {"tipo": "receita", "valor": 10}),
+        ("GET", "/financeiro/resumo", None),
+        ("GET", "/contas", None),
+        ("POST", "/contas", {"tipo": "pagar", "descricao": "x", "categoria": "Outros", "valor": 10, "vencimento": "2026-12-01"}),
+        ("GET", "/financeiro/relatorio", None),
+    ]:
+        r = requests.request(metodo, f"{BASE_URL}{rota}", headers=headers, json=corpo)
+        assert r.status_code == 403, f"{metodo} {rota} deveria dar 403 no plano Basico, deu {r.status_code}: {r.text}"
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

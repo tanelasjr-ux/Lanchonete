@@ -2395,15 +2395,18 @@ async function handler(request, { params }) {
     /* ==================== FINANCEIRO ==================== */
     if (route === '/financeiro/transacoes' && method === 'GET') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const list = await transacaoRepo.listRecentes(ctx.empresa_id, 500)
       return json(list.map(clean))
     }
     if (route === '/financeiro/categorias-despesa' && method === 'GET') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       return json(CATEGORIAS_DESPESA)
     }
     if (route === '/financeiro/transacoes' && method === 'POST') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const b = (await request.json()) || {}
       if (!b.tipo || b.valor === undefined) return err('tipo e valor obrigatorios')
       // NULL = nao classificada, nunca inventado como 'fixa' ou 'variavel' por
@@ -2430,6 +2433,7 @@ async function handler(request, { params }) {
     }
     if (route === '/financeiro/resumo' && method === 'GET') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const list = await transacaoRepo.list(ctx.empresa_id)
       const receitas = list.filter((t) => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0)
       const despesas = list.filter((t) => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0)
@@ -2459,6 +2463,7 @@ async function handler(request, { params }) {
      */
     if (route === '/contas' && method === 'GET') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const url = new URL(request.url)
       const fTipo = url.searchParams.get('tipo')
       const fStatus = url.searchParams.get('status') // 'pendente' | 'paga' | 'cancelada' | 'atrasada'
@@ -2479,6 +2484,7 @@ async function handler(request, { params }) {
 
     if (route === '/contas' && method === 'POST') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const b = (await request.json()) || {}
       if (!['pagar', 'receber'].includes(b.tipo)) return err('tipo deve ser "pagar" ou "receber"')
       const valor = Number(b.valor)
@@ -2546,6 +2552,7 @@ async function handler(request, { params }) {
 
     if (seg[0] === 'contas' && seg[1] && method === 'PUT' && !seg[2]) {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const conta = await contaRepo.findById(ctx.empresa_id, seg[1])
       if (!conta) return err('Conta nao encontrada', 404)
       // So edita enquanto pendente — mesma regra de "pedido concluido nao se
@@ -2570,6 +2577,7 @@ async function handler(request, { params }) {
 
     if (seg[0] === 'contas' && seg[1] && seg[2] === 'pagar' && method === 'PUT') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const conta = await contaRepo.findById(ctx.empresa_id, seg[1])
       if (!conta) return err('Conta nao encontrada', 404)
       if (conta.status !== 'pendente') return err(`Conta ja esta ${conta.status}`, 409)
@@ -2602,6 +2610,7 @@ async function handler(request, { params }) {
 
     if (seg[0] === 'contas' && seg[1] && seg[2] === 'cancelar' && method === 'PUT') {
       if (!can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const conta = await contaRepo.findById(ctx.empresa_id, seg[1])
       if (!conta) return err('Conta nao encontrada', 404)
       if (conta.status !== 'pendente') return err(`Conta ja esta ${conta.status}`, 409)
@@ -3270,6 +3279,7 @@ async function handler(request, { params }) {
     /* ==================== RELATORIO FINANCEIRO (dados reais) ==================== */
     if (route === '/financeiro/relatorio' && method === 'GET') {
       if (!can(ctx.papel, 'relatorios') && !can(ctx.papel, 'financeiro')) return err('Sem permissao', 403)
+      const bloqueio = await exigeModulo('financeiro'); if (bloqueio) return bloqueio
       const url = new URL(request.url)
       const now = new Date()
       const inicio = url.searchParams.get('inicio') ? new Date(url.searchParams.get('inicio')) : new Date(now.getTime() - 30 * 86400000)
