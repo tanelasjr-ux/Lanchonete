@@ -84,7 +84,9 @@ async function api(path, { method = 'GET', body } = {}) {
     // (campo obrigatorio faltando, permissao negada) — reportar isso como
     // "erro" encheria o painel de ruido que nao pede acao de ninguem.
     if (res.status >= 500) capturarErroCliente(data.error || 'Erro do servidor', { rota: path, metodo: method })
-    throw new Error(data.error || 'Erro na requisição')
+    const erro = new Error(data.error || 'Erro na requisição')
+    erro.data = data
+    throw erro
   }
   return data
 }
@@ -1223,7 +1225,14 @@ function CobrarCartaoPedido({ pedidoId, onPago }) {
       const r = await api(`/pedidos/${pedidoId}/cartao`, { method: 'POST', body: {} })
       setCartao(r)
       toast.success('Maquininha acesa — aguardando o cliente')
-    } catch (e) { toast.error(e.message) } finally { setCobrando(false) }
+    } catch (e) {
+      // 409 (ja existe pendente) traz o id de volta — retoma o polling em
+      // vez de so mostrar erro, pra F5/troca de aba nao deixar o pedido
+      // travado sem forma de acompanhar/cancelar a cobranca ja em curso.
+      if (e.data?.pagamento_id) {
+        try { setCartao(await api(`/pagamentos/${e.data.pagamento_id}`)) } catch { toast.error(e.message) }
+      } else toast.error(e.message)
+    } finally { setCobrando(false) }
   }
 
   const cancelarCobranca = async () => {
@@ -1235,9 +1244,17 @@ function CobrarCartaoPedido({ pedidoId, onPago }) {
     } catch (e) { toast.error(e.message) }
   }
 
+  // Para sozinho apos ~3min (spec §9) — mesma logica de ComandaDialog.
   useEffect(() => {
     if (!cartao || cartao.status !== 'pending') return
+    let tentativas = 0
     const t = setInterval(async () => {
+      tentativas++
+      if (tentativas > 90) {
+        clearInterval(t)
+        toast.error('Sem resposta da maquininha — verifique o terminal ou cancele a cobranca')
+        return
+      }
       try {
         const r = await api(`/pagamentos/${cartao.id}`)
         if (r.status !== 'pending') {
@@ -3725,8 +3742,15 @@ function Integracoes() {
             <div className="space-y-2"><Label>Webhook Secret</Label><Input value={mp.webhookSecret} onChange={(e) => setMp({ ...mp, webhookSecret: e.target.value })} placeholder={data.mercadopago?.config?.hasWebhookSecret ? '•••• (mantido)' : 'assinatura'} /></div>
           </div>
           <div className="space-y-2"><Label>Access Token</Label><Input type="password" value={mp.accessToken} onChange={(e) => setMp({ ...mp, accessToken: e.target.value })} placeholder={data.mercadopago?.config?.hasAccessToken ? '•••• (mantido — preencha para trocar)' : 'APP_USR-... ou TEST-...'} /></div>
-          <div className="space-y-2"><Label>ID da maquininha (Terminal ID)</Label><Input value={mp.terminalId} onChange={(e) => setMp({ ...mp, terminalId: e.target.value })} placeholder="ex: NEWLAND_N950__SBX0000001" /><div className="text-xs text-muted-foreground">Painel de desenvolvedor do Mercado Pago. Opcional — so quem tem uma Point fisica preenche.</div></div>
-          <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">URL do webhook: <code className="bg-background px-1.5 py-0.5 rounded">/api/pagamentos/webhook/mercadopago?tenant=SUA_EMPRESA</code>. Suporta Pix (QR Code + Copia e Cola), status por webhook e idempotência.</div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between"><Label>ID da maquininha (Terminal ID)</Label><Badge variant="outline" className={data.mercadopago?.config?.hasAccessToken && data.mercadopago?.config?.terminalId ? 'text-emerald-500 border-emerald-500/20 bg-emerald-500/10' : 'text-muted-foreground'}>{data.mercadopago?.config?.hasAccessToken && data.mercadopago?.config?.terminalId ? 'Maquininha configurada' : 'Maquininha nao configurada'}</Badge></div>
+            <Input value={mp.terminalId} onChange={(e) => setMp({ ...mp, terminalId: e.target.value })} placeholder="ex: NEWLAND_N950__SBX0000001" />
+            <div className="text-xs text-muted-foreground">Painel de desenvolvedor do Mercado Pago. Opcional — so quem tem uma Point fisica preenche.</div>
+          </div>
+          <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
+            <div>Webhook Pix: <code className="bg-background px-1.5 py-0.5 rounded">/api/pagamentos/webhook/mercadopago?tenant=SUA_EMPRESA</code>. Suporta Pix (QR Code + Copia e Cola), status por webhook e idempotência.</div>
+            <div>Webhook Maquininha (Point): <code className="bg-background px-1.5 py-0.5 rounded">/api/pagamentos/webhook/point?tenant=SUA_EMPRESA</code>. Configure no painel de desenvolvedor do Mercado Pago (topico <code className="bg-background px-1 rounded">order.processed</code>) — sem isso, a confirmacao so acontece por polling enquanto a tela estiver aberta.</div>
+          </div>
           <Button onClick={saveMp}>Salvar credenciais</Button>
         </CardContent>
       </Card>
@@ -3941,7 +3965,14 @@ function ComandaDialog({ comandaId, onClose }) {
       const r = await api(`/comandas/${comandaId}/cartao`, { method: 'POST', body: {} })
       setCartao(r)
       toast.success('Maquininha acesa — aguardando o cliente')
-    } catch (e) { toast.error(e.message) } finally { setCobrando(false) }
+    } catch (e) {
+      // 409 (ja existe pendente) traz o id de volta — retoma o polling em
+      // vez de so mostrar erro, pra F5/troca de aba nao deixar a comanda
+      // travada sem forma de acompanhar/cancelar a cobranca ja em curso.
+      if (e.data?.pagamento_id) {
+        try { setCartao(await api(`/pagamentos/${e.data.pagamento_id}`)) } catch { toast.error(e.message) }
+      } else toast.error(e.message)
+    } finally { setCobrando(false) }
   }
   const cancelarCobranca = async () => {
     if (!cartao) return
@@ -3952,21 +3983,32 @@ function ComandaDialog({ comandaId, onClose }) {
     } catch (e) { toast.error(e.message) }
   }
   // Polling a cada 2s enquanto pendente — mesma logica de GET /pagamentos/:id
-  // que ja faz o servidor consultar o Mercado Pago quando necessario.
+  // que ja faz o servidor consultar o Mercado Pago quando necessario. Para
+  // sozinho apos ~3min (spec §9) — sem isso, uma order que fica presa
+  // (ex: `at_terminal` sem nunca ser processada) deixa o intervalo rodando
+  // pra sempre enquanto a comanda estiver aberta na tela. Achado real na
+  // revisao final do plano do PDV, 2026-08-24.
   useEffect(() => {
     if (!cartao || cartao.status !== 'pending') return
+    let tentativas = 0
     const t = setInterval(async () => {
+      tentativas++
+      if (tentativas > 90) {
+        clearInterval(t)
+        toast.error('Sem resposta da maquininha — verifique o terminal ou cancele a cobranca')
+        return
+      }
       try {
         const r = await api(`/pagamentos/${cartao.id}`)
         if (r.status !== 'pending') {
           setCartao(r)
-          if (r.status === 'approved') toast.success('Pagamento aprovado!')
+          if (r.status === 'approved') { toast.success('Pagamento aprovado!'); load() }
           else if (r.status === 'rejected') toast.error('Pagamento recusado')
         }
       } catch { /* tenta de novo no proximo tick */ }
     }, 2000)
     return () => clearInterval(t)
-  }, [cartao])
+  }, [cartao, load])
   if (!c) return <Dialog open onOpenChange={onClose}><DialogContent><Empty>Carregando comanda…</Empty></DialogContent></Dialog>
   const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1, observacao: obsPendente } }); setC(d); setObsPendente('') } catch (e) { toast.error(e.message) } }
   const setQty = async (item, q) => { if (q <= 0) { const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'DELETE' }); setC(d); return } const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'PUT', body: { quantidade: q } }); setC(d) }
@@ -4062,7 +4104,11 @@ function ComandaDialog({ comandaId, onClose }) {
                   {cartao.status === 'rejected' ? 'Pagamento recusado — tente outra forma.' : 'Cobranca cancelada.'}
                 </div>
               )}
-              {(c.pagamentos || []).length > 0 && <div className="space-y-1 pt-1">{c.pagamentos.map((p) => <div key={p.id} className="flex justify-between text-xs"><span className="text-muted-foreground capitalize">{p.metodo.replace('_', ' ')}</span><span className="text-emerald-500">{brl(p.valor)}</span></div>)}</div>}
+              {/* pendente/cancelado NUNCA em verde — parece dinheiro recebido
+                  senao, mas o `restante` (computeComanda, so soma approved)
+                  ja nao conta com esse valor. Achado real na revisao final
+                  do plano do PDV, 2026-08-24. */}
+              {(c.pagamentos || []).length > 0 && <div className="space-y-1 pt-1">{c.pagamentos.map((p) => <div key={p.id} className="flex justify-between text-xs"><span className="text-muted-foreground capitalize">{p.metodo.replace('_', ' ')}{p.status && p.status !== 'approved' ? ` · ${p.status === 'pending' ? 'aguardando' : p.status}` : ''}</span><span className={p.status && p.status !== 'approved' ? 'text-amber-500' : 'text-emerald-500'}>{brl(p.valor)}</span></div>)}</div>}
             </CardContent></Card>
 
             {/* 3 botoes lado a lado (grid-cols-3) espremiam "Fechar conta" — o

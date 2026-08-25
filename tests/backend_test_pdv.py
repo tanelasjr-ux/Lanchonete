@@ -9,8 +9,13 @@ com uma Point Smart fisica — ver docs/superpowers/specs/2026-08-19-pdv-maquini
 import os
 import pytest
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = os.environ.get("DB_NAME", "restaurant_os_dev")
+_mongo = MongoClient(MONGO_URL)
+_db = _mongo[DB_NAME]
 
 
 def criar_empresa(nome):
@@ -111,6 +116,94 @@ def test_permissao_cobrar_no_cartao_exige_role_pagamentos():
     comanda = abrir_comanda(owner_headers)
     negado = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/cartao", headers=cozinha_headers, json={})
     assert negado.status_code == 403
+
+
+def test_fechar_comanda_nao_lanca_receita_de_cobranca_pendente():
+    """Achado real na revisao final do plano do PDV, 2026-08-24: o laco de
+    fechamento de comanda (POST /comandas/:id/fechar) criava uma transacao
+    de receita para CADA item de `comanda.pagamentos`, sem olhar o status —
+    uma cobranca no cartao ainda `pending` (empurrada pelas Tasks 6/7) virava
+    receita fantasma se a comanda fosse fechada por outro meio antes do
+    cartao ser de fato aprovado. Corrigido filtrando por status='approved',
+    mesmo criterio ja usado por computeComanda() pro campo `restante`.
+    """
+    headers = criar_empresa("PDV Fecha Com Pendente")
+    requests.put(f"{BASE_URL}/integracoes/mercadopago", headers=headers, json={
+        "accessToken": "TEST-fake", "terminalId": "TERM-FECHA",
+    })
+    comanda = abrir_comanda(headers)
+    cat = requests.post(f"{BASE_URL}/categorias", headers=headers, json={"nome": "Pratos", "ordem": 1}).json()
+    prod = requests.post(f"{BASE_URL}/produtos", headers=headers, json={
+        "nome": "Prato", "preco": 50, "custo": 20, "categoria_id": cat["id"],
+    }).json()
+    c = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/itens", headers=headers, json={
+        "produto_id": prod["id"], "quantidade": 1,
+    }).json()
+    total = c["total"]  # inclui taxa de servico default — nunca supor 1:1 com o preco do produto
+
+    # Simula uma cobranca no cartao que ficou pendente (nunca confirmada) —
+    # mesmo formato que POST /comandas/:id/cartao grava de verdade.
+    empresa_id = comanda["empresa_id"]
+    _db.pagamentos.insert_one({
+        "id": "fake-pendente-fechamento", "empresa_id": empresa_id, "comanda_id": comanda["id"], "pedido_id": None,
+        "metodo": "cartao_credito", "valor": total, "status": "pending", "provider": "mercadopago_point",
+        "provider_payment_id": "fake-order-fechamento", "external_reference": "x", "idempotency_key": "x",
+    })
+    _db.comandas.update_one({"id": comanda["id"]}, {"$push": {"pagamentos": {
+        "id": "fake-pendente-fechamento", "metodo": "cartao_credito", "valor": total, "status": "pending",
+        "provider": "mercadopago_point", "created_at": None,
+    }}})
+
+    # Cliente desiste do cartao e paga em dinheiro — o restante continua o
+    # total inteiro porque a cobranca pendente NAO conta pro `pago` (mesma
+    # regra de computeComanda).
+    pagar = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/pagamentos", headers=headers, json={
+        "metodo": "dinheiro", "valor": total,
+    })
+    assert pagar.status_code == 201, pagar.text
+
+    fechar = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/fechar", headers=headers, json={})
+    assert fechar.status_code == 200, fechar.text
+
+    transacoes = requests.get(f"{BASE_URL}/financeiro/transacoes", headers=headers).json()
+    da_comanda = [t for t in transacoes if t.get("comanda_id") == comanda["id"]]
+    assert len(da_comanda) == 1, f"esperado 1 transacao de receita (so o dinheiro), veio {len(da_comanda)}: {da_comanda}"
+    assert da_comanda[0]["forma_pagamento"] == "dinheiro"
+    assert da_comanda[0]["valor"] == total
+
+    _db.pagamentos.delete_many({"id": "fake-pendente-fechamento"})
+
+
+def test_pedido_pago_no_cartao_ainda_baixa_estoque():
+    """Achado real na revisao final do plano do PDV, 2026-08-24: a guarda
+    `!pedido.pago_em` em PUT /pedidos/:id (criada na Task 7 so pra nao
+    lancar receita duas vezes) tambem envolvia a baixa de estoque — todo
+    pedido pago pela maquininha saia da casa sem baixar estoque. Corrigido
+    movendo a baixa de estoque pra fora da guarda (ela deve acontecer
+    sempre que o pedido conclui, pago ou nao).
+    """
+    headers = criar_empresa("PDV Estoque Cartao")
+    cat = requests.post(f"{BASE_URL}/categorias", headers=headers, json={"nome": "Pratos", "ordem": 1}).json()
+    prod = requests.post(f"{BASE_URL}/produtos", headers=headers, json={
+        "nome": "Prato com Estoque", "preco": 30, "custo": 10, "categoria_id": cat["id"],
+        "estoque_habilitado": True, "estoque_quantidade": 10,
+    }).json()
+    pedido = requests.post(f"{BASE_URL}/pedidos", headers=headers, json={
+        "tipo": "para_levar",
+        "itens": [{"produto_id": prod["id"], "nome": prod["nome"], "preco": prod["preco"], "quantidade": 3}],
+    }).json()
+
+    # Simula pagamento ja confirmado pela maquininha (mesmo efeito que
+    # confirmarPagamento() produz — direto no Mongo, sem rede real do MP,
+    # mesmo padrao ja usado na verificacao manual da Task 7).
+    _db.pedidos.update_one({"id": pedido["id"]}, {"$set": {"pago_em": "2026-08-25T00:00:00.000Z"}})
+
+    concluir = requests.put(f"{BASE_URL}/pedidos/{pedido['id']}", headers=headers, json={"status": "concluido"})
+    assert concluir.status_code == 200, concluir.text
+
+    produto_depois = requests.get(f"{BASE_URL}/produtos", headers=headers).json()
+    prod_depois = next(p for p in produto_depois if p["id"] == prod["id"])
+    assert prod_depois["estoque_quantidade"] == 7, f"esperado 10-3=7, veio {prod_depois['estoque_quantidade']}"
 
 
 if __name__ == '__main__':

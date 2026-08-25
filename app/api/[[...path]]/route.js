@@ -392,26 +392,44 @@ async function confirmarPagamento(repos, empresaId, pagamento, novoStatus, orige
       // tempo de passar no if. Ver ledger da Task 8.
       const marcou = await pedidoRepo.marcarPagoSeNaoPago(empresaId, pedido.id, pagoEm)
       if (marcou) {
-        const caixaAberto = await caixaRepo.findAberto(empresaId)
-        const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
-        const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
-        await transacaoRepo.create({
-          id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
-          descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
-          forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
-          custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
-          data: pagoEm, created_at: pagoEm,
-        })
-        if (pedido.cliente_id) await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor)
+        // Se a criacao da transacao falhar APOS marcarPagoSeNaoPago ja ter
+        // gravado pago_em, o pedido ficaria marcado como pago pra sempre
+        // sem nenhuma receita lancada (dinheiro real some do faturamento
+        // em silencio — nada reprocessa, porque o status ja e 'approved' e
+        // o guard de PUT /pedidos/:id tambem suprime na conclusao).
+        // Reverte pago_em nesse caso, pra uma proxima notificacao
+        // (webhook reenviado ou poll) poder tentar de novo. Achado real na
+        // revisao final do plano do PDV, 2026-08-24.
+        try {
+          const caixaAberto = await caixaRepo.findAberto(empresaId)
+          const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
+          const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
+          await transacaoRepo.create({
+            id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
+            descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
+            forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
+            custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
+            data: pagoEm, created_at: pagoEm,
+          })
+          if (pedido.cliente_id) await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor)
+        } catch (e) {
+          await pedidoRepo.update(empresaId, pedido.id, { pago_em: null })
+          throw e
+        }
       }
     }
   }
 
-  await auditoriaRepo.registrar({
-    empresa_id: empresaId, usuario_id: null, usuario_nome: `Mercado Pago (${origem})`,
-    acao: 'pagamento_confirmado', entidade: 'pagamento', entidade_id: pagamento.id,
-    dados: { status: novoStatus, comanda_id: pagamento.comanda_id, pedido_id: pagamento.pedido_id },
-  })
+  // Auditoria nunca deve quebrar a confirmacao de um pagamento real — mesma
+  // disciplina do helper audit() (route.js), so que este ponto roda sem
+  // `ctx` (webhook/poll nao tem usuario autenticado).
+  try {
+    await auditoriaRepo.registrar({
+      empresa_id: empresaId, usuario_id: null, usuario_nome: `Mercado Pago (${origem})`,
+      acao: 'pagamento_confirmado', entidade: 'pagamento', entidade_id: pagamento.id,
+      dados: { status: novoStatus, comanda_id: pagamento.comanda_id, pedido_id: pagamento.pedido_id },
+    })
+  } catch { /* auditoria nunca deve quebrar o fluxo principal */ }
 }
 
 /* ============================ SEED (demo) ============================= */
@@ -826,10 +844,15 @@ async function handler(request, { params }) {
       const empresaId = url.searchParams.get('tenant')
       const dataId = url.searchParams.get('data.id') || url.searchParams.get('id')
       if (!empresaId || !dataId) return json({ error: 'params ausentes' }, 400)
+      // 401 generico tanto pra "nao configurado" quanto pra "assinatura
+      // invalida" — as duas respostas eram distinguiveis antes (404 vs
+      // 401), o que permitia sondar de fora se um empresa_id tem Point
+      // configurado sem precisar acertar a assinatura. Achado real na
+      // revisao final do plano do PDV, 2026-08-24.
       const integ = await integracaoRepo.findByTipo(empresaId, 'mercadopago')
-      if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return json({ error: 'nao configurado' }, 404)
+      if (!integ || !isGatewayConfigured('mercadopago_point', integ.config)) return json({ error: 'assinatura invalida' }, 401)
       let provider
-      try { provider = getPaymentProvider('mercadopago_point', integ.config) } catch { return json({ error: 'provider' }, 404) }
+      try { provider = getPaymentProvider('mercadopago_point', integ.config) } catch { return json({ error: 'assinatura invalida' }, 401) }
       const ok = provider.verifyWebhook({
         signature: request.headers.get('x-signature') || undefined,
         requestId: request.headers.get('x-request-id') || undefined,
@@ -2039,7 +2062,10 @@ async function handler(request, { params }) {
       // mesma guarda da rota de comanda: sem isto, um clique duplo acenderia
       // dois pedidos de cobranca na maquininha para o mesmo pedido.
       const pendentes = await pagamentoRepo.list(ctx.empresa_id, { pedido_id: pedido.id, provider: 'mercadopago_point', status: 'pending' })
-      if (pendentes.length > 0) return err('Ja existe uma cobranca pendente neste pedido', 409)
+      // devolve o id da cobranca pendente pra tela poder retomar o
+      // polling/cancelamento dela mesmo apos perder o estado local (F5,
+      // troca de aba) — achado real na revisao final do plano do PDV.
+      if (pendentes.length > 0) return json({ error: 'Ja existe uma cobranca pendente neste pedido', pagamento_id: pendentes[0].id }, 409)
       const valor = Number(pedido.total)
       if (valor <= 0) return err('Nada a pagar')
       const idempotency_key = uuidv4()
@@ -2163,34 +2189,14 @@ async function handler(request, { params }) {
       // snapshot lido antes: sem isso, ajustar o valor e concluir de uma vez so
       // lancaria a receita com o valor antigo.
       const totalFinal = upd.total !== undefined ? upd.total : pedido.total
-      // pago_em preenchido = a receita ja foi lancada no momento do
-      // pagamento (POST /pedidos/:id/cartao + confirmarPagamento). Concluir
-      // sem esta guarda lancaria a receita DUAS VEZES.
-      if (finais.includes(b.status) && !finais.includes(pedido.status) && !pedido.pago_em) {
-        const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
-        const itensVendidos = upd.itens !== undefined ? upd.itens : (pedido.itens || [])
-        const custoMapa = await mapaCustoProdutos(repos, ctx, itensVendidos)
-        const custo = computeCustoVenda({ itens: itensVendidos, custoPorProduto: custoMapa })
-        await transacaoRepo.create({
-          id: uuidv4(),
-          empresa_id: ctx.empresa_id,
-          tipo: 'receita',
-          categoria: 'Vendas',
-          descricao: `Pedido #${pedido.numero}`,
-          valor: totalFinal,
-          pedido_id: pedido.id,
-          forma_pagamento: pedido.pagamento || 'dinheiro',
-          caixa_id: caixaAberto ? caixaAberto.id : null,
-          custo_total: custo.custo_total,
-          receita_com_custo: custo.receita_com_custo,
-          receita_base: custo.receita_base,
-          data: new Date(),
-          created_at: new Date(),
-        })
-        if (pedido.cliente_id) {
-          await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, totalFinal)
-        }
-        // NEW: Decrement stock for each item sold (if tracking enabled)
+      // Transicao (pela primeira vez) para um status final: a comida saiu
+      // da casa, entao o estoque baixa SEMPRE aqui, pago ou nao (achado
+      // real na revisao final do plano do PDV, 2026-08-24: a guarda de
+      // `pago_em` abaixo, que existe so pra nao lancar receita duas vezes,
+      // estava suprimindo a baixa de estoque tambem para todo pedido pago
+      // no cartao pela maquininha — estoque, CMV e o alerta de minimo
+      // ficavam desalinhados em silencio).
+      if (finais.includes(b.status) && !finais.includes(pedido.status)) {
         for (const item of (pedido.itens || [])) {
           if (item.produto_id) {
             try {
@@ -2205,6 +2211,34 @@ async function handler(request, { params }) {
               console.warn(`Stock deduction failed for produto ${item.produto_id}: ${e.message}`)
               await audit(repos, ctx, 'estoque_erro', 'pedido', pedido.id, { erro: e.message })
             }
+          }
+        }
+        // pago_em preenchido = a receita ja foi lancada no momento do
+        // pagamento (POST /pedidos/:id/cartao + confirmarPagamento). Concluir
+        // sem esta guarda lancaria a receita DUAS VEZES.
+        if (!pedido.pago_em) {
+          const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
+          const itensVendidos = upd.itens !== undefined ? upd.itens : (pedido.itens || [])
+          const custoMapa = await mapaCustoProdutos(repos, ctx, itensVendidos)
+          const custo = computeCustoVenda({ itens: itensVendidos, custoPorProduto: custoMapa })
+          await transacaoRepo.create({
+            id: uuidv4(),
+            empresa_id: ctx.empresa_id,
+            tipo: 'receita',
+            categoria: 'Vendas',
+            descricao: `Pedido #${pedido.numero}`,
+            valor: totalFinal,
+            pedido_id: pedido.id,
+            forma_pagamento: pedido.pagamento || 'dinheiro',
+            caixa_id: caixaAberto ? caixaAberto.id : null,
+            custo_total: custo.custo_total,
+            receita_com_custo: custo.receita_com_custo,
+            receita_base: custo.receita_base,
+            data: new Date(),
+            created_at: new Date(),
+          })
+          if (pedido.cliente_id) {
+            await clienteRepo.incrementarMetricasPedido(ctx.empresa_id, pedido.cliente_id, totalFinal)
           }
         }
       }
@@ -2638,7 +2672,13 @@ async function handler(request, { params }) {
         accessToken: b.accessToken !== undefined && b.accessToken !== '' ? b.accessToken : current?.config?.accessToken || '',
         webhookSecret: b.webhookSecret !== undefined && b.webhookSecret !== '' ? b.webhookSecret : current?.config?.webhookSecret || '',
         // Maquininha Point — opcional, so quem tem PDV fisico preenche.
-        terminalId: b.terminalId !== undefined && b.terminalId !== '' ? b.terminalId : current?.config?.terminalId || '',
+        // NAO e um segredo mascarado como accessToken/webhookSecret (a
+        // tela mostra o valor real e ele so existe pra ser editado) —
+        // vazio aqui significa "quero remover", nao "nao mudou". Manter o
+        // valor antigo quando chega vazio (como os dois campos acima)
+        // deixava impossivel desativar a maquininha limpando o campo —
+        // achado real na revisao final do plano do PDV, 2026-08-24.
+        terminalId: b.terminalId !== undefined ? b.terminalId : current?.config?.terminalId || '',
       }
       const status = config.accessToken ? 'configurado' : 'nao_configurado'
       await integracaoRepo.upsert(ctx.empresa_id, 'mercadopago', { config, status })
@@ -2924,7 +2964,10 @@ async function handler(request, { params }) {
       // pedidos de cobranca na maquininha para a mesma comanda - cobraria o
       // cliente duas vezes de verdade no cartao, nao so um bug de UI.
       const pendentes = await pagamentoRepo.list(ctx.empresa_id, { comanda_id: comanda.id, provider: 'mercadopago_point', status: 'pending' })
-      if (pendentes.length > 0) return err('Ja existe uma cobranca pendente nesta comanda', 409)
+      // devolve o id da cobranca pendente pra tela poder retomar o
+      // polling/cancelamento dela mesmo apos perder o estado local (F5,
+      // troca de aba) — achado real na revisao final do plano do PDV.
+      if (pendentes.length > 0) return json({ error: 'Ja existe uma cobranca pendente nesta comanda', pagamento_id: pendentes[0].id }, 409)
       const b = (await request.json()) || {}
       const totals = computeComanda(comanda)
       const valor = Number(b.valor || totals.restante || totals.total)
@@ -2988,7 +3031,13 @@ async function handler(request, { params }) {
       // conferencia da gaveta nunca fecha e o relatorio por forma de pagamento
       // fica errado.
       const caixaAberto = await caixaRepo.findAberto(ctx.empresa_id)
-      const pagamentos = comanda.pagamentos || []
+      // So pagamentos APROVADOS entram na receita — mesmo criterio de
+      // `computeComanda()` (que so soma `status === 'approved'` no `pago`).
+      // Sem este filtro, uma cobranca no cartao ainda `pending` (ou
+      // `cancelled`) empurrada em `comanda.pagamentos` pelas rotas de
+      // Point vira receita fantasma ao fechar a comanda por outro meio —
+      // achado real na revisao final do plano do PDV, 2026-08-24.
+      const pagamentos = (comanda.pagamentos || []).filter((p) => p.status === 'approved')
       const custoMapa = await mapaCustoProdutos(repos, ctx, comanda.itens)
 
       if (pagamentos.length > 0) {
