@@ -31,7 +31,7 @@ import { computeCaixaEsperado } from '@/lib/caixa'
 import { computeCustoVenda, computeCMV, computeMargemPorCanal, computeMargemPorProduto } from '@/lib/custo'
 import { CATEGORIAS_DESPESA, agruparDespesasPorCategoria, computeDRE, computeVariacao, periodoAnterior } from '@/lib/financeiro'
 import { statusEfetivo, resumoContas, adicionarMeses } from '@/lib/contas'
-import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos } from '@/lib/modulos'
+import { MODULOS, temModulo, flagsPadraoSignup, modulosAtivos, planoInclui } from '@/lib/modulos'
 import { statusEfetivo as statusEfetivoAssinatura, avisoParaCliente, resumoCarteira } from '@/lib/assinatura'
 
 /* ============================ INFRA: persistencia ========================
@@ -1172,6 +1172,9 @@ async function handler(request, { params }) {
       if (typeof b.ativo !== 'boolean') return err('ativo deve ser true ou false')
 
       const empresa = await empresaRepo.findById(ctx.empresa_id)
+      if (b.ativo === true && !planoInclui(empresa, chave)) {
+        return err(`Modulo "${mod.label}" nao incluido no plano atual — fale com a ETNA para upgrade.`, 403)
+      }
       const config = { ...(empresa?.config || {}) }
       const flags = { ...(config.feature_flags || {}) }
       for (const f of mod.flags) flags[f] = b.ativo
@@ -1452,6 +1455,9 @@ async function handler(request, { params }) {
       const b = (await request.json()) || {}
       if (typeof b.ativo !== 'boolean') return err('ativo deve ser true ou false')
 
+      if (b.ativo === true && !planoInclui(empresaAlvo, chave)) {
+        return err(`Modulo "${mod.label}" nao incluido no plano desta empresa — mude o plano primeiro.`, 403)
+      }
       const config = { ...(empresaAlvo.config || {}) }
       const flags = { ...(config.feature_flags || {}) }
       for (const f of mod.flags) flags[f] = b.ativo

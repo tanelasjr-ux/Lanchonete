@@ -18,7 +18,12 @@ def criar_empresa(nome):
         "empresa_nome": nome, "nome": "Teste", "email": email, "senha": "senha123",
     })
     assert r.status_code == 200, f"registro falhou: {r.status_code} {r.text}"
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    body = r.json()
+    return {
+        "headers": {"Authorization": f"Bearer {body['token']}"},
+        "email": email,
+        "empresa_id": body["empresa"]["id"],
+    }
 
 
 def desligar(headers, modulo):
@@ -41,7 +46,8 @@ def test_signup_liga_os_modulos_que_o_produto_entrega():
     ninguem lia as flags isso era inofensivo; com o portao real valendo, um
     default errado tranca o cliente para fora no primeiro login.
     """
-    headers = criar_empresa("Signup Flags")
+    conta = criar_empresa("Signup Flags")
+    headers = conta["headers"]
     r = requests.get(f"{BASE_URL}/modulos", headers=headers)
     assert r.status_code == 200
     ativos = {m["chave"]: m["ativo"] for m in r.json()["disponiveis"]}
@@ -53,7 +59,8 @@ def test_signup_liga_os_modulos_que_o_produto_entrega():
 
 def test_auth_me_expoe_modulos_resolvidos():
     """/auth/me devolve `modulos` pronto — o front nao reinterpreta as flags."""
-    headers = criar_empresa("Auth Me Modulos")
+    conta = criar_empresa("Auth Me Modulos")
+    headers = conta["headers"]
     r = requests.get(f"{BASE_URL}/auth/me", headers=headers)
     assert r.status_code == 200
     modulos = r.json().get("modulos")
@@ -71,7 +78,8 @@ def test_caixa_desligado_bloqueia_todas_as_rotas_de_caixa():
     O portao e por familia de rota (`seg[0] === 'caixa'`) justamente para que
     uma rota nova nasca protegida em vez de depender de alguem lembrar.
     """
-    headers = criar_empresa("Caixa Off")
+    conta = criar_empresa("Caixa Off")
+    headers = conta["headers"]
     # Com o modulo ligado, abrir caixa funciona.
     r = requests.post(f"{BASE_URL}/caixa/abrir", headers=headers, json={"valor_abertura": 100})
     assert r.status_code in (200, 201), f"deveria abrir com modulo ligado: {r.text}"
@@ -97,7 +105,8 @@ def test_mesas_desligado_bloqueia_mesas_e_comandas():
     Deixar /comandas passando com /mesas bloqueada recriaria a incoerencia que
     este trabalho veio eliminar (uma comanda so existe sobre uma mesa).
     """
-    headers = criar_empresa("Mesas Off")
+    conta = criar_empresa("Mesas Off")
+    headers = conta["headers"]
     assert requests.get(f"{BASE_URL}/mesas", headers=headers).status_code == 200
 
     desligar(headers, "mesas")
@@ -113,7 +122,8 @@ def test_estoque_desligado_devolve_lista_vazia_nao_403():
     um toast vermelho a cada meio minuto por um modulo nao contratado. A
     resposta honesta e "nada para alertar".
     """
-    headers = criar_empresa("Estoque Off")
+    conta = criar_empresa("Estoque Off")
+    headers = conta["headers"]
     # Produto que dispararia o alerta se o modulo estivesse ligado.
     p = requests.post(f"{BASE_URL}/produtos", headers=headers, json={
         "nome": "Item Critico", "preco": 10,
@@ -134,7 +144,8 @@ def test_estoque_desligado_devolve_lista_vazia_nao_403():
 
 def test_religar_devolve_o_acesso_e_os_dados():
     """Desligar nao apaga nada: religar traz o modulo e os dados de volta."""
-    headers = criar_empresa("Religar")
+    conta = criar_empresa("Religar")
+    headers = conta["headers"]
     requests.post(f"{BASE_URL}/caixa/abrir", headers=headers, json={"valor_abertura": 250})
 
     desligar(headers, "caixa")
@@ -153,7 +164,8 @@ def test_modulo_sem_implementacao_nao_e_configuravel():
     Aceitar o PUT gravaria uma flag `crm: true` que nao habilita CRM nenhum:
     exatamente a classe de mentira que este trabalho removeu.
     """
-    headers = criar_empresa("Sem Implementacao")
+    conta = criar_empresa("Sem Implementacao")
+    headers = conta["headers"]
     r = requests.put(f"{BASE_URL}/modulos/crm", headers=headers, json={"ativo": True})
     assert r.status_code == 404
 
@@ -172,7 +184,8 @@ def test_modulo_futuro_nasce_fechado_no_signup():
     ganhasse portao ele nasceria aberto para todo mundo. O `false` explicito e
     o que mantem a porta fechada.
     """
-    headers = criar_empresa("Futuro Fechado")
+    conta = criar_empresa("Futuro Fechado")
+    headers = conta["headers"]
     empresa = requests.get(f"{BASE_URL}/empresa", headers=headers).json()
     flags = empresa["config"]["feature_flags"]
 
@@ -182,8 +195,10 @@ def test_modulo_futuro_nasce_fechado_no_signup():
 
 def test_modulo_de_uma_empresa_nao_afeta_outra():
     """Desligar caixa na empresa A nao pode desligar na empresa B."""
-    headers_a = criar_empresa("Modulo Multi A")
-    headers_b = criar_empresa("Modulo Multi B")
+    conta_a = criar_empresa("Modulo Multi A")
+    conta_b = criar_empresa("Modulo Multi B")
+    headers_a = conta_a["headers"]
+    headers_b = conta_b["headers"]
 
     desligar(headers_a, "caixa")
 
@@ -197,7 +212,8 @@ def test_papel_sem_permissao_nao_configura_modulo():
     Um ATENDENTE nao decide o que a empresa contratou — mesmo que a empresa
     tenha o modulo, mexer no interruptor e de OWNER/ADMIN.
     """
-    headers_owner = criar_empresa("Papel Modulo")
+    conta_owner = criar_empresa("Papel Modulo")
+    headers_owner = conta_owner["headers"]
     r = requests.post(f"{BASE_URL}/usuarios", headers=headers_owner, json={
         "nome": "Atendente", "email": f"at-{os.urandom(4).hex()}@test.com",
         "senha": "senha123", "papel": "ATENDENTE",
@@ -223,7 +239,8 @@ def test_signup_cria_assinatura_automatica_no_basico():
     configurar manualmente pelo Painel — a empresa existia sem nenhum
     registro de plano.
     """
-    headers = criar_empresa("Signup Assinatura")
+    conta = criar_empresa("Signup Assinatura")
+    headers = conta["headers"]
     empresa = requests.get(f"{BASE_URL}/empresa", headers=headers).json()
     assert empresa["config"]["plano"] == "basico", "config.plano deveria nascer 'basico'"
 
@@ -233,13 +250,69 @@ def test_signup_nasce_basico_estoque_e_caixa_bloqueados():
     nova nasce no Basico, entao Estoque/Caixa (que exigem Completo) vem
     BLOQUEADOS mesmo com a flag ligada — nao mais liberados por padrao.
     """
-    headers = criar_empresa("Signup Basico Bloqueado")
+    conta = criar_empresa("Signup Basico Bloqueado")
+    headers = conta["headers"]
     r = requests.get(f"{BASE_URL}/modulos", headers=headers)
     ativos = {m["chave"]: m["ativo"] for m in r.json()["disponiveis"]}
     assert ativos["estoque"] is False, "Basico nao inclui Estoque"
     assert ativos["caixa"] is False, "Basico nao inclui Caixa"
     assert ativos["financeiro"] is False, "Basico nao inclui Financeiro"
     assert ativos["mesas"] is True, "Mesas nunca e restringido por plano"
+
+
+def test_basico_nao_liga_estoque_pelo_toggle():
+    """Dono no plano Basico tenta ligar Estoque pelo interruptor -> 403.
+
+    Desligar continua sempre livre — so LIGAR fora do plano e' bloqueado.
+    """
+    conta = criar_empresa("Basico Nao Liga Estoque")
+    headers = conta["headers"]
+    # Estoque ja nasce desligado no plano Basico (Task 3) — confirma o
+    # estado de partida antes de tentar ligar.
+    ativos = {m["chave"]: m["ativo"] for m in requests.get(f"{BASE_URL}/modulos", headers=headers).json()["disponiveis"]}
+    assert ativos["estoque"] is False
+
+    r = requests.put(f"{BASE_URL}/modulos/estoque", headers=headers, json={"ativo": True})
+    assert r.status_code == 403
+    assert "plano" in r.json()["error"].lower()
+
+    # Confirma que a tentativa nao teve efeito colateral nenhum na flag.
+    ativos_depois = {m["chave"]: m["ativo"] for m in requests.get(f"{BASE_URL}/modulos", headers=headers).json()["disponiveis"]}
+    assert ativos_depois["estoque"] is False
+
+
+def test_desligar_sempre_funciona_mesmo_fora_do_plano():
+    """Basico tentando DESLIGAR um modulo que ja esta desligado (por plano)
+    nao pode dar erro estranho — a acao e' um no-op seguro, nao um 403.
+    """
+    conta = criar_empresa("Basico Desliga Sem Erro")
+    headers = conta["headers"]
+    r = requests.put(f"{BASE_URL}/modulos/estoque", headers=headers, json={"ativo": False})
+    assert r.status_code == 200, r.text
+
+
+def test_completo_liga_estoque_pelo_toggle_normalmente():
+    """Empresa no Completo continua podendo ligar/desligar Estoque livremente
+    — a trava e' so contra ligar algo que o plano nao cobre.
+    """
+    conta = criar_empresa("Completo Liga Estoque")
+    headers = conta["headers"]
+    empresa = requests.get(f"{BASE_URL}/empresa", headers=headers).json()
+    empresa_id = empresa["id"]
+
+    admin = criar_empresa("Admin Promove Completo")
+    from pymongo import MongoClient
+    db = MongoClient("mongodb://localhost:27017")["restaurant_os_dev"]
+    db.plataforma_admins.insert_one({"email": admin["email"], "nome": "Admin Teste", "ativo": True})
+    requests.put(
+        f"{BASE_URL}/plataforma/empresas/{empresa_id}/assinatura",
+        headers=admin["headers"],
+        json={"plano": "completo", "valor": 200, "dia_vencimento": 10, "proximo_vencimento": "2026-12-01"},
+    )
+    db.plataforma_admins.delete_many({"email": admin["email"]})
+
+    r = requests.put(f"{BASE_URL}/modulos/estoque", headers=headers, json={"ativo": True})
+    assert r.status_code == 200, r.text
 
 
 if __name__ == '__main__':
