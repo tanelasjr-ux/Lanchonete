@@ -1351,6 +1351,9 @@ async function handler(request, { params }) {
           ultimo_pagamento_em: null, observacoes: b.observacoes || '', created_at: new Date(), updated_at: new Date(),
         })
       }
+      const configAtual = { ...(empresaAlvo.config || {}) }
+      configAtual.plano = salva.plano
+      await empresaRepo.update(empresaId, { config: configAtual })
       await auditoriaRepo.registrar({ empresa_id: empresaId, usuario_id: ctx.usuario_id, usuario_nome: ctx.nome, acao: 'configurar_assinatura', entidade: 'assinatura', entidade_id: salva.id, dados: { plano: salva.plano, valor: salva.valor } })
       return json(clean({ ...salva, status_efetivo: statusEfetivoAssinatura(salva) }))
     }

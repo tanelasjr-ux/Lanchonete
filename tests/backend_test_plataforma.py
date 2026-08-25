@@ -309,5 +309,29 @@ def test_admin_nao_precisa_pertencer_a_empresa_nenhuma_para_ver_tudo():
     assert "resumo" in r.json()
 
 
+def test_configurar_assinatura_sincroniza_plano_na_empresa():
+    """Trocar o plano pelo Painel ETNA precisa refletir em config.plano —
+    e' o campo que temModulo() consulta de verdade. Sem sincronizar, o
+    admin muda o plano na tela e nada acontece de fato no acesso.
+    """
+    admin = criar_empresa("Admin Sincroniza Plano")
+    promover_admin(admin["email"])
+    cliente = criar_empresa("Cliente Sincroniza Plano")
+
+    r = requests.put(
+        f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
+        headers=admin["headers"],
+        json={"plano": "completo", "valor": 200, "dia_vencimento": 10, "proximo_vencimento": "2026-12-01"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["plano"] == "completo"
+
+    empresa = requests.get(f"{BASE_URL}/empresa", headers=cliente["headers"]).json()
+    assert empresa["config"]["plano"] == "completo", "config.plano deveria ter sido sincronizado"
+
+    ativos = {m["chave"]: m["ativo"] for m in requests.get(f"{BASE_URL}/modulos", headers=cliente["headers"]).json()["disponiveis"]}
+    assert ativos["estoque"] is True, "apos virar completo, estoque deve liberar (flag ja nascia True no signup)"
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))
