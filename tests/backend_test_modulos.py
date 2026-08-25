@@ -216,5 +216,31 @@ def test_papel_sem_permissao_nao_configura_modulo():
     assert requests.get(f"{BASE_URL}/caixa/atual", headers=headers_owner).status_code == 200
 
 
+def test_signup_cria_assinatura_automatica_no_basico():
+    """Empresa nova nasce com uma assinatura formal (plano basico), nao no limbo.
+
+    Antes desta mudanca, `assinaturas` ficava vazia ate o dono da ETNA
+    configurar manualmente pelo Painel — a empresa existia sem nenhum
+    registro de plano.
+    """
+    headers = criar_empresa("Signup Assinatura")
+    empresa = requests.get(f"{BASE_URL}/empresa", headers=headers).json()
+    assert empresa["config"]["plano"] == "basico", "config.plano deveria nascer 'basico'"
+
+
+def test_signup_nasce_basico_estoque_e_caixa_bloqueados():
+    """Mudanca de comportamento INTENCIONAL: com plano formal, uma empresa
+    nova nasce no Basico, entao Estoque/Caixa (que exigem Completo) vem
+    BLOQUEADOS mesmo com a flag ligada — nao mais liberados por padrao.
+    """
+    headers = criar_empresa("Signup Basico Bloqueado")
+    r = requests.get(f"{BASE_URL}/modulos", headers=headers)
+    ativos = {m["chave"]: m["ativo"] for m in r.json()["disponiveis"]}
+    assert ativos["estoque"] is False, "Basico nao inclui Estoque"
+    assert ativos["caixa"] is False, "Basico nao inclui Caixa"
+    assert ativos["financeiro"] is False, "Basico nao inclui Financeiro"
+    assert ativos["mesas"] is True, "Mesas nunca e restringido por plano"
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

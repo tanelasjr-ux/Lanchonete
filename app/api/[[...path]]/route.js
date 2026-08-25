@@ -739,6 +739,7 @@ async function handler(request, { params }) {
           // os dois modulos normalmente — as flags nasciam erradas porque
           // ninguem as lia. Agora que o portao e real, o default mente caro.
           feature_flags: flagsPadraoSignup(),
+          plano: 'basico',
           // Padrao claro (pedido do dono, 2026-08-18: "quero que o site abra
           // na cor branca"). O dono continua podendo trocar por empresa —
           // isto e so o valor com que uma empresa NOVA nasce.
@@ -749,6 +750,15 @@ async function handler(request, { params }) {
         created_at: new Date(),
       }
       await empresaRepo.create(empresa)
+
+      const assinaturaId = uuidv4()
+      const vencimentoInicial = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      await assinaturaRepo.create({
+        id: assinaturaId, empresa_id, plano: 'basico', valor: 0, dia_vencimento: 10,
+        proximo_vencimento: vencimentoInicial, status: 'ativa', ultimo_pagamento_em: null,
+        observacoes: 'Criada automaticamente no cadastro — ajustar valor real pelo Painel ETNA.',
+        created_at: new Date(), updated_at: new Date(),
+      })
 
       const usuario_id = uuidv4()
       const usuario = {
