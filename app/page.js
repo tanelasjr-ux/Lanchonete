@@ -4002,7 +4002,7 @@ function ComandaDialog({ comandaId, onClose }) {
         const r = await api(`/pagamentos/${cartao.id}`)
         if (r.status !== 'pending') {
           setCartao(r)
-          if (r.status === 'approved') { toast.success('Pagamento aprovado!'); load() }
+          if (r.status === 'approved') { toast.success('Pagamento aprovado!'); load().catch(() => {}) }
           else if (r.status === 'rejected') toast.error('Pagamento recusado')
         }
       } catch { /* tenta de novo no proximo tick */ }

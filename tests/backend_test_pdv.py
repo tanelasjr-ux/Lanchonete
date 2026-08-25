@@ -5,6 +5,15 @@ que NAO depende de chamar a API real do MP: rejeicao sem configuracao, a
 guarda contra receita duplicada, e isolamento multi-tenant. A cobranca de
 verdade (criar order, confirmar por webhook real) so e validada manualmente
 com uma Point Smart fisica — ver docs/superpowers/specs/2026-08-19-pdv-maquininha-design.md.
+
+AVISO (achado real na re-revisao da correcao final do plano do PDV,
+2026-08-24): `test_fechar_comanda_nao_lanca_receita_de_cobranca_pendente`
+e `test_pedido_pago_no_cartao_ainda_baixa_estoque` manipulam o Mongo
+diretamente pra simular uma cobranca pendente/confirmada sem rede real
+(mesmo espirito de backend_test_plataforma.py) — so tem valor de verdade
+rodando contra `DATABASE_PROVIDER=mongo` (o padrao desta suite e do CI).
+Contra Supabase, a manipulacao direta nunca chegaria no servidor e os
+dois passariam vazios (falso positivo), sem provar nada.
 """
 import os
 import pytest

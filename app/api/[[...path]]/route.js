@@ -392,29 +392,35 @@ async function confirmarPagamento(repos, empresaId, pagamento, novoStatus, orige
       // tempo de passar no if. Ver ledger da Task 8.
       const marcou = await pedidoRepo.marcarPagoSeNaoPago(empresaId, pedido.id, pagoEm)
       if (marcou) {
-        // Se a criacao da transacao falhar APOS marcarPagoSeNaoPago ja ter
-        // gravado pago_em, o pedido ficaria marcado como pago pra sempre
-        // sem nenhuma receita lancada (dinheiro real some do faturamento
-        // em silencio — nada reprocessa, porque o status ja e 'approved' e
-        // o guard de PUT /pedidos/:id tambem suprime na conclusao).
-        // Reverte pago_em nesse caso, pra uma proxima notificacao
-        // (webhook reenviado ou poll) poder tentar de novo. Achado real na
+        // O cartao do cliente JA foi debitado com sucesso a esta altura
+        // (`pagamento.status` ja virou 'approved' no inicio desta funcao,
+        // antes deste bloco) — irreversivel. Se a criacao da transacao
+        // falhar, NUNCA reverter `pago_em`: isso reabriria a guarda de
+        // `POST /pedidos/:id/cartao` (`if (pedido.pago_em) return err(...)`)
+        // e permitiria uma SEGUNDA cobranca real no cartao de um cliente
+        // que ja pagou — pior do que a receita nao lancada que este bloco
+        // existe pra evitar. Em vez disso, deixa o erro estourar (throw),
+        // barulhento o suficiente pra cair no catch global do handler()
+        // (reporta pro monitoramento via capturarErro) — fica registrado
+        // como um pedido pago sem receita lancada, pra reconciliacao
+        // manual, nunca como silencio total. Achado real (e corrigido de
+        // novo apos a propria correcao anterior introduzir esse risco) na
         // revisao final do plano do PDV, 2026-08-24.
-        try {
-          const caixaAberto = await caixaRepo.findAberto(empresaId)
-          const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
-          const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
-          await transacaoRepo.create({
-            id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
-            descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
-            forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
-            custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
-            data: pagoEm, created_at: pagoEm,
-          })
-          if (pedido.cliente_id) await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor)
-        } catch (e) {
-          await pedidoRepo.update(empresaId, pedido.id, { pago_em: null })
-          throw e
+        const caixaAberto = await caixaRepo.findAberto(empresaId)
+        const custoMapa = await mapaCustoProdutos(repos, { empresa_id: empresaId }, pedido.itens)
+        const custo = computeCustoVenda({ itens: pedido.itens, custoPorProduto: custoMapa })
+        await transacaoRepo.create({
+          id: uuidv4(), empresa_id: empresaId, tipo: 'receita', categoria: 'Vendas',
+          descricao: `Pedido #${pedido.numero}`, valor: pagamento.valor, pedido_id: pedido.id,
+          forma_pagamento: pagamento.metodo, caixa_id: caixaAberto ? caixaAberto.id : null,
+          custo_total: custo.custo_total, receita_com_custo: custo.receita_com_custo, receita_base: custo.receita_base,
+          data: pagoEm, created_at: pagoEm,
+        })
+        // Metrica do cliente e efeito colateral secundario — nunca deve
+        // derrubar a confirmacao de um pagamento real (mesma disciplina de
+        // audit(), so nao usa o helper porque este contexto nao tem `ctx`).
+        if (pedido.cliente_id) {
+          try { await clienteRepo.incrementarMetricasPedido(empresaId, pedido.cliente_id, pagamento.valor) } catch { /* nao critico */ }
         }
       }
     }
