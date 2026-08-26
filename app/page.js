@@ -4356,7 +4356,13 @@ function AssinaturaDialog({ empresa, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Plano</Label>
-              <Input value={f.plano} onChange={(e) => setF((s) => ({ ...s, plano: e.target.value }))} placeholder="básico" />
+              <Select value={f.plano} onValueChange={(v) => setF((s) => ({ ...s, plano: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="basico">Básico</SelectItem>
+                  <SelectItem value="completo">Completo</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label>Valor mensal (R$)</Label>
