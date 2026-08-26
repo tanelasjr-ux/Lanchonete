@@ -8,8 +8,17 @@ criar uma rota de caixa nova sem o portao, o teste de isolamento acusa.
 import os
 import pytest
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
+
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
+
+
+def promover_completo(conta):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": conta["empresa_id"]}, {"$set": {"config.plano": "completo"}})
 
 
 def criar_empresa(nome):
@@ -39,27 +48,26 @@ def ligar(headers, modulo):
 
 
 def test_signup_liga_os_modulos_que_o_produto_entrega():
-    """Empresa nova nasce com Estoque e Caixa LIGADOS.
-
-    Regressao direta do bug de origem: o signup gravava `estoque: false` e
-    `caixa: false` em empresas que usavam os dois modulos normalmente. Enquanto
-    ninguem lia as flags isso era inofensivo; com o portao real valendo, um
-    default errado tranca o cliente para fora no primeiro login.
+    """Empresa nova nasce no plano Basico: mesas sempre ligada, Estoque e
+    Caixa BLOQUEADOS pelo plano (nao pela flag, que continua True por
+    padrao — ver test_modulo_futuro_nasce_fechado_no_signup para o
+    equivalente dos modulos sem implementacao).
     """
     conta = criar_empresa("Signup Flags")
-    headers = conta["headers"]
-    r = requests.get(f"{BASE_URL}/modulos", headers=headers)
+    r = requests.get(f"{BASE_URL}/modulos", headers=conta["headers"])
     assert r.status_code == 200
     ativos = {m["chave"]: m["ativo"] for m in r.json()["disponiveis"]}
 
-    assert ativos["estoque"] is True, "Estoque funciona no produto; nao pode nascer desligado"
-    assert ativos["caixa"] is True, "Caixa funciona no produto; nao pode nascer desligado"
     assert ativos["mesas"] is True
+    assert ativos["estoque"] is False, "plano Basico nao inclui Estoque"
+    assert ativos["caixa"] is False, "plano Basico nao inclui Caixa"
+    assert ativos["financeiro"] is False, "plano Basico nao inclui Financeiro"
 
 
 def test_auth_me_expoe_modulos_resolvidos():
     """/auth/me devolve `modulos` pronto — o front nao reinterpreta as flags."""
     conta = criar_empresa("Auth Me Modulos")
+    promover_completo(conta)
     headers = conta["headers"]
     r = requests.get(f"{BASE_URL}/auth/me", headers=headers)
     assert r.status_code == 200
@@ -79,6 +87,7 @@ def test_caixa_desligado_bloqueia_todas_as_rotas_de_caixa():
     uma rota nova nasca protegida em vez de depender de alguem lembrar.
     """
     conta = criar_empresa("Caixa Off")
+    promover_completo(conta)
     headers = conta["headers"]
     # Com o modulo ligado, abrir caixa funciona.
     r = requests.post(f"{BASE_URL}/caixa/abrir", headers=headers, json={"valor_abertura": 100})
@@ -123,6 +132,7 @@ def test_estoque_desligado_devolve_lista_vazia_nao_403():
     resposta honesta e "nada para alertar".
     """
     conta = criar_empresa("Estoque Off")
+    promover_completo(conta)
     headers = conta["headers"]
     # Produto que dispararia o alerta se o modulo estivesse ligado.
     p = requests.post(f"{BASE_URL}/produtos", headers=headers, json={
@@ -145,6 +155,7 @@ def test_estoque_desligado_devolve_lista_vazia_nao_403():
 def test_religar_devolve_o_acesso_e_os_dados():
     """Desligar nao apaga nada: religar traz o modulo e os dados de volta."""
     conta = criar_empresa("Religar")
+    promover_completo(conta)
     headers = conta["headers"]
     requests.post(f"{BASE_URL}/caixa/abrir", headers=headers, json={"valor_abertura": 250})
 
@@ -172,7 +183,7 @@ def test_modulo_sem_implementacao_nao_e_configuravel():
     # O catalogo lista SO o que da para configurar. A vitrine de "em breve"
     # saiu da tela e da resposta a pedido do dono.
     catalogo = requests.get(f"{BASE_URL}/modulos", headers=headers).json()
-    assert {m["chave"] for m in catalogo["disponiveis"]} == {"mesas", "estoque", "caixa"}
+    assert {m["chave"] for m in catalogo["disponiveis"]} == {"mesas", "estoque", "caixa", "financeiro"}
     assert "em_breve" not in catalogo
 
 
@@ -197,6 +208,8 @@ def test_modulo_de_uma_empresa_nao_afeta_outra():
     """Desligar caixa na empresa A nao pode desligar na empresa B."""
     conta_a = criar_empresa("Modulo Multi A")
     conta_b = criar_empresa("Modulo Multi B")
+    promover_completo(conta_a)
+    promover_completo(conta_b)
     headers_a = conta_a["headers"]
     headers_b = conta_b["headers"]
 
@@ -213,6 +226,7 @@ def test_papel_sem_permissao_nao_configura_modulo():
     tenha o modulo, mexer no interruptor e de OWNER/ADMIN.
     """
     conta_owner = criar_empresa("Papel Modulo")
+    promover_completo(conta_owner)
     headers_owner = conta_owner["headers"]
     r = requests.post(f"{BASE_URL}/usuarios", headers=headers_owner, json={
         "nome": "Atendente", "email": f"at-{os.urandom(4).hex()}@test.com",
