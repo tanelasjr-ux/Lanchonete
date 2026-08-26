@@ -18,10 +18,19 @@ import os
 import random
 import string
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
 
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
+
 results = {"passed": [], "failed": []}
+
+
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
 
 
 def log_pass(nome):
@@ -104,7 +113,10 @@ def transacoes_de(headers, **filtros):
 
 
 def main():
-    headers, _ = criar_empresa()
+    headers, empresa_id = criar_empresa()
+    # Empresa nasce no plano Basico (Caixa exige o Completo) — esta suite
+    # inteira exercita rotas de caixa, entao promove logo apos criar.
+    promover_completo(empresa_id)
 
     # ===================================================================
     # 1. Estado inicial: sem caixa aberto
@@ -376,7 +388,8 @@ def main():
     # ===================================================================
     # 10. Isolamento multi-tenant
     # ===================================================================
-    headers_b, _ = criar_empresa()
+    headers_b, empresa_id_b = criar_empresa()
+    promover_completo(empresa_id_b)
     r = requests.get(f"{BASE_URL}/caixa/historico", headers=headers_b)
     if r.status_code == 200 and len(r.json()["caixas"]) == 0:
         log_pass("empresa B nao ve caixas da empresa A")

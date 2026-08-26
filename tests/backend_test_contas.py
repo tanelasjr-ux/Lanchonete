@@ -11,17 +11,31 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
 
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
+
+
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
+
 
 def criar_empresa(nome):
+    """Cria empresa + usuario OWNER via /auth/register, promove para o plano
+    Completo (estes testes exercitam rotas financeiras/contas, que exigem o
+    modulo Financeiro do plano Completo) e devolve headers autenticados."""
     email = f"{nome.lower().replace(' ', '-')}-{os.urandom(4).hex()}@test.com"
     r = requests.post(f"{BASE_URL}/auth/register", json={
         "empresa_nome": nome, "nome": "Teste", "email": email, "senha": "senha123",
     })
     assert r.status_code == 200, f"registro falhou: {r.status_code} {r.text}"
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    dados = r.json()
+    promover_completo(dados["empresa"]["id"])
+    return {"Authorization": f"Bearer {dados['token']}"}
 
 
 def dia(offset):

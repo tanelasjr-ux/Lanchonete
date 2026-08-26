@@ -15,8 +15,16 @@ import random
 import string
 import os
 from datetime import datetime, timedelta
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
+
+
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
 
 # Test results tracking
 results = {
@@ -70,6 +78,10 @@ try:
         tenant_a["empresa_id"] = data["empresa"]["id"]
         tenant_a["email"] = tenant_a_email
         tenant_a["senha"] = "senha_segura_123"
+        # Empresa nasce no plano Basico — as secoes D (relatorio financeiro)
+        # e E (transacao ao concluir pedido) exigem o modulo Financeiro
+        # (plano Completo).
+        promover_completo(tenant_a["empresa_id"])
         log_pass(f"Setup Tenant A - empresa_id: {tenant_a['empresa_id']}")
         print(f"   Token: {tenant_a['token'][:20]}...")
     else:

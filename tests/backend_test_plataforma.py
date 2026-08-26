@@ -188,6 +188,16 @@ def test_modulo_via_plataforma_bloqueia_igual_ao_toggle_do_proprio_dono():
     promover_admin(admin["email"])
     cliente = criar_empresa("Cliente Modulo Via Plataforma")
 
+    # Empresa nasce no plano Basico (Caixa exige o Completo) — promove pela
+    # propria rota da plataforma antes de testar o bloqueio via toggle, igual
+    # test_configurar_assinatura_sincroniza_plano_na_empresa faz.
+    promovida = requests.put(
+        f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
+        headers=admin["headers"],
+        json={"plano": "completo", "valor": 200, "dia_vencimento": 10, "proximo_vencimento": "2026-12-01"},
+    )
+    assert promovida.status_code == 200, promovida.text
+
     ligado = requests.get(f"{BASE_URL}/caixa/atual", headers=cliente["headers"])
     assert ligado.status_code == 200
 

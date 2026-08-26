@@ -18,9 +18,17 @@ import requests
 import random
 import string
 from datetime import datetime
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
 results = {"passed": [], "failed": [], "critical_failures": []}
+
+
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
 
 def log_pass(nome):
     print(f"✅ PASS: {nome}")
@@ -265,7 +273,11 @@ def main():
         # dias sem ser notado.
         print("\n[TEST 9] GET /produtos/estoque-baixo")
         try:
-            headers_c, _ = criar_empresa("Estoque Baixo QA")
+            headers_c, empresa_c = criar_empresa("Estoque Baixo QA")
+            # Estoque exige o plano Completo — sem isso o endpoint devolve
+            # 200 com lista vazia (comportamento intencional, ver TEST 9
+            # abaixo), o que mascararia os dois asserts de alerta.
+            promover_completo(empresa_c)
 
             # A regra do alerta e "no minimo OU abaixo", entao o caso de
             # igualdade exata e o que mais importa travar: um `<` no lugar de

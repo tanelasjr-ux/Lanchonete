@@ -8,12 +8,23 @@ relatorio financeiro, e isolamento multi-tenant.
 
 import os
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
 
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
+
+
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
+
 
 def nova_empresa(nome):
-    """Cria empresa + usuario e devolve (headers, empresa_id)."""
+    """Cria empresa + usuario, promove para o plano Completo (esta suite
+    exercita /financeiro/transacoes e /financeiro/relatorio, que exigem o
+    modulo Financeiro) e devolve (headers, empresa_id)."""
     email = f"{nome.lower()}-{os.urandom(4).hex()}@test.com"
     r = requests.post(f"{BASE_URL}/auth/register", json={
         "empresa_nome": nome, "nome": "Dono Teste", "email": email, "senha": "senha123",
@@ -21,6 +32,7 @@ def nova_empresa(nome):
     r.raise_for_status()
     dados = r.json()
     headers = {"Authorization": f"Bearer {dados['token']}"}
+    promover_completo(dados["empresa"]["id"])
     # Desde 2026-08-19 (B2, onboarding guiado) o registro NAO semeia mais
     # sozinho — ver route.js. Os testes desta suite ja contavam com a massa
     # demo (mesas, "ruido" de vendas filtrado por pedido_id/comanda_id).

@@ -36,6 +36,12 @@ def criar_empresa(nome):
     return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
+
+
 def abrir_comanda(headers):
     mesas = requests.get(f"{BASE_URL}/mesas", headers=headers).json()
     if not mesas:
@@ -153,6 +159,9 @@ def test_fechar_comanda_nao_lanca_receita_de_cobranca_pendente():
     # Simula uma cobranca no cartao que ficou pendente (nunca confirmada) —
     # mesmo formato que POST /comandas/:id/cartao grava de verdade.
     empresa_id = comanda["empresa_id"]
+    # Empresa nasce no plano Basico — GET /financeiro/transacoes mais abaixo
+    # exige o modulo Financeiro (plano Completo).
+    promover_completo(empresa_id)
     _db.pagamentos.insert_one({
         "id": "fake-pendente-fechamento", "empresa_id": empresa_id, "comanda_id": comanda["id"], "pedido_id": None,
         "metodo": "cartao_credito", "valor": total, "status": "pending", "provider": "mercadopago_point",

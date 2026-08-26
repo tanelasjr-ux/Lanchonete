@@ -16,8 +16,16 @@ import random
 import string
 import os
 from datetime import datetime
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000/api")
+_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[os.environ.get("DB_NAME", "restaurant_os_dev")]
+
+
+def promover_completo(empresa_id):
+    """Uso so em dev local (Mongo) — mesmo espirito de promover_admin() em
+    backend_test_plataforma.py. So prova algo contra DATABASE_PROVIDER=mongo."""
+    _db.empresas.update_one({"id": empresa_id}, {"$set": {"config.plano": "completo"}})
 
 # Test results tracking
 results = {
@@ -175,7 +183,10 @@ try:
     print("Testing multitenancy isolation for produtos...")
     headers_a = {"Authorization": f"Bearer {tenant_a['token']}"}
     headers_b = {"Authorization": f"Bearer {tenant_b['token']}"}
-    
+    # Empresa nasce no plano Basico — a secao 5 (FINANCIAL RULE) chama rotas
+    # de /financeiro que exigem o modulo Financeiro (plano Completo).
+    promover_completo(tenant_a["empresa"]["id"])
+
     resp_a = requests.get(f"{BASE_URL}/produtos", headers=headers_a)
     resp_b = requests.get(f"{BASE_URL}/produtos", headers=headers_b)
     
