@@ -3210,7 +3210,14 @@ function ModulosTab({ reload }) {
               <div className="text-sm font-medium">{m.label}</div>
               <div className="text-xs text-muted-foreground">{m.descricao}</div>
             </div>
-            <Switch checked={m.ativo} disabled={salvando === m.chave} onCheckedChange={(v) => alternar(m.chave, v)} />
+            {m.disponivelNoPlano ? (
+              <Switch checked={m.ativo} disabled={salvando === m.chave} onCheckedChange={(v) => alternar(m.chave, v)} />
+            ) : (
+              <div className="flex items-center gap-2">
+                <Switch checked={false} disabled />
+                <Badge variant="outline" className="text-xs">Disponível no plano Completo</Badge>
+              </div>
+            )}
           </div>
         ))}
       </CardContent>

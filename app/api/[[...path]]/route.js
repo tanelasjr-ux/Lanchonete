@@ -1146,6 +1146,7 @@ async function handler(request, { params }) {
       return json({
         disponiveis: Object.entries(MODULOS).map(([chave, m]) => ({
           chave, label: m.label, descricao: m.descricao, ativo: temModulo(empresa, chave),
+          disponivelNoPlano: planoInclui(empresa, chave),
         })),
       })
     }

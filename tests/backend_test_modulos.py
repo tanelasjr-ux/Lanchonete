@@ -350,5 +350,16 @@ def test_financeiro_desligado_bloqueia_todas_as_rotas_financeiras():
         assert r.status_code == 403, f"{metodo} {rota} deveria dar 403 no plano Basico, deu {r.status_code}: {r.text}"
 
 
+def test_get_modulos_expoe_disponivel_no_plano():
+    """UI precisa distinguir 'desligado por escolha' de 'bloqueado pelo plano'
+    para mostrar o botao certo (toggle vs. call-to-action de upgrade)."""
+    conta = criar_empresa("Modulos Expoe Plano")
+    r = requests.get(f"{BASE_URL}/modulos", headers=conta["headers"])
+    por_chave = {m["chave"]: m for m in r.json()["disponiveis"]}
+
+    assert por_chave["mesas"]["disponivelNoPlano"] is True
+    assert por_chave["estoque"]["disponivelNoPlano"] is False, "Basico nao inclui Estoque"
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))
