@@ -751,15 +751,6 @@ async function handler(request, { params }) {
       }
       await empresaRepo.create(empresa)
 
-      const assinaturaId = uuidv4()
-      const vencimentoInicial = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      await assinaturaRepo.create({
-        id: assinaturaId, empresa_id, plano: 'basico', valor: 0, dia_vencimento: 10,
-        proximo_vencimento: vencimentoInicial, status: 'ativa', ultimo_pagamento_em: null,
-        observacoes: 'Criada automaticamente no cadastro — ajustar valor real pelo Painel ETNA.',
-        created_at: new Date(), updated_at: new Date(),
-      })
-
       const usuario_id = uuidv4()
       const usuario = {
         id: usuario_id,
@@ -772,6 +763,21 @@ async function handler(request, { params }) {
         created_at: new Date(),
       }
       await usuarioRepo.create(usuario)
+
+      // Depois do usuario, nao entre empresa e usuario: se isto falhar (so
+      // plausivel no Supabase), a empresa ja tem dono e login funciona —
+      // uma falha ANTES do usuario deixaria uma empresa orfa, irrecuperavel
+      // (o slug ja fica tomado, o cliente nunca consegue tentar de novo com
+      // o mesmo nome). Achado real na revisao final do plano de planos,
+      // 2026-08-25.
+      const assinaturaId = uuidv4()
+      const vencimentoInicial = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      await assinaturaRepo.create({
+        id: assinaturaId, empresa_id, plano: 'basico', valor: 0, dia_vencimento: 10,
+        proximo_vencimento: vencimentoInicial, status: 'ativa', ultimo_pagamento_em: null,
+        observacoes: 'Criada automaticamente no cadastro — ajustar valor real pelo Painel ETNA.',
+        created_at: new Date(), updated_at: new Date(),
+      })
 
       // Ate 2026-08-19 rodava `seedEmpresa()` aqui, sempre — toda empresa
       // nova ja nascia com dados ficticios, o que esvaziava o checklist de
@@ -1109,10 +1115,18 @@ async function handler(request, { params }) {
     }
     /** Devolve uma resposta 403 se o modulo estiver desligado, ou null se pode seguir. */
     const exigeModulo = async (modulo) => {
-      if (temModulo(await empresaAtual(), modulo)) return null
+      const empresa = await empresaAtual()
+      if (temModulo(empresa, modulo)) return null
       const label = MODULOS[modulo]?.label || modulo
       // 403 e nao 404: esconder a existencia do modulo faria o dono achar que
-      // e bug. A mensagem precisa dizer o que fazer, nao so que negou.
+      // e bug. A mensagem precisa dizer o que fazer, nao so que negou —
+      // e o "o que fazer" depende da causa: se o PLANO nao cobre, desligar e
+      // religar em Empresa > Modulos nao adianta nada (o toggle la tambem
+      // esta bloqueado desde a Task 5/9); so upgrade resolve. Achado real na
+      // revisao final do plano de planos, 2026-08-25.
+      if (!planoInclui(empresa, modulo)) {
+        return err(`Modulo "${label}" nao incluido no plano atual — fale com a ETNA para upgrade.`, 403)
+      }
       return err(`Modulo "${label}" desativado para esta empresa. Ative em Empresa > Modulos.`, 403)
     }
 
@@ -1339,6 +1353,14 @@ async function handler(request, { params }) {
       const diaVencimento = Number(b.dia_vencimento)
       if (!Number.isInteger(diaVencimento) || diaVencimento < 1 || diaVencimento > 31) return err('dia_vencimento deve ser um inteiro entre 1 e 31')
       if (!b.proximo_vencimento) return err('proximo_vencimento obrigatorio')
+      // Mesma validacao que os outros 3 campos ja tinham — sem isso, um
+      // `plano` invalido passava direto pro Mongo (silencioso, cai no
+      // fallback 'basico' de planoInclui) ou pro Postgres (erro cru de
+      // constraint em vez de mensagem clara). Achado real na revisao final
+      // do plano de planos, 2026-08-25.
+      if (b.plano !== undefined && !['basico', 'completo'].includes(b.plano)) {
+        return err('plano deve ser "basico" ou "completo"')
+      }
 
       const existente = await assinaturaRepo.findByEmpresa(empresaId)
       let salva

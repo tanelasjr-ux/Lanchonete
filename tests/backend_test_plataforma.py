@@ -104,7 +104,7 @@ def test_admin_configura_assinatura_e_ela_aparece_na_listagem():
     r = requests.put(
         f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
         headers=admin["headers"],
-        json={"plano": "pro", "valor": 249.9, "dia_vencimento": 15, "proximo_vencimento": "2026-09-15"},
+        json={"plano": "completo", "valor": 249.9, "dia_vencimento": 15, "proximo_vencimento": "2026-09-15"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["status_efetivo"] == "ativa"
@@ -112,7 +112,7 @@ def test_admin_configura_assinatura_e_ela_aparece_na_listagem():
     listagem = requests.get(f"{BASE_URL}/plataforma/empresas", headers=admin["headers"])
     assert listagem.status_code == 200
     linha = next(e for e in listagem.json()["empresas"] if e["empresa_id"] == cliente["empresa_id"])
-    assert linha["assinatura"]["plano"] == "pro"
+    assert linha["assinatura"]["plano"] == "completo"
     assert linha["assinatura"]["valor"] == 249.9
 
 
@@ -341,6 +341,25 @@ def test_configurar_assinatura_sincroniza_plano_na_empresa():
 
     ativos = {m["chave"]: m["ativo"] for m in requests.get(f"{BASE_URL}/modulos", headers=cliente["headers"]).json()["disponiveis"]}
     assert ativos["estoque"] is True, "apos virar completo, estoque deve liberar (flag ja nascia True no signup)"
+
+
+def test_configurar_assinatura_rejeita_plano_invalido():
+    """Achado real na revisao final do plano de planos, 2026-08-25:
+    ate aqui `plano` nao era validado no corpo da requisicao — um valor
+    fora do enum passava direto pro banco (silencioso no Mongo, erro cru
+    de constraint no Postgres de producao).
+    """
+    admin = criar_empresa("Admin Rejeita Plano Invalido")
+    promover_admin(admin["email"])
+    cliente = criar_empresa("Cliente Plano Invalido")
+
+    r = requests.put(
+        f"{BASE_URL}/plataforma/empresas/{cliente['empresa_id']}/assinatura",
+        headers=admin["headers"],
+        json={"plano": "pro", "valor": 100, "dia_vencimento": 10, "proximo_vencimento": "2026-12-01"},
+    )
+    assert r.status_code == 400
+    assert "plano" in r.json()["error"].lower()
 
 
 if __name__ == '__main__':

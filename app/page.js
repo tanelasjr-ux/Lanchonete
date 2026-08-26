@@ -3407,7 +3407,13 @@ function Empresa({ reload }) {
               <div className="space-y-2"><Label>Horario de funcionamento</Label><Input value={f.horario_funcionamento || ''} onChange={set('horario_funcionamento')} placeholder="Seg-Dom 11h-23h" /></div>
               <div className="space-y-2"><Label>Moeda</Label><Input value={f.moeda || 'BRL'} onChange={set('moeda')} /></div>
             </div>
-            <div className="text-xs text-muted-foreground">Slug: <code className="bg-muted px-1.5 py-0.5 rounded">{f.slug}</code> · Plano: <Badge variant="secondary">{f.plano}</Badge></div>
+            {/* f.plano e' o campo legado top-level (sempre 'free', nunca lido
+                por nenhum gate — ver planos-basico-completo-design.md). O
+                plano real e' f.config.plano, o mesmo que temModulo() consulta.
+                Achado real na revisao final do plano de planos, 2026-08-25:
+                esta tela mostrava "Plano: free" a um clique de distancia dos
+                badges reais de Basico/Completo na aba Modulos. */}
+            <div className="text-xs text-muted-foreground">Slug: <code className="bg-muted px-1.5 py-0.5 rounded">{f.slug}</code> · Plano: <Badge variant="secondary">{(f.config?.plano || 'basico') === 'completo' ? 'Completo' : 'Básico'}</Badge></div>
             <Button onClick={saveDados}>Salvar dados</Button>
           </CardContent></Card>
 
@@ -4699,7 +4705,7 @@ const NAV = [
   { key: 'atendimento', label: 'Atendimento', icon: MessageSquare, perm: 'atendimento' },
   { key: 'cardapio', label: 'Cardápio', icon: UtensilsCrossed, perm: 'cardapio' },
   { key: 'clientes', label: 'Clientes', icon: Users, perm: 'clientes' },
-  { key: 'financeiro', label: 'Financeiro', icon: Wallet, perm: 'financeiro' },
+  { key: 'financeiro', label: 'Financeiro', icon: Wallet, perm: 'financeiro', modulo: 'financeiro' },
   { key: 'usuarios', label: 'Usuários', icon: UserCog, perm: 'usuarios' },
   { key: 'empresa', label: 'Empresa', icon: Building2, perm: 'empresa' },
   { key: 'integracoes', label: 'Integrações', icon: Plug, perm: 'integracoes' },
