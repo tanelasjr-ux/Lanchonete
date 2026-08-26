@@ -1,21 +1,23 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-25, fim de tarde. **Trabalho EM ANDAMENTO —
-comece por §0.0.** Pausado a pedido do dono ("pare" + handoff), NAO por
-falta de token nem por ter terminado.
+Ultima atualizacao: 2026-08-26, madrugada. **Nada em andamento agora —
+tudo commitado, testado. Bom ponto de partida pra qualquer proximo
+pedido.**
 
-1. 🟡 **Planos Basico e Completo (segmentacao comercial) — 6/9 tasks
-   completas e revisadas, Task 7 PARCIALMENTE aplicada (nao commitada,
-   nao testada) quando a sessao pausou.** Amarra o sistema de modulos
-   (`lib/modulos.js`, ja existente) a um plano contratado por empresa —
-   Estoque, Caixa e um modulo novo Financeiro passam a exigir o plano
-   Completo; mesa/balcao/delivery continuam sempre liberados em qualquer
-   plano. **9 commits (`aa0a9f5`..`bc36d83`) ainda NAO foram enviados ao
-   GitHub** — nada disso esta em producao ainda, nem a migration que
-   trava o campo `assinaturas.plano`. Ver §0.0 pro retrato completo,
-   incluindo o diagnostico ja pronto do que falta corrigir na Task 7 e
-   uma armadilha operacional real descoberta nesta sessao (agente
-   reportou "completed" mas continuava rodando de verdade).
+1. ✅ **Planos Basico e Completo (segmentacao comercial) — PLANO
+   COMPLETO, 9/9 tasks.** Amarra o sistema de modulos (`lib/modulos.js`)
+   a um plano contratado por empresa — Estoque, Caixa e um modulo novo
+   Financeiro passam a exigir o plano Completo; mesa/balcao/delivery
+   continuam sempre liberados em qualquer plano. Passou pelo ciclo
+   inteiro: 9 tasks implementadas e revisadas individualmente → revisao
+   final do branch completo (achou 1 bug critico real de producao +
+   5 achados importantes que nenhuma revisao por task capturaria) →
+   correcao → re-revisao escopada (confirmou tudo, inclusive checando
+   producao de forma independente) → adjudicacao final. Ver §0.0 pro
+   retrato completo — **⚠️ tem uma decisao de PRODUTO pendente que
+   bloqueia o folder de marketing** (Estoque continua quase todo
+   utilizavel no plano Basico hoje, ver §0.0 antes de prometer isso como
+   diferencial do Completo).
 2. ✅ **PDV (maquininha Mercado Pago Point) — PLANO COMPLETO, 11/11
    tasks, no GitHub.** Cobranca por cartao na comanda e no pedido
    (balcao/delivery), webhook + polling, guarda contra receita duplicada
@@ -69,16 +71,16 @@ do projeto, atualizado). A regra formal esta em `CLAUDE.md`, secao 18.1.
 
 # 0. PONTO DE RETOMADA (leia isto primeiro)
 
-## 0.0 🟡 EM ANDAMENTO: Planos Basico e Completo (segmentacao comercial)
-
-**Pausado aqui a pedido do dono ("pare" + handoff) — retomar exatamente
-por aqui.**
+## 0.0 ✅ CONCLUIDO: Planos Basico e Completo (segmentacao comercial)
 
 O dono pediu pra segmentar o Restaurant OS em dois planos comerciais.
-Processo completo ate aqui: pesquisa de mercado contra 6 concorrentes
-(publicada como artifact "Cardapio de Planos", aprovada) → brainstorming
-arquitetural → spec escrita e commitada → plano de 9 tasks escrito e
-commitado → execucao por subagentes (`superpowers:subagent-driven-development`).
+Processo completo: pesquisa de mercado contra 6 concorrentes (publicada
+como artifact "Cardapio de Planos", aprovada) → brainstorming
+arquitetural → spec escrita → plano de 9 tasks escrito → execucao por
+subagentes (`superpowers:subagent-driven-development`) → **revisao final
+do branch inteiro → correcao → re-revisao escopada → adjudicacao
+final**. Workspace do plano (`.superpowers/sdd/...`) ja apagado — este
+arquivo e a fonte de verdade sobre o que aconteceu.
 
 **Decisao de mercado (resumo, ver spec pro detalhe completo):** nenhum
 concorrente relevante corta plano por canal de venda (mesa/delivery
@@ -90,9 +92,9 @@ contas a pagar/receber).
 
 **Documentos:**
 1. `docs/superpowers/specs/2026-08-25-planos-basico-completo-design.md`
-2. `docs/superpowers/plans/2026-08-25-planos-basico-completo-plan.md` — as 9 tasks, cada uma com codigo exato
+2. `docs/superpowers/plans/2026-08-25-planos-basico-completo-plan.md` — as 9 tasks originais, cada uma com codigo exato
 
-**Estado exato ao pausar — 6/9 tasks completas e revisadas:**
+**As 9 tasks, todas completas e revisadas:**
 
 | Task | Commit(s) |
 |---|---|
@@ -102,92 +104,103 @@ contas a pagar/receber).
 | 4 — `PUT /plataforma/empresas/:id/assinatura` sincroniza `empresa.config.plano` | `35c1fd9` |
 | 5 — `PUT /modulos/:chave` (+ variante admin) trava ligar modulo fora do plano | `a19ba61` |
 | 6 — 10 rotas financeiras exigem o modulo `financeiro` | `bc36d83` |
-| 7 — Corrigir suites de teste existentes pro novo default | 🟡 **PARCIAL, nao commitado — ver abaixo** |
-| 8 — UI: Painel ETNA, campo plano vira `<Select>` | nao iniciada |
-| 9 — UI: tela de modulos mostra "Disponivel no plano Completo" quando bloqueado | nao iniciada |
+| 7 — Corrigir 13 suites de teste existentes pro novo default | `cb5890b`, `ca8adbb` |
+| 8 — UI: Painel ETNA, campo plano vira `<Select>` | `821fcc2` |
+| 9 — UI: tela de modulos mostra "Disponivel no plano Completo" quando bloqueado | `227bd7b` |
+| **Revisao final do branch inteiro + 1 rodada de correcao** (ver achados abaixo) | `51d4bbc` |
 
-**⚠️ Todos os 9 commits acima (`aa0a9f5`..`bc36d83`) ainda NAO foram
-enviados ao GitHub.** Nada disso esta em producao — nem a migration
-`0032` (que so aplica no proximo deploy automatico apos o push).
-**Achado corrigido nesta sessao:** o proprio arquivo do plano
-(`docs/superpowers/plans/2026-08-25-planos-basico-completo-plan.md`)
-tinha ficado sem commitar desde que foi escrito — corrigido no commit
-`80d1636`, sem impacto real (nenhum dado perdido).
+**Commits, em ordem:** `aa0a9f5` → `95c35db` → `ad3a3dd` → `140ef16` →
+`c5a2124` → `35c1fd9` → `a19ba61` → `bc36d83` → `cb5890b` → `ca8adbb` →
+`821fcc2` → `227bd7b` → `51d4bbc`. **Enviados ao GitHub? Confirmar com
+`git log origin/main..HEAD` antes de supor** — durante a execucao deste
+plano ha registro de push manual em algum ponto anterior (PDV), mas os
+commits deste plano especificamente podem nao ter sido enviados ainda;
+a migration `0032` so aplica em producao no proximo deploy automatico
+apos o push.
 
-### Task 7 — estado exato ao pausar (a mais delicada de retomar)
+### Achado critico real, encontrado na revisao final e corrigido
 
-**O que ja esta pronto, no working tree, NAO commitado, NAO testado:**
-`tests/backend_test_modulos.py` recebeu a correcao completa da Step 2 do
-brief (helper `promover_completo()` que promove uma empresa de teste pro
-plano Completo escrevendo direto no Mongo local; reescrita de
-`test_signup_liga_os_modulos_que_o_produto_entrega` e
-`test_modulo_sem_implementacao_nao_e_configuravel`; `promover_completo()`
-chamado nos 6 testes que precisam de modulo ligado). Ler o diff
-(`git diff tests/backend_test_modulos.py`) antes de continuar — parece
-completo e correto, mas **nunca foi rodado** para confirmar.
+**A migration `0032` casava a unica empresa real em producao (Tanelas
+FooD) pelo campo `nome`** — que e **editavel pelo proprio cliente** (PUT
+`/empresa`, aba Configuracoes → "Razao social"). Se o nome mudasse entre
+a migration ser escrita e o deploy rodar, os 3 comandos (`UPDATE`
+assinaturas, `INSERT` condicional, `UPDATE` empresas) casariam **zero
+linhas silenciosamente** (UPDATE/INSERT de 0 linhas nunca e erro em
+SQL) — a empresa acordaria sem `config.plano`, cairia no default
+`'basico'`, e perderia Estoque/Caixa/Financeiro que usa hoje **sem
+nenhum sinal de erro**, e a migration nunca mais rodaria de novo (ja
+estaria marcada como aplicada). Era o unico elo de toda a cadeia que
+falhava aberto e mudo — todo o resto (`planoInclui`, `exigeModulo`, o
+runner de migrations) foi desenhado pra falhar fechado.
 
-**O que falta (Steps 3-6 do brief, `.superpowers/sdd/2026-08-25-planos-basico-completo-plan/task-7-brief.md`):**
-aplicar o mesmo padrao (`promover_completo()` ou equivalente) em MAIS
-arquivos do que o brief original previa. Diagnostico completo ja feito
-nesta sessao (rodando `tests/run_all.py` uma vez, log salvo em
-`/tmp/regressao-planos.log` — **pode nao sobreviver a um reboot da
-maquina, por isso o resumo completo esta aqui**):
+**Corrigido:** a migration agora chaveia pelo `id` real da empresa
+(`54fea933-892e-4d55-b899-e244e69733a7`, confirmado direto contra
+producao — imutavel, o cliente nao edita isso) e tem um bloco
+`do $$ ... raise exception ... $$` que **aborta a migration inteira**
+se essa empresa nao for encontrada por esse id, em vez de aplicar 0
+linhas em silencio. Testado em transacao com `ROLLBACK` contra producao
+nos dois casos (empresa encontrada preserva os dados reais da
+assinatura; empresa nao encontrada aborta com erro explicito) —
+confirmado de forma independente por dois revisores diferentes,
+inclusive com uma consulta so-leitura direta contra producao.
 
-- **Ja previstos no brief:** `tests/backend_test_dre.py`,
-  `tests/backend_test_comparativo.py`, `tests/backend_test_margem_canal.py`,
-  `tests/backend_test_margem_produto.py`, `tests/backend_test_contas.py`,
-  `tests/backend_test_custo.py`, `tests/backend_test_plataforma.py` — 403
-  "Financeiro desativado" em toda rota de `/financeiro/*`/`/contas`.
-- **Descobertos pela Step 1, NAO citados no brief original** (mesma
-  causa raiz, mesmo padrao de correcao):
-  - `tests/backend_test.py` — 4 falhas, 403 Financeiro.
-  - `tests/backend_test_caixa.py` — 5 falhas, 403 Caixa (`criar_empresa()`
-    la ja devolve `(headers, empresa_id)` como tupla, facil de adaptar).
-  - `tests/backend_test_estoque.py` — 2 falhas: `GET /produtos/estoque-baixo`
-    devolve `200 []` em vez de alertar (comportamento correto do endpoint
-    quando modulo desligado — so precisa promover a empresa pra Completo
-    nesses 2 testes especificos pra restaurar o alerta esperado).
-  - `tests/backend_test_pdv.py` — 1 falha
-    (`test_fechar_comanda_nao_lanca_receita_de_cobranca_pendente`): 403
-    Financeiro disfarcado de `AttributeError: 'str' object has no
-    attribute 'get'` porque o teste nao checa status antes de iterar a
-    resposta como lista.
-  - `tests/backend_test_v3.py` — 6 falhas, 403 Financeiro (script
-    sequencial custom, formato antigo, sem `criar_empresa()` centralizada).
+### Outros achados reais da revisao final, ja corrigidos
 
-Resultado da Step 1 (rodada unica, limpa): **6/20 suites passaram**.
-Depois de corrigir tudo acima, esperado: todas verdes exceto
-`backend_test_rate_limit.py` (sempre falha com `RATE_LIMIT_DISABLED=1`,
-comportamento ja documentado, nao e bug).
+- NAV do dono nao tinha `modulo: 'financeiro'` na entrada da sidebar —
+  o item Financeiro aparecia mesmo no plano Basico e levava a uma tela
+  que so dava 403 em tudo.
+- A mensagem de erro generica ("Ative em Empresa > Modulos") aparecia
+  mesmo quando a causa era o PLANO, nao a flag — conselho impossivel de
+  seguir (o toggle correspondente ja aparece travado). Agora distingue
+  as duas causas.
+- `PUT /plataforma/empresas/:id/assinatura` nao validava o campo
+  `plano` (unico dos 4 campos sem validacao) — corrigido.
+- A aba Configuracoes > Empresa mostrava "Plano: free" (campo LEGADO,
+  nunca deveria ser lido) a um clique da aba Modulos, que mostra o
+  plano real — corrigido.
+- Assinatura criada ENTRE empresa e usuario no signup — uma falha ali
+  deixaria empresa orfa sem usuario. Movida pra depois do usuario.
 
-**⚠️ Armadilha operacional NOVA, descoberta nesta sessao — leia antes de
-despachar qualquer coisa nesta task:** um subagente ficou preso esperando
-`tests/run_all.py` terminar em background e a notificacao que chegou
-disse `"status":"completed"` — mas `ListAgents` mostrou que ele **ainda
-estava rodando de verdade**, e um segundo subagente (redespachado sem
-saber disso) come ou a editar os MESMOS arquivos ao mesmo tempo. Os dois
-foram parados com `TaskStop` antes de causar dano real (so uma edicao
-parcial ficou no working tree, identificada e preservada porque parecia
-correta). **Antes de redespachar a Task 7, rodar `ListAgents` pra
-confirmar que nao ha nenhum subagente antigo desta task ainda vivo — nao
-confiar cegamente numa notificacao de "completed" anterior.**
+### ⚠️ Decisao de PRODUTO pendente, NAO corrigida por codigo (bloqueia o folder de marketing)
 
-**Para retomar:** religar o ambiente local primeiro (Docker Desktop,
-`docker start ros-mongo-local`, `RATE_LIMIT_DISABLED=1 SIGNUP_ALLOWLIST_DISABLED=1 yarn dev:no-reload`
-— todos tinham caido de novo nesta retomada, aconteceu 2x nesta sessao
-ja). Depois `ListAgents` pra confirmar workspace limpo. Depois revisar
-`git diff tests/backend_test_modulos.py` (Step 2 ja pronta), rodar os
-testes desse arquivo pra confirmar, e so entao seguir pras suites da
-Step 3 em diante com a lista completa acima (nao precisa rodar
-`tests/run_all.py` de novo so pra Step 1 — o diagnostico ja esta feito).
+**Estoque continua ~90% utilizavel no plano Basico hoje.** `POST`/`PUT
+/produtos` nunca foram gateados por modulo (so `GET /produtos/estoque-baixo`
+e — desde sempre, nao e regressao deste plano). Uma empresa no Basico
+consegue ligar rastreamento de estoque, definir quantidade/minimo,
+vender com baixa automatica, ter trava de estoque negativo, e ajustar
+manualmente — **perde so o alerta de reposicao**. Isso nao e um bug de
+implementacao de nenhuma das 9 tasks (nenhuma tocou essas rotas de
+proposito) — e uma lacuna de ESCOPO do proprio plano/spec, que definiu
+Estoque como modulo pago sem inventariar onde os dados de estoque sao
+realmente tocados. Corrigir isso via codigo seria uma mudanca real de
+escopo (o que "Basico" entrega de fato) que **exige decisao do dono**,
+nao algo que deva ser decidido sozinho numa sessao de codigo.
 
-### Pendencias do proprio dono, pra depois que a parte tecnica terminar
+**Por isso: o folder de marketing (pendencia abaixo) NAO PODE prometer
+"Estoque" como diferencial do plano Completo enquanto isso nao for
+resolvido** — ou o codigo muda pra bater com a promessa, ou a promessa
+muda pra bater com o codigo. Mesma familia de achado, mesmo raciocinio:
+o CMV no dashboard tambem nao e gateado por plano hoje.
+
+### Pendencias do proprio dono, pra depois
 
 Pedidas explicitamente, ainda **nao iniciadas**:
 1. Um folder de marketing apresentando os planos Basico e Completo,
-   vantagens do ETNA, **sem precos**.
+   vantagens do ETNA, **sem precos** — **decidir a pendencia de Estoque
+   acima antes de escrever esse material**.
 2. Um manual didatico pro cliente configurar o sistema no primeiro
    acesso.
+
+### Achados operacionais desta sessao (nao sao bugs do produto, sao licoes de processo)
+
+- **Agente reporta "completed" mas continua rodando de verdade:** dois
+  subagentes ficaram presos esperando `tests/run_all.py` terminar em
+  background; a notificacao de conclusao chegou antes do processo real
+  terminar. `ListAgents` (nao a notificacao) e a fonte de verdade sobre
+  se um subagente ainda esta vivo.
+- Docker Desktop, o container `ros-mongo-local` e o dev server caem
+  entre pausas de sessao com frequencia nesta maquina — sempre religar
+  os tres antes de rodar qualquer teste ao retomar um trabalho.
 
 ## 0.4 ✅ CONCLUIDO: PDV — cobranca no cartao pela maquininha (Mercado Pago Point)
 
@@ -1615,7 +1628,7 @@ imagem apesar do padrao geral de ignorar).
 | Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
 | PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | ✅ **Completo, 11/11 tasks + revisao final do branch inteiro** (`754bb41`) — 2 pendencias deliberadas (forma de pagamento, reconciliador automatico) — ver §0.4 |
 | Controle de acesso ao cadastro (allowlist de e-mail) | ✅ **Completo e no ar**, deploy confirmado em producao — cadastro fechado ate o dono liberar e-mails no Painel ETNA — ver §0.4.2 |
-| Planos Basico e Completo (segmentacao comercial) | 🟡 **EM ANDAMENTO, 6/9 tasks, NAO enviado ao GitHub** — Task 7 parcial no working tree — ver §0.0 |
+| Planos Basico e Completo (segmentacao comercial) | ✅ **Completo, 9/9 tasks + revisao final do branch inteiro** (`51d4bbc`) — 1 decisao de produto pendente (Estoque no Basico) bloqueia o folder de marketing — ver §0.0 |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
