@@ -3974,6 +3974,8 @@ function ComandaDialog({ comandaId, onClose }) {
   const [mesasLivres, setMesasLivres] = useState([])
   const [addOpen, setAddOpen] = useState(false)
   const [obsPendente, setObsPendente] = useState('')
+  const [editandoObsId, setEditandoObsId] = useState(null)
+  const [obsEdit, setObsEdit] = useState('')
   const [pay, setPay] = useState({ metodo: 'dinheiro', valor: '' })
   const [pix, setPix] = useState(null)
   const [cartao, setCartao] = useState(null) // { id, status, valor }
@@ -4032,7 +4034,23 @@ function ComandaDialog({ comandaId, onClose }) {
     return () => clearInterval(t)
   }, [cartao, load])
   if (!c) return <Dialog open onOpenChange={onClose}><DialogContent><Empty>Carregando comanda…</Empty></DialogContent></Dialog>
-  const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1, observacao: obsPendente } }); setC(d); setObsPendente('') } catch (e) { toast.error(e.message) } }
+  // Toast confirma se a observacao digitada ANTES de clicar no produto
+  // realmente entrou junto — sem isso o atendente nao tem como saber (achado
+  // real, 2026-08-29: itens de mesa foram lancados sem observacao nenhuma
+  // apesar do atendente ter digitado "sem cebola" — o campo estava vazio no
+  // banco, nao so escondido na tela).
+  const addItem = async (p) => { try { const d = await api(`/comandas/${comandaId}/itens`, { method: 'POST', body: { produto_id: p.id, quantidade: 1, observacao: obsPendente } }); setC(d); toast.success(obsPendente ? `${p.nome} — ${obsPendente}` : p.nome); setObsPendente('') } catch (e) { toast.error(e.message) } }
+  // Corrige o item DEPOIS de ja lancado (mesmo achado acima) — sem isso a
+  // unica forma de anotar "sem cebola" era acertar a ordem "digita, depois
+  // clica" de primeira, sem confirmacao nenhuma se desse errado.
+  const salvarObs = async (item) => {
+    try {
+      const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'PUT', body: { observacao: obsEdit } })
+      setC(d)
+      setEditandoObsId(null)
+      toast.success('Observação salva')
+    } catch (e) { toast.error(e.message) }
+  }
   const setQty = async (item, q) => { if (q <= 0) { const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'DELETE' }); setC(d); return } const d = await api(`/comandas/${comandaId}/itens/${item.id}`, { method: 'PUT', body: { quantidade: q } }); setC(d) }
   const updateComanda = async (patch) => { try { const d = await api(`/comandas/${comandaId}`, { method: 'PUT', body: patch }); setC(d) } catch (e) { toast.error(e.message) } }
   const addPay = async () => { if (!pay.valor) return toast.error('Informe o valor'); try { const d = await api(`/comandas/${comandaId}/pagamentos`, { method: 'POST', body: { metodo: pay.metodo, valor: Number(pay.valor) } }); setC(d); setPay({ metodo: 'dinheiro', valor: '' }); toast.success('Pagamento registrado') } catch (e) { toast.error(e.message) } }
@@ -4054,6 +4072,7 @@ function ComandaDialog({ comandaId, onClose }) {
             {addOpen && (
               <div className="space-y-2">
                 <Input placeholder="Observacao (opcional) — ex: sem cebola" className="h-8 text-xs" value={obsPendente} onChange={(e) => setObsPendente(e.target.value)} />
+                <p className="text-[11px] text-muted-foreground">Vale só para o próximo item que você tocar — dá pra corrigir depois clicando no item já lançado.</p>
                 <div className="border rounded-lg divide-y max-h-40 overflow-auto ros-scroll">
                   {prods.filter((p) => p.disponivel !== false).map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
                 </div>
@@ -4063,7 +4082,21 @@ function ComandaDialog({ comandaId, onClose }) {
               {(c.itens || []).length === 0 && <div className="p-4 text-sm text-muted-foreground text-center">Nenhum item lancado.</div>}
               {(c.itens || []).map((i) => (
                 <div key={i.id} className="flex items-center gap-3 p-3">
-                  <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{i.nome}</div>{i.observacao && <div className="text-xs text-muted-foreground">{i.observacao}</div>}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{i.nome}</div>
+                    {editandoObsId === i.id ? (
+                      <div className="flex items-center gap-1 mt-1">
+                        <Input autoFocus className="h-7 text-xs" placeholder="ex: sem cebola" value={obsEdit}
+                          onChange={(e) => setObsEdit(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') salvarObs(i); if (e.key === 'Escape') setEditandoObsId(null) }} />
+                        <Button size="sm" className="h-7 px-2" onClick={() => salvarObs(i)}>OK</Button>
+                      </div>
+                    ) : (
+                      <button type="button" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-0.5" onClick={() => { setEditandoObsId(i.id); setObsEdit(i.observacao || '') }}>
+                        <Pencil className="h-3 w-3 shrink-0" />{i.observacao || 'Adicionar observação'}
+                      </button>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5"><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade - 1)}><Minus className="h-3 w-3" /></Button><span className="w-6 text-center text-sm">{i.quantidade}</span><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade + 1)}><Plus className="h-3 w-3" /></Button></div>
                   <div className="w-20 text-right text-sm font-medium">{brl(i.preco * i.quantidade)}</div>
                   <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => setQty(i, 0)}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -4149,7 +4182,15 @@ function ComandaDialog({ comandaId, onClose }) {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <Button className="w-full" onClick={fechar}><CheckCircle2 className="h-4 w-4 mr-1" />Fechar conta</Button>
+            {/* Dois botoes de proposito bem diferente, achado real 2026-08-29:
+                so existia "Fechar conta" (que ja cobra/fecha a comanda) como
+                acao visivel, entao o atendente que so queria salvar os itens
+                e voltar pras mesas — SEM cobrar ainda — usava o X do canto
+                do dialog por medo de clicar o botao errado. Os itens ja
+                ficam salvos a cada adicao (nao ha "rascunho" pra perder), a
+                unica diferenca do X e ter um rotulo claro. */}
+            <Button className="w-full" onClick={onClose}><CheckCircle2 className="h-4 w-4 mr-1" />Finalizar pedido (mesa continua aberta)</Button>
+            <Button variant="outline" className="w-full" onClick={fechar}>Fechar conta (cliente vai pagar agora)</Button>
             {transferOpen && (
               <div className="border rounded-lg p-2 max-h-32 overflow-auto ros-scroll">
                 {mesasLivres.length === 0 && <div className="text-xs text-muted-foreground p-2">Nenhuma mesa livre.</div>}
