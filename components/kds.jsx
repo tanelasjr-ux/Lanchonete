@@ -33,7 +33,7 @@ function Cronometro({ createdAt }) {
 
 function ItemCard({ item, tocavel, onConcluir, envelhecido }) {
   const titulo = item.origem === 'pedido' ? `Pedido #${item.numero}` : item.mesa_nome
-  const linhas = item.origem === 'pedido' ? item.itens : [{ nome: item.nome, quantidade: item.quantidade, observacao: item.observacao }]
+  const linhas = item.itens
   return (
     <Card
       className={`${envelhecido ? 'opacity-60' : ''} ${tocavel ? 'cursor-pointer active:scale-[0.98] transition-transform' : ''}`}
@@ -87,7 +87,16 @@ function KDSPainel({ fetchPendentes, onConcluir, tocavel }) {
   const concluir = async (item) => {
     setItens((s) => s.filter((i) => i.id !== item.id)) // otimista
     try {
-      await onConcluir(item)
+      if (item.origem === 'mesa') {
+        // Um card de mesa agrupa N itens lancados em momentos diferentes
+        // (docs/plans/KDS-DESIGN.md §5.2) — o endpoint so aceita um item por
+        // vez, entao concluir o card conclui cada item da comanda em sequencia.
+        for (const sub of item.itens) {
+          await onConcluir({ origem: 'mesa', id: sub.id, comanda_id: item.comanda_id })
+        }
+      } else {
+        await onConcluir(item)
+      }
       await carregar() // verifica que backend confirmou (recarrega estado real)
     } catch (e) {
       setErro(e.message)

@@ -115,12 +115,35 @@ try:
     resp = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/itens", json={"produto_id": produto_a["id"], "quantidade": 1}, headers=headers_a)
     item = resp.json()["itens"][-1]
 
+    def card_da_comanda(itens, comanda_id):
+        return next((i for i in itens if i["origem"] == "mesa" and i["comanda_id"] == comanda_id), None)
+
     resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
     itens = resp.json()["itens"]
-    if any(i["origem"] == "mesa" and i["id"] == item["id"] for i in itens):
+    card = card_da_comanda(itens, comanda["id"])
+    if card and any(sub["id"] == item["id"] for sub in card["itens"]):
         log_pass("GET /kds/pendentes - item de comanda aparece")
     else:
         log_fail("GET /kds/pendentes - item de comanda", f"nao encontrado em {itens}", critical=True)
+
+    print("\n4b. Comanda com 2 itens pendentes agrupa num card so (nao 2 cards)")
+    resp = requests.post(f"{BASE_URL}/comandas/{comanda['id']}/itens", json={"produto_id": produto_a["id"], "quantidade": 1}, headers=headers_a)
+    item_b = resp.json()["itens"][-1]
+    resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
+    itens = resp.json()["itens"]
+    cards_da_comanda = [i for i in itens if i["origem"] == "mesa" and i["comanda_id"] == comanda["id"]]
+    card = cards_da_comanda[0] if cards_da_comanda else None
+    ids_no_card = {sub["id"] for sub in card["itens"]} if card else set()
+    if len(cards_da_comanda) == 1 and {item["id"], item_b["id"]} <= ids_no_card:
+        log_pass("GET /kds/pendentes - 2 itens da mesma comanda viram 1 card so")
+    else:
+        log_fail("GET /kds/pendentes - agrupamento por comanda", f"esperava 1 card com os 2 itens, achou {cards_da_comanda}", critical=True)
+
+    resp = requests.post(f"{BASE_URL}/kds/concluir", json={"origem": "mesa", "id": item_b["id"], "comanda_id": comanda["id"]}, headers=headers_a)
+    if resp.status_code == 200:
+        log_pass("POST /kds/concluir - conclui 1 dos 2 itens da comanda")
+    else:
+        log_fail("POST /kds/concluir (mesa, item_b)", resp.text, critical=True)
 
     resp = requests.post(f"{BASE_URL}/kds/concluir", json={"origem": "mesa", "id": item["id"], "comanda_id": comanda["id"]}, headers=headers_a)
     if resp.status_code == 200:
@@ -130,7 +153,7 @@ try:
 
     resp = requests.get(f"{BASE_URL}/kds/pendentes", headers=headers_a)
     itens = resp.json()["itens"]
-    if not any(i.get("id") == item["id"] for i in itens):
+    if not card_da_comanda(itens, comanda["id"]):
         log_pass("GET /kds/pendentes - item de mesa concluido some da lista")
     else:
         log_fail("GET /kds/pendentes - item de mesa concluido", "ainda aparece", critical=True)

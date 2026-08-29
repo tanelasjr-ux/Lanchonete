@@ -1005,13 +1005,27 @@ async function handler(request, { params }) {
           itens: (p.itens || []).map((it) => ({ nome: it.nome, quantidade: it.quantidade, observacao: it.observacao || '' })),
           created_at: p.created_at,
         }))
-      const itensMesaPendentes = comandas.flatMap((c) => (c.itens || [])
-        .filter((it) => !it.entregue)
-        .map((it) => ({
-          origem: 'mesa', id: it.id, comanda_id: c.id, mesa_nome: c.mesa_nome,
-          nome: it.nome, quantidade: it.quantidade, observacao: it.observacao || '',
-          created_at: it.created_at,
-        })))
+      // Um card por COMANDA, nao por item (docs/plans/KDS-DESIGN.md §5.2,
+      // revisto 2026-08-29): a cozinha via cada item de uma mesa como pedido
+      // separado, e uma mesa com 4 itens virava 4 cards na tela. Agrupado
+      // aqui; cada item mantem o proprio id em `itens[]` para o atendente
+      // poder concluir um de cada vez (POST /kds/concluir continua por
+      // item — o card so muda a exibicao, nao a acao). created_at do card
+      // usa o item PENDENTE mais antigo do grupo, nao o mais novo: mantem a
+      // urgencia real (um item de 12h nao "reseta" so porque a mesa recebeu
+      // outro item as 12h30) em vez de esconder um item envelhecido dentro
+      // de um card que parece fresco.
+      const itensMesaPendentes = comandas
+        .map((c) => {
+          const pendentes = (c.itens || []).filter((it) => !it.entregue)
+          if (pendentes.length === 0) return null
+          return {
+            origem: 'mesa', id: c.id, comanda_id: c.id, mesa_nome: c.mesa_nome,
+            itens: pendentes.map((it) => ({ id: it.id, nome: it.nome, quantidade: it.quantidade, observacao: it.observacao || '' })),
+            created_at: pendentes.reduce((min, it) => (it.created_at < min ? it.created_at : min), pendentes[0].created_at),
+          }
+        })
+        .filter(Boolean)
       const itens = [...pedidosPendentes, ...itensMesaPendentes]
         .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
       return json({ itens, modo: kctx.isTv ? kctx.modo : null })

@@ -123,27 +123,44 @@ Junta num unico payload:
 - Itens de comanda aberta com `entregue = false`, cada um com o nome da mesa.
 
 Cada elemento da lista carrega: origem (`pedido` ou `mesa`), identificador
-para a acao de marcar como saiu, itens (ou o item, no caso de mesa),
-observacao, `created_at`. Ordenado por `created_at` ascendente (fila: mais
-antigo primeiro). Quando autenticado por `tv_token`, a resposta inclui
-tambem `modo` (`leitura`/`toque`) daquele token, pra tela decidir se
-desenha o toque.
+do card (`id` do pedido, ou `id`/`comanda_id` da comanda — mesmo valor), a
+lista `itens` (cada item de mesa preserva o proprio `id`, usado na acao de
+concluir), `created_at`, observacao por item. Ordenado por `created_at`
+ascendente (fila: mais antigo primeiro). Quando autenticado por `tv_token`,
+a resposta inclui tambem `modo` (`leitura`/`toque`) daquele token, pra tela
+decidir se desenha o toque.
 
 Escopado por `empresa_id` do contexto de autenticacao (token do usuario ou
 `kds_tokens.empresa_id`), como todo o resto do sistema (regra do `§5` do
 `CLAUDE.md`).
 
-### 5.2 Card = unidade real de criacao, nao agrupamento artificial
+### 5.2 Card = uma comanda/pedido, nunca um item sozinho
+
+**Revisto 2026-08-29** — decisao original desta secao (ver historico do
+arquivo) era um card por item de mesa, um por comanda. Na pratica isso
+virou o oposto do que a cozinha precisa: uma mesa com 4 itens pendentes
+aparecia como 4 cards separados e repetidos ("Mesa 03", "Mesa 03", "Mesa
+03"...), forcando quem esta preparando a caçar os cards da mesma mesa
+espalhados pela tela em vez de ver o pedido inteiro de uma vez — o problema
+que a secao antiga chamava de "agrupamento so visual" nunca funcionou como
+agrupamento nenhum, porque nao existia ordenacao ou proximidade garantida.
 
 - **Pedido** (balcao/delivery/retirada): nasce de uma vez com todos os itens
-  -> **um card com a lista de itens dentro**.
-- **Item de comanda** (mesa): lancado um a um, em momentos diferentes ->
-  **um card por item**, com o nome da mesa em destaque e horario proprio.
+  -> **um card com a lista de itens dentro** (sem mudanca).
+- **Comanda** (mesa): TODOS os itens pendentes (`entregue = false`) daquela
+  comanda -> **um unico card**, com a lista de itens dentro, no mesmo
+  formato do pedido.
 
-Agrupar tudo de uma mesa num card so misturaria um item lancado as 12h com
-outro das 12h30 sob um cronometro so — informacao errada. O agrupamento por
-mesa fica so visual (cards da mesma mesa proximos na tela), nunca uma fusao
-de dados.
+O card usa o `created_at` do item PENDENTE mais antigo do grupo pro
+cronometro/envelhecimento — nao o mais novo. Isso preserva exatamente a
+preocupacao original (um item de 12h nao pode "resetar" so porque a mesa
+recebeu outro item as 12h30): o card continua envelhecendo pelo item mais
+antigo, so que agora isso destaca o card inteiro em vez de deixar o item
+velho escondido num card separado que ninguem mais olha.
+
+A acao de concluir continua granular: tocar no card conclui cada item da
+comanda um de cada vez (`POST /kds/concluir` continua recebendo um item por
+chamada — `§5.3` nao mudou), so a exibicao virou um card so.
 
 ### 5.3 Acao de marcar como pronto (celular do atendente e TV em modo toque)
 
