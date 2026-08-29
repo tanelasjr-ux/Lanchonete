@@ -196,6 +196,19 @@ function json(data, status = 200) {
 function err(message, status = 400) {
   return json({ error: message }, status)
 }
+// URL absoluta do webhook Evolution: a Evolution API roda em outro host e
+// rejeita path relativo com "Invalid URL format". NEXT_PUBLIC_BASE_URL e
+// lido aqui, no server, de proposito — `docker/Dockerfile` roda `next build`
+// sem as variaveis de runtime (ver comentario la), entao um NEXT_PUBLIC_*
+// lido no browser ficaria congelado como undefined dentro do bundle, mesmo
+// configurado certo no EasyPanel. So o lado servidor ve o valor certo, e so
+// em cada request (nao precisa de rebuild pra corrigir, so reiniciar o app).
+function evolutionWebhookUrl(empresaId, secret) {
+  const base = (process.env.NEXT_PUBLIC_BASE_URL || '').replace(/\/+$/, '')
+  if (!base) return null
+  const params = new URLSearchParams({ tenant: empresaId, secret: secret || 'SEU_SEGREDO' })
+  return `${base}/api/whatsapp/webhook?${params.toString()}`
+}
 async function auth(request) {
   const header = request.headers.get('authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
@@ -2713,7 +2726,9 @@ async function handler(request, { params }) {
           c.config = { mode: c.config.mode || 'sandbox', hasAccessToken: Boolean(c.config.accessToken), hasWebhookSecret: Boolean(c.config.webhookSecret), terminalId: c.config.terminalId || '' }
         }
         if (c.tipo === 'evolution' && c.config) {
-          c.config = { serverUrl: c.config.serverUrl || '', instance: c.config.instance || 'restaurant-os', hasApiKey: Boolean(c.config.apiKey), hasWebhookSecret: Boolean(c.config.webhookSecret) }
+          // webhookUrl aqui sempre leva o segredo mascarado (placeholder) —
+          // o valor real so volta uma vez, na resposta do PUT logo abaixo.
+          c.config = { serverUrl: c.config.serverUrl || '', instance: c.config.instance || 'restaurant-os', hasApiKey: Boolean(c.config.apiKey), hasWebhookSecret: Boolean(c.config.webhookSecret), webhookUrl: evolutionWebhookUrl(ctx.empresa_id, null) }
         }
         map[i.tipo] = c
       }
@@ -2762,7 +2777,12 @@ async function handler(request, { params }) {
       // webhookSecret) so nesta resposta, para o dono copiar e colar na
       // configuracao de webhook da Evolution API. GET /integracoes mascara
       // (linha ~1716) e nunca devolve o valor de novo depois deste PUT.
-      return json(clean(atualizado))
+      const resposta = clean(atualizado)
+      // webhookUrl pronta (absoluta, com tenant + segredo reais) so aqui,
+      // pelo mesmo motivo do webhookSecret acima — junta os dois na mesma
+      // resposta pro dono nao ter que montar a URL na mao.
+      if (resposta.config) resposta.config.webhookUrl = evolutionWebhookUrl(ctx.empresa_id, config.webhookSecret)
+      return json(resposta)
     }
     if (route === '/integracoes/n8n' && method === 'PUT') {
       if (!can(ctx.papel, 'integracoes')) return err('Sem permissao', 403)
