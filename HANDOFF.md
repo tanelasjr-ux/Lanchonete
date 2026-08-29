@@ -1,8 +1,7 @@
 # HANDOFF.md — Restaurant OS
 
-Ultima atualizacao: 2026-08-26, madrugada. **Nada em andamento agora —
-tudo commitado, testado. Bom ponto de partida pra qualquer proximo
-pedido.**
+Ultima atualizacao: 2026-08-27. **Nada em andamento agora — tudo
+commitado, testado. Bom ponto de partida pra qualquer proximo pedido.**
 
 1. ✅ **Planos Basico e Completo (segmentacao comercial) — PLANO
    COMPLETO, 9/9 tasks.** Amarra o sistema de modulos (`lib/modulos.js`)
@@ -14,10 +13,11 @@ pedido.**
    5 achados importantes que nenhuma revisao por task capturaria) →
    correcao → re-revisao escopada (confirmou tudo, inclusive checando
    producao de forma independente) → adjudicacao final. Ver §0.0 pro
-   retrato completo — **⚠️ tem uma decisao de PRODUTO pendente que
-   bloqueia o folder de marketing** (Estoque continua quase todo
-   utilizavel no plano Basico hoje, ver §0.0 antes de prometer isso como
-   diferencial do Completo).
+   retrato completo — decisao de produto pendente **resolvida em
+   2026-08-27**: o dono confirmou que o alerta de reposicao de estoque
+   (`GET /produtos/estoque-baixo`) e suficiente como diferencial do
+   Completo, mesmo com POST/PUT `/produtos` liberados no Basico. Nenhuma
+   mudanca de codigo necessaria — decisao apenas documentada.
 2. ✅ **PDV (maquininha Mercado Pago Point) — PLANO COMPLETO, 11/11
    tasks, no GitHub.** Cobranca por cartao na comanda e no pedido
    (balcao/delivery), webhook + polling, guarda contra receita duplicada
@@ -161,7 +161,7 @@ inclusive com uma consulta so-leitura direta contra producao.
 - Assinatura criada ENTRE empresa e usuario no signup — uma falha ali
   deixaria empresa orfa sem usuario. Movida pra depois do usuario.
 
-### ⚠️ Decisao de PRODUTO pendente, NAO corrigida por codigo (bloqueia o folder de marketing)
+### ✅ Decisao de PRODUTO que bloqueava o material de marketing — RESOLVIDA em 2026-08-27
 
 **Estoque continua ~90% utilizavel no plano Basico hoje.** `POST`/`PUT
 /produtos` nunca foram gateados por modulo (so `GET /produtos/estoque-baixo`
@@ -172,24 +172,34 @@ manualmente — **perde so o alerta de reposicao**. Isso nao e um bug de
 implementacao de nenhuma das 9 tasks (nenhuma tocou essas rotas de
 proposito) — e uma lacuna de ESCOPO do proprio plano/spec, que definiu
 Estoque como modulo pago sem inventariar onde os dados de estoque sao
-realmente tocados. Corrigir isso via codigo seria uma mudanca real de
-escopo (o que "Basico" entrega de fato) que **exige decisao do dono**,
-nao algo que deva ser decidido sozinho numa sessao de codigo.
+realmente tocados.
 
-**Por isso: o folder de marketing (pendencia abaixo) NAO PODE prometer
-"Estoque" como diferencial do plano Completo enquanto isso nao for
-resolvido** — ou o codigo muda pra bater com a promessa, ou a promessa
-muda pra bater com o codigo. Mesma familia de achado, mesmo raciocinio:
-o CMV no dashboard tambem nao e gateado por plano hoje.
+**Decisao do dono (2026-08-27): "pode deixar o alerta de reposição!"** —
+o alerta de reposicao (`GET /produtos/estoque-baixo`) gated pro Completo
+fica como o diferencial oficial, sem mudanca de codigo. O material de
+marketing abaixo foi escrito respeitando essa decisao (nao promete
+"Estoque completo" pro Basico, so o alerta de reposicao pro Completo).
+Mesma familia de achado, mesmo raciocinio, ainda **sem decisao**: o CMV
+no dashboard tambem nao e gateado por plano hoje — nao bloqueia nada,
+so fica registrado aqui caso vire pauta.
 
 ### Pendencias do proprio dono, pra depois
 
-Pedidas explicitamente, ainda **nao iniciadas**:
-1. Um folder de marketing apresentando os planos Basico e Completo,
-   vantagens do ETNA, **sem precos** — **decidir a pendencia de Estoque
-   acima antes de escrever esse material**.
-2. Um manual didatico pro cliente configurar o sistema no primeiro
-   acesso.
+Pedidas explicitamente em 2026-08-27, **concluidas na mesma sessao**:
+1. ✅ **Manual de primeiro acesso** — passo a passo criativo com a
+   identidade ETNA (simbolo hexagonal, paleta azul/turquesa/ambar),
+   9 passos do cadastro a primeira venda, baseado no checklist real de
+   onboarding (`GET /onboarding/status`) e na navegacao real do sistema.
+   Publicado como artifact: https://claude.ai/code/artifact/0d6ebcff-045f-43e7-94cf-c6596a490a9a
+   (arquivo fonte em scratchpad de sessao, nao versionado no repo — se
+   precisar editar de novo, refazer a partir deste HANDOFF ou pedir
+   pro Claude reabrir o link).
+2. ✅ **Resumo do que o sistema oferece, pra basear campanhas de
+   marketing** — modulos por eixo (vender/atender/controlar),
+   comparativo Basico x Completo, 6 diferenciais e um bloco de textos
+   prontos pra copiar (headlines, bullets de anuncio). **Sem precos**
+   (nao foi pedido, nao foi inventado). Respeita a decisao de Estoque
+   acima. Publicado como artifact: https://claude.ai/code/artifact/d2ce536e-49b0-4d54-bc8e-da1053cd6056
 
 ### Achados operacionais desta sessao (nao sao bugs do produto, sao licoes de processo)
 
@@ -1628,7 +1638,8 @@ imagem apesar do padrao geral de ignorar).
 | Onboarding guiado (B2) — checklist + seed sob demanda | **Completo e no ar** (`0deb39d` + `8b78f26`) — ver §0.1.4 |
 | PDV — cobranca no cartao pela maquininha (Mercado Pago Point) | ✅ **Completo, 11/11 tasks + revisao final do branch inteiro** (`754bb41`) — 2 pendencias deliberadas (forma de pagamento, reconciliador automatico) — ver §0.4 |
 | Controle de acesso ao cadastro (allowlist de e-mail) | ✅ **Completo e no ar**, deploy confirmado em producao — cadastro fechado ate o dono liberar e-mails no Painel ETNA — ver §0.4.2 |
-| Planos Basico e Completo (segmentacao comercial) | ✅ **Completo, 9/9 tasks + revisao final do branch inteiro** (`51d4bbc`) — 1 decisao de produto pendente (Estoque no Basico) bloqueia o folder de marketing — ver §0.0 |
+| Planos Basico e Completo (segmentacao comercial) | ✅ **Completo, 9/9 tasks + revisao final do branch inteiro** (`51d4bbc`) — decisao de produto (Estoque no Basico) resolvida em 2026-08-27, alerta de reposicao fica como diferencial do Completo — ver §0.0 |
+| Manual de primeiro acesso + resumo de marketing (artifacts ETNA) | **Completo e publicado**, 2026-08-27 — ver §0.0 pros links |
 | Supabase Auth (implementacao) | **NAO INICIADA** |
 | Realtime | **NAO INICIADO** |
 
