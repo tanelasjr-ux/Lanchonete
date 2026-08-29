@@ -1364,7 +1364,12 @@ function Pedidos({ me }) {
     if (!sairEntregaModal || !entregadorSelecionado) return
     setDespachando(true)
     try {
-      await api(`/pedidos/${sairEntregaModal.id}`, {
+      // PATCH /pedidos/:id (sem /status) nao existe no backend — so
+      // PATCH /pedidos/:id/status trata saiu_para_entrega (valida o
+      // entregador, tira o snapshot do nome, carimba o horario). Faltando o
+      // "/status" a chamada sempre dava 404 "rota nao encontrada", com ou
+      // sem endereco preenchido — nao tinha relacao nenhuma com o endereco.
+      await api(`/pedidos/${sairEntregaModal.id}/status`, {
         method: 'PATCH',
         body: { status: 'saiu_para_entrega', entregador_id: entregadorSelecionado }
       })

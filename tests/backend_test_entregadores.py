@@ -80,5 +80,45 @@ def test_entregadores_multitenant():
     assert "Entregador Exclusivo A" not in [e["nome"] for e in lista_b]
 
 
+def test_pedido_delivery_sem_endereco_pode_ir_para_entrega():
+    """Regressao 2026-08-29: o dono reportou que pedido delivery sem endereco
+    "nao segue o fluxo" ao despachar pra entrega. Causa real nao tinha nada a
+    ver com endereco — o FRONTEND chamava PATCH /pedidos/:id (sem "/status"),
+    rota que nao existe; SEMPRE dava 404, com ou sem endereco preenchido. A
+    rota certa (PATCH /pedidos/:id/status) nunca validou endereco, so tipo
+    delivery + entregador_id. Este teste trava as duas pontas: a rota errada
+    continua 404 (senao o bug original nem faria sentido) e a rota certa
+    despacha mesmo com endereco vazio."""
+    headers = criar_empresa("Delivery Sem Endereco")
+    cat = requests.post(f"{BASE_URL}/categorias", json={"nome": "Lanches"}, headers=headers).json()
+    produto = requests.post(f"{BASE_URL}/produtos", json={
+        "nome": "X-Burger", "preco": 25.0, "categoria_id": cat["id"], "disponivel": True
+    }, headers=headers).json()
+    entregador = requests.post(f"{BASE_URL}/entregadores", json={"nome": "Jhony", "telefone": "11999998888"}, headers=headers).json()
+
+    r = requests.post(f"{BASE_URL}/pedidos", json={
+        "itens": [{"produto_id": produto["id"], "nome": produto["nome"], "preco": produto["preco"], "quantidade": 1}],
+        "tipo": "delivery", "pagamento": "pix",
+    }, headers=headers)
+    assert r.status_code == 201, r.text
+    pedido = r.json()
+    assert pedido.get("entrega_endereco", "") == "", "endereco deveria ficar vazio, nao bloquear a criacao"
+
+    sem_status = requests.patch(f"{BASE_URL}/pedidos/{pedido['id']}", json={
+        "status": "saiu_para_entrega", "entregador_id": entregador["id"],
+    }, headers=headers)
+    assert sem_status.status_code == 404, f"esperava 404 (rota sem /status nao existe), veio {sem_status.status_code}: {sem_status.text}"
+
+    r2 = requests.patch(f"{BASE_URL}/pedidos/{pedido['id']}/status", json={
+        "status": "saiu_para_entrega", "entregador_id": entregador["id"],
+    }, headers=headers)
+    assert r2.status_code == 200, r2.text
+    atualizado = r2.json()["pedido"]
+    assert atualizado["status"] in ("saiu_para_entrega", "SAIU_PARA_ENTREGA")
+    assert atualizado["entregador_id"] == entregador["id"]
+    assert atualizado["entregador_nome"] == "Jhony"
+    assert atualizado.get("saiu_para_entrega_em")
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))
