@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
@@ -964,14 +965,34 @@ function Cardapio() {
       load()
     } catch (e) { toast.error(e.message) }
   }
-  const addCat = async () => { if (!catName) return; try { await api('/categorias', { method: 'POST', body: { nome: catName } }); setCatName(''); setCatDlg(false); toast.success('Categoria criada'); load() } catch (e) { toast.error(e.message) } }
+  const addCat = async () => { if (!catName) return; try { await api('/categorias', { method: 'POST', body: { nome: catName } }); setCatName(''); toast.success('Categoria criada'); load() } catch (e) { toast.error(e.message) } }
   const catName_ = (id) => cats.find((c) => c.id === id)?.nome || '—'
+  // Editar/excluir categoria — so existia criar ate agora (achado real,
+  // 2026-08-30). O backend (PUT/DELETE /categorias/:id) ja aceitava; faltava
+  // so a tela. DELETE /categorias/:id apaga em cascata todo produto daquela
+  // categoria (route.js) — por isso o AlertDialog abaixo, diferente do
+  // "Remover" de produto (sem confirmacao hoje): aqui um clique errado leva
+  // produtos junto, nao so a categoria vazia.
+  const [editCatId, setEditCatId] = useState(null)
+  const [editCatName, setEditCatName] = useState('')
+  const [catExcluir, setCatExcluir] = useState(null) // categoria pendente de confirmacao de exclusao
+  const iniciarEdicaoCat = (c) => { setEditCatId(c.id); setEditCatName(c.nome) }
+  const salvarEdicaoCat = async () => {
+    if (!editCatName.trim()) return toast.error('Nome nao pode ficar vazio')
+    try { await api(`/categorias/${editCatId}`, { method: 'PUT', body: { nome: editCatName.trim() } }); setEditCatId(null); toast.success('Categoria atualizada'); load() }
+    catch (e) { toast.error(e.message) }
+  }
+  const confirmarExclusaoCat = async () => {
+    if (!catExcluir) return
+    try { await api(`/categorias/${catExcluir.id}`, { method: 'DELETE' }); toast.success('Categoria removida'); setCatExcluir(null); if (tab === catExcluir.id) setTab('all'); load() }
+    catch (e) { toast.error(e.message) }
+  }
   const filtered = tab === 'all' ? prods : prods.filter((p) => p.categoria_id === tab)
 
   return (
     <div className="space-y-6">
       <PageHeader title="Cardápio" description="Gerencie categorias e produtos do seu restaurante."
-        action={<div className="flex gap-2"><Button variant="outline" onClick={() => setCatDlg(true)}><Plus className="h-4 w-4 mr-1" />Categoria</Button><Button onClick={() => setDlg({ nome: '', preco: '', categoria_id: cats[0]?.id, descricao: '', disponivel: true })}><Plus className="h-4 w-4 mr-1" />Produto</Button></div>} />
+        action={<div className="flex gap-2"><Button variant="outline" onClick={() => setCatDlg(true)}><Settings className="h-4 w-4 mr-1" />Categorias</Button><Button onClick={() => setDlg({ nome: '', preco: '', categoria_id: cats[0]?.id, descricao: '', disponivel: true })}><Plus className="h-4 w-4 mr-1" />Produto</Button></div>} />
       <div className="flex gap-2 flex-wrap">
         <Button size="sm" variant={tab === 'all' ? 'default' : 'outline'} onClick={() => setTab('all')}>Todos ({prods.length})</Button>
         {cats.map((c) => <Button key={c.id} size="sm" variant={tab === c.id ? 'default' : 'outline'} onClick={() => setTab(c.id)}>{c.nome}</Button>)}
@@ -1017,11 +1038,56 @@ function Cardapio() {
       {dlg && <ProdutoDialog data={dlg} cats={cats} onClose={() => setDlg(null)} onSave={saveProd} />}
       {ajusteDlg && <AjusteEstoqueDialog produto={ajusteDlg} open={!!ajusteDlg} onOpenChange={() => setAjusteDlg(null)} onAjustar={handleAjustarEstoque} />}
       <Dialog open={catDlg} onOpenChange={setCatDlg}>
-        <DialogContent><DialogHeader><DialogTitle>Nova categoria</DialogTitle></DialogHeader>
-          <div className="space-y-2"><Label>Nome</Label><Input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="Ex: Lanches" /></div>
-          <DialogFooter><Button onClick={addCat}>Criar</Button></DialogFooter>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Categorias</DialogTitle><DialogDescription>Crie, renomeie ou remova categorias do cardápio.</DialogDescription></DialogHeader>
+          <div className="flex gap-2">
+            <Input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="Nova categoria — ex: Lanches" onKeyDown={(e) => e.key === 'Enter' && addCat()} />
+            <Button onClick={addCat}>Criar</Button>
+          </div>
+          <div className="space-y-1.5 max-h-72 overflow-auto ros-scroll">
+            {cats.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">Nenhuma categoria ainda.</p>}
+            {cats.map((c) => (
+              <div key={c.id} className="flex items-center gap-2 rounded-lg border p-2">
+                {editCatId === c.id ? (
+                  <>
+                    <Input autoFocus className="h-8 flex-1" value={editCatName} onChange={(e) => setEditCatName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') salvarEdicaoCat(); if (e.key === 'Escape') setEditCatId(null) }} />
+                    <Button size="sm" className="h-8" onClick={salvarEdicaoCat}>Salvar</Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditCatId(null)}>Cancelar</Button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 text-sm truncate">{c.nome}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">{prods.filter((p) => p.categoria_id === c.id).length} produtos</span>
+                    <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => iniciarEdicaoCat(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 text-destructive" onClick={() => setCatExcluir(c)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!catExcluir} onOpenChange={(v) => !v && setCatExcluir(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover categoria "{catExcluir?.nome}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {(() => {
+                const n = catExcluir ? prods.filter((p) => p.categoria_id === catExcluir.id).length : 0
+                return n > 0
+                  ? `Essa categoria tem ${n} produto${n > 1 ? 's' : ''} — ${n > 1 ? 'todos serão removidos junto' : 'ele será removido junto'}, não só a categoria. Essa ação não pode ser desfeita.`
+                  : 'Essa ação não pode ser desfeita.'
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={confirmarExclusaoCat}>Remover</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -3456,7 +3522,6 @@ function Empresa({ reload }) {
      substituir (config.cardapio_imagens, uma pagina por upload). --- */
   const [enviandoCardapioPagina, setEnviandoCardapioPagina] = useState(false)
   const inputCardapioPaginaRef = useRef(null)
-  const cardapioImagens = f.config?.cardapio_imagens || []
 
   const enviarCardapioPagina = async (file) => {
     if (!file) return
@@ -3498,6 +3563,7 @@ function Empresa({ reload }) {
   if (!f) return <Empty>Carregando…</Empty>
   const ap = f.config?.appearance || {}
   const met = f.config?.pagamentos?.metodos || {}
+  const cardapioImagens = f.config?.cardapio_imagens || []
   return (
     <div className="space-y-6 max-w-3xl">
       <PageHeader title="Configuracoes" description="Personalize os dados, a identidade visual e as formas de pagamento." />
