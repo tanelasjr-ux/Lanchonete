@@ -33,7 +33,10 @@ export function CardapioPublico({ slug }) {
   })
 
   const indisponiveisHoje = dados.indisponiveis_hoje || []
-  const temImagem = Boolean(dados.empresa.cardapio_imagem_url)
+  const paginasCardapio = dados.empresa.cardapio_imagens?.length
+    ? dados.empresa.cardapio_imagens
+    : (dados.empresa.cardapio_imagem_url ? [{ id: 'legado', url: dados.empresa.cardapio_imagem_url }] : [])
+  const temImagem = paginasCardapio.length > 0
 
   const BannerIndisponiveis = () => indisponiveisHoje.length === 0 ? null : (
     <div className="mx-4 mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
@@ -77,18 +80,24 @@ export function CardapioPublico({ slug }) {
       </header>
 
       {temImagem ? (
-        <main>
+        <main className="p-4 space-y-6">
           <BannerIndisponiveis />
+          {paginasCardapio.length > 1 && (
+            <p className="text-center text-xs text-muted-foreground">{paginasCardapio.length} páginas — deslize para ver todas</p>
+          )}
           {/* Abre em nova aba: da zoom nativo do navegador do celular (pinch),
               sem precisar de biblioteca de lightbox so para isto. */}
-          <a href={dados.empresa.cardapio_imagem_url} target="_blank" rel="noopener noreferrer" className="block p-4">
-            <img
-              src={dados.empresa.cardapio_imagem_url}
-              alt={`Cardápio ${dados.empresa.nome}`}
-              className="w-full h-auto rounded-lg border"
-            />
-            <p className="text-center text-xs text-muted-foreground mt-2">Toque na imagem para ampliar</p>
-          </a>
+          {paginasCardapio.map((pagina, i) => (
+            <a key={pagina.id} href={pagina.url} target="_blank" rel="noopener noreferrer" className="block">
+              {paginasCardapio.length > 1 && <p className="text-center text-xs font-medium text-muted-foreground mb-1">Página {i + 1} de {paginasCardapio.length}</p>}
+              <img
+                src={pagina.url}
+                alt={`Cardápio ${dados.empresa.nome} — página ${i + 1}`}
+                className="w-full h-auto rounded-lg border"
+              />
+            </a>
+          ))}
+          <p className="text-center text-xs text-muted-foreground">Toque numa página para ampliar</p>
         </main>
       ) : (
         <>

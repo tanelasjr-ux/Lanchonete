@@ -21,7 +21,7 @@ import crypto from 'crypto'
 import { fetchInstanceStatus, sendWhatsappMessage } from '@/lib/integrations/evolution'
 import { triggerN8nEvent, testN8nConnection } from '@/lib/integrations/n8n'
 import { supabaseProviderStatus, isSupabaseConfigured } from '@/lib/integrations/supabase'
-import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, isStorageConfigured } from '@/lib/integrations/storage'
+import { uploadLogo, removeLogo, uploadCardapioImagem, removeCardapioImagem, uploadCardapioPagina, removeCardapioPagina, CARDAPIO_PAGINAS_MAX, isStorageConfigured } from '@/lib/integrations/storage'
 import { getPaymentProvider, isGatewayConfigured, PAYMENT_METHODS, PAYMENT_GATEWAYS } from '@/lib/integrations/payments/provider'
 import { montarExternalReference } from '@/lib/integrations/payments/point'
 import { capturarErro } from '@/lib/integrations/monitoring'
@@ -757,7 +757,10 @@ async function handler(request, { params }) {
           // na cor branca"). O dono continua podendo trocar por empresa —
           // isto e so o valor com que uma empresa NOVA nasce.
           appearance: { cor_principal: '#4f46e5', cor_secundaria: '#7c3aed', tema: 'light', nome_exibido: empresa_nome },
-          pagamentos: { metodos: { dinheiro: true, pix: true, cartao_debito: true, cartao_credito: true }, taxa_servico_padrao: 10 },
+          // Pedido do dono, 2026-08-30: nascer sem cobranca de taxa de
+          // servico — quem quiser cobrar ativa manualmente por mesa/comanda
+          // (campo "Taxa servico (%)" na tela de Mesas), nao o contrario.
+          pagamentos: { metodos: { dinheiro: true, pix: true, cartao_debito: true, cartao_credito: true }, taxa_servico_padrao: 0 },
         },
         ativo: true,
         created_at: new Date(),
@@ -1092,12 +1095,20 @@ async function handler(request, { params }) {
         .filter((p) => p.ativo && !p.disponivel)
         .map((p) => p.nome)
 
+      // config.cardapio_imagens (varias paginas) e o dado novo; se vazio,
+      // cai pro campo antigo de 1 pagina so — quem ja tinha subido uma
+      // imagem antes desta feature continua vendo ela, sem precisar
+      // reenviar nada.
+      const cardapioImagens = empresa.config?.cardapio_imagens?.length
+        ? empresa.config.cardapio_imagens
+        : (empresa.cardapio_imagem_url ? [{ id: 'legado', url: empresa.cardapio_imagem_url }] : [])
       return json({
         empresa: {
           nome: empresa.nome_comercial || empresa.nome,
           logo: empresa.logo,
           cor_principal: empresa.config?.appearance?.cor_principal || null,
           cardapio_imagem_url: empresa.cardapio_imagem_url || null,
+          cardapio_imagens: cardapioImagens,
         },
         categorias: categoriasVisiveis,
         produtos: produtosVisiveis,
@@ -1535,6 +1546,10 @@ async function handler(request, { params }) {
         if (b.config.appearance) config.appearance = { ...(config.appearance || {}), ...b.config.appearance }
         if (b.config.pagamentos) config.pagamentos = { ...(config.pagamentos || {}), ...b.config.pagamentos }
         if (b.config.feature_flags) config.feature_flags = { ...(config.feature_flags || {}), ...b.config.feature_flags }
+        // Horario de funcionamento por dia (config.horarios = {dia: [{abre,
+        // fecha}]}) — o cliente sempre manda o objeto da semana inteira,
+        // entao substitui direto (nao precisa merge raso por dia).
+        if (b.config.horarios) config.horarios = b.config.horarios
         if (b.config.delivery) {
           // Validar taxa_padrao >= 0
           if (b.config.delivery.taxa_padrao !== undefined && Number(b.config.delivery.taxa_padrao) < 0) {
@@ -1628,6 +1643,58 @@ async function handler(request, { params }) {
       const atualizada = await empresaRepo.update(ctx.empresa_id, { cardapio_imagem_url: null, updated_at: new Date() })
       await audit(repos, ctx, 'delete', 'empresa', ctx.empresa_id, { campos: ['cardapio_imagem_url'] })
       return json({ cardapio_imagem_url: null, empresa: clean(atualizada) })
+    }
+
+    /**
+     * Cardapio de VARIAS paginas (pedido do dono, 2026-08-30) — substitui
+     * cardapio_imagem_url (acima, 1 pagina so) por config.cardapio_imagens,
+     * uma lista [{id, url}]. Cada POST ADICIONA uma pagina no fim da lista
+     * (nunca substitui as outras); DELETE remove so a pagina pedida.
+     */
+    if (route === '/empresa/cardapio-imagens' && method === 'POST') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      if (!isStorageConfigured()) return err('Storage nao configurado no servidor', 503)
+
+      const empresaAtual = await empresaRepo.findById(ctx.empresa_id)
+      const paginas = empresaAtual?.config?.cardapio_imagens || []
+      if (paginas.length >= CARDAPIO_PAGINAS_MAX) {
+        return err(`Limite de ${CARDAPIO_PAGINAS_MAX} páginas de cardápio atingido — remova alguma para adicionar outra.`, 400)
+      }
+
+      let arquivo
+      try {
+        const form = await request.formData()
+        arquivo = form.get('arquivo')
+      } catch {
+        return err('Envie o arquivo como multipart/form-data no campo "arquivo"')
+      }
+      if (!arquivo || typeof arquivo.arrayBuffer !== 'function') return err('Arquivo ausente')
+
+      try {
+        const buffer = Buffer.from(await arquivo.arrayBuffer())
+        const paginaId = uuidv4()
+        const url = await uploadCardapioPagina(ctx.empresa_id, paginaId, buffer, arquivo.type)
+        const novasPaginas = [...paginas, { id: paginaId, url }]
+        const config = { ...(empresaAtual?.config || {}), cardapio_imagens: novasPaginas }
+        const atualizada = await empresaRepo.update(ctx.empresa_id, { config, updated_at: new Date() })
+        await audit(repos, ctx, 'update', 'empresa', ctx.empresa_id, { campos: ['config.cardapio_imagens'], acao: 'adicionar_pagina', tamanho_bytes: buffer.length })
+        return json({ cardapio_imagens: novasPaginas, empresa: clean(atualizada) }, 201)
+      } catch (e) {
+        return err(e.message, 400)
+      }
+    }
+
+    if (seg[0] === 'empresa' && seg[1] === 'cardapio-imagens' && seg[2] && method === 'DELETE') {
+      if (!can(ctx.papel, 'empresa')) return err('Sem permissao', 403)
+      const paginaId = seg[2]
+      const empresaAtual = await empresaRepo.findById(ctx.empresa_id)
+      const paginas = empresaAtual?.config?.cardapio_imagens || []
+      const novasPaginas = paginas.filter((p) => p.id !== paginaId)
+      await removeCardapioPagina(ctx.empresa_id, paginaId)
+      const config = { ...(empresaAtual?.config || {}), cardapio_imagens: novasPaginas }
+      const atualizada = await empresaRepo.update(ctx.empresa_id, { config, updated_at: new Date() })
+      await audit(repos, ctx, 'delete', 'empresa', ctx.empresa_id, { campos: ['config.cardapio_imagens'], acao: 'remover_pagina', pagina_id: paginaId })
+      return json({ cardapio_imagens: novasPaginas, empresa: clean(atualizada) })
     }
 
     /* ==================== KDS TOKENS (gestao dos links da TV) ==================== */
@@ -2884,7 +2951,7 @@ async function handler(request, { params }) {
       const comanda = {
         id: uuidv4(), empresa_id: ctx.empresa_id, mesa_id: mesa.id, mesa_nome: mesa.nome,
         cliente_id: b.cliente_id || null, cliente_nome, pessoas: Number(b.pessoas || 1), status: 'aberta',
-        itens: [], desconto: 0, desconto_tipo: 'valor', taxa_servico_percent: Number(emp?.config?.pagamentos?.taxa_servico_padrao ?? 10),
+        itens: [], desconto: 0, desconto_tipo: 'valor', taxa_servico_percent: Number(emp?.config?.pagamentos?.taxa_servico_padrao ?? 0),
         pagamentos: [], operador_id: ctx.usuario_id, operador_nome: ctx.nome,
         aberta_em: new Date(), fechada_em: null, created_at: new Date(), updated_at: new Date(),
       }

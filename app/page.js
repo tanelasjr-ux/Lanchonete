@@ -770,7 +770,7 @@ function AvisoAssinatura() {
  * incompleto: quem acabou de se cadastrar precisa de guia, nao de
  * pitch de venda — o Hero volta sozinho assim que os itens fecham.
  */
-function OnboardingChecklist({ dados, onNavigate, onSeeded }) {
+function OnboardingChecklist({ dados, onNavigate, onSeeded, onFechar }) {
   const [semeando, setSemeando] = useState(false)
 
   const verComExemplo = async () => {
@@ -791,9 +791,19 @@ function OnboardingChecklist({ dados, onNavigate, onSeeded }) {
 
   return (
     <Card className="border-primary/30">
-      <CardHeader>
-        <CardTitle className="text-base">Primeiros passos</CardTitle>
-        <CardDescription>Complete estes passos para colocar seu restaurante no ar.</CardDescription>
+      <CardHeader className="flex-row items-start justify-between space-y-0">
+        <div>
+          <CardTitle className="text-base">Primeiros passos</CardTitle>
+          <CardDescription>Complete estes passos para colocar seu restaurante no ar.</CardDescription>
+        </div>
+        {/* Achado real 2026-08-30: nao dava pra fechar este card — quem nao
+            queria seguir o passo a passo agora ficava "preso" nele no topo
+            do Dashboard. Dispensa e por navegador (localStorage), nao
+            backend: nao e progresso de verdade, e so "nao quero ver isso
+            agora" — reaparece se limpar o navegador ou entrar em outro. */}
+        <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 -mt-1 -mr-1" title="Fechar" onClick={onFechar}>
+          <X className="h-4 w-4" />
+        </Button>
       </CardHeader>
       <CardContent className="space-y-3">
         {dados.itens.map((item) => (
@@ -819,19 +829,29 @@ function OnboardingChecklist({ dados, onNavigate, onSeeded }) {
   )
 }
 
+const ONBOARDING_FECHADO_KEY = 'ros_onboarding_fechado'
+
 function Dashboard({ temMod = () => true, onNavigate }) {
   const [m, setM] = useState(null)
   const [onboarding, setOnboarding] = useState(undefined) // undefined = carregando
+  const [onboardingFechado, setOnboardingFechado] = useState(false)
   useEffect(() => { api('/dashboard/metrics').then(setM).catch((e) => toast.error(e.message)) }, [])
   useEffect(() => {
     api('/onboarding/status').then(setOnboarding).catch(() => setOnboarding({ itens: [], completo: true }))
+    // Lido depois da montagem: localStorage nao existe no render do servidor.
+    setOnboardingFechado(localStorage.getItem(ONBOARDING_FECHADO_KEY) === '1')
   }, [])
   if (!m || onboarding === undefined) return <Empty>Carregando métricas…</Empty>
   return (
     <div className="space-y-6">
       <AvisoAssinatura />
-      {!onboarding.completo && (
-        <OnboardingChecklist dados={onboarding} onNavigate={onNavigate} onSeeded={() => api('/onboarding/status').then(setOnboarding)} />
+      {!onboarding.completo && !onboardingFechado && (
+        <OnboardingChecklist
+          dados={onboarding}
+          onNavigate={onNavigate}
+          onSeeded={() => api('/onboarding/status').then(setOnboarding)}
+          onFechar={() => { localStorage.setItem(ONBOARDING_FECHADO_KEY, '1'); setOnboardingFechado(true) }}
+        />
       )}
       <PageHeader title="Dashboard" description="Visão geral da operação de hoje e dos últimos 7 dias." />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -3230,6 +3250,50 @@ function ModulosTab({ reload }) {
   )
 }
 
+const DIAS_SEMANA = [
+  ['seg', 'Segunda'], ['ter', 'Terça'], ['qua', 'Quarta'], ['qui', 'Quinta'],
+  ['sex', 'Sexta'], ['sab', 'Sábado'], ['dom', 'Domingo'],
+]
+
+/**
+ * Horario de funcionamento por dia da semana, com mais de uma faixa por dia
+ * (ex: almoço 11h-15h + jantar 18h-23h). Substitui o campo antigo de texto
+ * livre unico (pedido do dono, 2026-08-30: "horario diferente na segunda e
+ * terça, por exemplo") — vive em `config.horarios`, um objeto {dia: [{abre,
+ * fecha}]}; dia ausente ou array vazio = fechado nesse dia. So informativo
+ * hoje (nao bloqueia pedido fora do horario) — mesmo escopo do campo antigo.
+ */
+function HorariosSemanaEditor({ horarios, onChange }) {
+  const diaRanges = (dia) => horarios?.[dia] || []
+  const addFaixa = (dia) => onChange(dia, [...diaRanges(dia), { abre: '11:00', fecha: '23:00' }])
+  const removeFaixa = (dia, i) => onChange(dia, diaRanges(dia).filter((_, idx) => idx !== i))
+  const setFaixa = (dia, i, campo, valor) => onChange(dia, diaRanges(dia).map((f, idx) => idx === i ? { ...f, [campo]: valor } : f))
+  return (
+    <div className="space-y-2">
+      {DIAS_SEMANA.map(([dia, label]) => {
+        const faixas = diaRanges(dia)
+        return (
+          <div key={dia} className="flex flex-wrap items-start gap-2 rounded-lg border p-2.5">
+            <div className="w-24 shrink-0 pt-1.5 text-sm font-medium">{label}</div>
+            <div className="flex-1 min-w-[220px] space-y-1.5">
+              {faixas.length === 0 && <div className="text-xs text-muted-foreground pt-1.5">Fechado</div>}
+              {faixas.map((faixa, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <Input type="time" className="h-8 w-28" value={faixa.abre} onChange={(e) => setFaixa(dia, i, 'abre', e.target.value)} />
+                  <span className="text-xs text-muted-foreground">às</span>
+                  <Input type="time" className="h-8 w-28" value={faixa.fecha} onChange={(e) => setFaixa(dia, i, 'fecha', e.target.value)} />
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive shrink-0" onClick={() => removeFaixa(dia, i)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                </div>
+              ))}
+            </div>
+            <Button size="sm" variant="outline" className="shrink-0" onClick={() => addFaixa(dia)}><Plus className="h-3.5 w-3.5 mr-1" />Horário</Button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function Empresa({ reload }) {
   const [f, setF] = useState(null)
   useEffect(() => { api('/empresa').then(setF).catch((e) => toast.error(e.message)) }, [])
@@ -3352,6 +3416,7 @@ function Empresa({ reload }) {
   const [enviandoCardapioImagem, setEnviandoCardapioImagem] = useState(false)
   const inputCardapioImagemRef = useRef(null)
   const MAX_CARDAPIO_IMAGEM_MB = 5
+  const CARDAPIO_PAGINAS_MAX_FRONT = 10 // espelha CARDAPIO_PAGINAS_MAX (lib/integrations/storage.js) so pra UX — o servidor e quem trava de verdade
 
   const enviarCardapioImagem = async (file) => {
     if (!file) return
@@ -3387,7 +3452,49 @@ function Empresa({ reload }) {
     } catch (e) { toast.error(e.message) } finally { setEnviandoCardapioImagem(false) }
   }
 
+  /* --- Cardapio de VARIAS paginas: mesmo padrao, mas adiciona em vez de
+     substituir (config.cardapio_imagens, uma pagina por upload). --- */
+  const [enviandoCardapioPagina, setEnviandoCardapioPagina] = useState(false)
+  const inputCardapioPaginaRef = useRef(null)
+  const cardapioImagens = f.config?.cardapio_imagens || []
+
+  const enviarCardapioPagina = async (file) => {
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      toast.error('Formato nao suportado. Use PNG, JPG ou WEBP.'); return
+    }
+    if (file.size > MAX_CARDAPIO_IMAGEM_MB * 1024 * 1024) {
+      toast.error(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Limite: ${MAX_CARDAPIO_IMAGEM_MB} MB.`); return
+    }
+    setEnviandoCardapioPagina(true)
+    try {
+      const fd = new FormData()
+      fd.append('arquivo', file)
+      const res = await fetch('/api/empresa/cardapio-imagens', { method: 'POST', headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) }, body: fd })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Falha ao enviar a página')
+      setF((s) => ({ ...s, config: { ...s.config, cardapio_imagens: data.cardapio_imagens } }))
+      toast.success('Página adicionada')
+      reload?.()
+    } catch (e) { toast.error(e.message) } finally {
+      setEnviandoCardapioPagina(false)
+      if (inputCardapioPaginaRef.current) inputCardapioPaginaRef.current.value = ''
+    }
+  }
+
+  const removerCardapioPagina = async (paginaId) => {
+    setEnviandoCardapioPagina(true)
+    try {
+      const data = await api(`/empresa/cardapio-imagens/${paginaId}`, { method: 'DELETE' })
+      setF((s) => ({ ...s, config: { ...s.config, cardapio_imagens: data.cardapio_imagens } }))
+      toast.success('Página removida')
+      reload?.()
+    } catch (e) { toast.error(e.message) } finally { setEnviandoCardapioPagina(false) }
+  }
+
   const savePag = async () => { try { await api('/empresa', { method: 'PUT', body: { config: { pagamentos: f.config?.pagamentos } } }); toast.success('Pagamentos atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
+  const setHorarioDia = (dia, faixas) => setF((s) => ({ ...s, config: { ...s.config, horarios: { ...(s.config?.horarios || {}), [dia]: faixas } } }))
+  const saveHorarios = async () => { try { await api('/empresa', { method: 'PUT', body: { config: { horarios: f.config?.horarios || {} } } }); toast.success('Horários atualizados'); reload?.() } catch (e) { toast.error(e.message) } }
   if (!f) return <Empty>Carregando…</Empty>
   const ap = f.config?.appearance || {}
   const met = f.config?.pagamentos?.metodos || {}
@@ -3409,7 +3516,7 @@ function Empresa({ reload }) {
             </div>
             <div className="space-y-2"><Label>Endereco</Label><Input value={f.endereco || ''} onChange={set('endereco')} /></div>
             <div className="grid sm:grid-cols-2 gap-3">
-              <div className="space-y-2"><Label>Horario de funcionamento</Label><Input value={f.horario_funcionamento || ''} onChange={set('horario_funcionamento')} placeholder="Seg-Dom 11h-23h" /></div>
+              <div className="space-y-2"><Label>Observação sobre horário (opcional)</Label><Input value={f.horario_funcionamento || ''} onChange={set('horario_funcionamento')} placeholder="ex: fechado em feriados" /></div>
               <div className="space-y-2"><Label>Moeda</Label><Input value={f.moeda || 'BRL'} onChange={set('moeda')} /></div>
             </div>
             {/* f.plano e' o campo legado top-level (sempre 'free', nunca lido
@@ -3420,6 +3527,11 @@ function Empresa({ reload }) {
                 badges reais de Basico/Completo na aba Modulos. */}
             <div className="text-xs text-muted-foreground">Slug: <code className="bg-muted px-1.5 py-0.5 rounded">{f.slug}</code> · Plano: <Badge variant="secondary">{(f.config?.plano || 'basico') === 'completo' ? 'Completo' : 'Básico'}</Badge></div>
             <Button onClick={saveDados}>Salvar dados</Button>
+          </CardContent></Card>
+
+          <Card><CardHeader><CardTitle className="text-base">Horário de funcionamento</CardTitle><CardDescription>Um ou mais horários por dia — útil quando o intervalo do almoço fecha, ou um dia abre diferente dos outros.</CardDescription></CardHeader><CardContent className="space-y-4">
+            <HorariosSemanaEditor horarios={f.config?.horarios} onChange={setHorarioDia} />
+            <Button onClick={saveHorarios}>Salvar horários</Button>
           </CardContent></Card>
 
           <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><Package className="h-4 w-4" />Delivery</CardTitle></CardHeader><CardContent className="space-y-4">
@@ -3570,47 +3682,56 @@ function Empresa({ reload }) {
         <TabsContent value="cardapio" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Imagem do cardápio</CardTitle>
+              <CardTitle className="text-base">Páginas do cardápio</CardTitle>
               <CardDescription>
-                Suba uma foto ou pôster do seu cardápio. Quem escanear o QR da mesa —
-                ou receber o link pelo delivery — vê essa imagem direto, sem precisar
-                que os produtos estejam todos cadastrados no sistema.
+                Suba fotos ou o cardápio escaneado — uma imagem por página, na ordem que
+                quiser mostrar. Quem escanear o QR da mesa, ou receber o link pelo delivery,
+                vê essas páginas direto, sem precisar que os produtos estejam todos
+                cadastrados no sistema.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-start gap-4 rounded-lg border p-3">
-                <div className="h-24 w-20 shrink-0 rounded-lg border bg-muted grid place-items-center overflow-hidden">
-                  {f.cardapio_imagem_url
-                    ? <img src={f.cardapio_imagem_url} alt="Imagem do cardápio" className="h-full w-full object-cover" />
-                    : <UtensilsCrossed className="h-6 w-6 text-muted-foreground" aria-hidden="true" />}
+              {f.cardapio_imagem_url && cardapioImagens.length === 0 && (
+                <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                  <div className="h-14 w-11 shrink-0 rounded border overflow-hidden"><img src={f.cardapio_imagem_url} alt="" className="h-full w-full object-cover" /></div>
+                  <div className="flex-1 min-w-0">Uma imagem enviada antes desta atualização ainda está no ar como o cardápio público.</div>
+                  <Button type="button" variant="ghost" size="sm" className="text-destructive shrink-0" disabled={enviandoCardapioImagem} onClick={removerCardapioImagem}>Remover</Button>
                 </div>
-                <div className="min-w-0 flex-1 space-y-2">
-                  <input
-                    ref={inputCardapioImagemRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={(e) => enviarCardapioImagem(e.target.files?.[0])}
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" variant="outline" size="sm" disabled={enviandoCardapioImagem} onClick={() => inputCardapioImagemRef.current?.click()}>
-                      {enviandoCardapioImagem
-                        ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enviando…</>
-                        : <>{f.cardapio_imagem_url ? 'Trocar imagem' : 'Enviar imagem'}</>}
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {cardapioImagens.map((pag, i) => (
+                  <div key={pag.id} className="relative rounded-lg border overflow-hidden group">
+                    <img src={pag.url} alt={`Página ${i + 1} do cardápio`} className="w-full aspect-[3/4] object-cover" />
+                    <div className="absolute top-1 left-1 rounded bg-background/80 px-1.5 py-0.5 text-[11px] font-medium">Página {i + 1}</div>
+                    <Button type="button" size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" disabled={enviandoCardapioPagina} onClick={() => removerCardapioPagina(pag.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
-                    {f.cardapio_imagem_url && (
-                      <Button type="button" variant="ghost" size="sm" className="text-destructive" disabled={enviandoCardapioImagem} onClick={removerCardapioImagem}>
-                        <Trash2 className="h-4 w-4 mr-2" />Remover
-                      </Button>
-                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground">PNG, JPG ou WEBP · até {MAX_CARDAPIO_IMAGEM_MB} MB.</p>
-                  <p className="text-xs text-muted-foreground">
-                    Itens marcados como "Em falta" em <span className="font-medium text-foreground">Cardápio</span> aparecem
-                    em destaque acima da imagem, para o cliente saber o que não pedir hoje — sem precisar editar a imagem.
-                  </p>
-                </div>
+                ))}
+                {cardapioImagens.length < CARDAPIO_PAGINAS_MAX_FRONT && (
+                  <button
+                    type="button"
+                    disabled={enviandoCardapioPagina}
+                    onClick={() => inputCardapioPaginaRef.current?.click()}
+                    className="aspect-[3/4] rounded-lg border border-dashed grid place-items-center gap-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                  >
+                    {enviandoCardapioPagina ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" />}
+                    <span className="text-xs">Adicionar página</span>
+                  </button>
+                )}
               </div>
+              <input
+                ref={inputCardapioPaginaRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={(e) => enviarCardapioPagina(e.target.files?.[0])}
+              />
+              <p className="text-xs text-muted-foreground">PNG, JPG ou WEBP · até {MAX_CARDAPIO_IMAGEM_MB} MB por página · até {CARDAPIO_PAGINAS_MAX_FRONT} páginas.</p>
+              <p className="text-xs text-muted-foreground">
+                Itens marcados como "Em falta" em <span className="font-medium text-foreground">Cardápio</span> aparecem
+                em destaque acima das páginas, para o cliente saber o que não pedir hoje — sem precisar editar as imagens.
+              </p>
             </CardContent>
           </Card>
           <Card>
@@ -4091,20 +4212,30 @@ function ComandaDialog({ comandaId, onClose }) {
             <div className="flex items-center justify-between"><Label>Itens da comanda</Label><Button size="sm" variant="outline" onClick={() => setAddOpen(!addOpen)}><Plus className="h-4 w-4 mr-1" />Adicionar item</Button></div>
             {addOpen && (
               <div className="border rounded-lg divide-y max-h-40 overflow-auto ros-scroll">
-                {prods.filter((p) => p.disponivel !== false).map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between p-2.5 hover:bg-accent text-left text-sm"><span>{p.nome}</span><span className="text-muted-foreground">{brl(p.preco)}</span></button>)}
+                {prods.filter((p) => p.disponivel !== false).map((p) => <button key={p.id} onClick={() => addItem(p)} className="w-full flex items-center justify-between gap-2 p-2.5 hover:bg-accent text-left text-sm"><span className="truncate min-w-0">{p.nome}</span><span className="text-muted-foreground shrink-0">{brl(p.preco)}</span></button>)}
               </div>
             )}
             <div className="border rounded-lg divide-y">
               {(c.itens || []).length === 0 && <div className="p-4 text-sm text-muted-foreground text-center">Nenhum item lancado.</div>}
+              {/* flex-wrap + min-w no bloco do nome: achado real 2026-08-30
+                  (celular do atendente "fica grande demais") — nome+obs,
+                  contador de quantidade, preco e lixeira num so `flex` sem
+                  wrap somavam mais largura fixa do que cabe numa tela de
+                  ~360px, empurrando a linha (e o dialog) pra fora e forcando
+                  rolagem horizontal. Com wrap, o segundo grupo desce pra
+                  proxima linha sozinho quando nao cabe, sem precisar de
+                  breakpoint especifico. */}
               {(c.itens || []).map((i) => (
-                <div key={i.id} className="flex items-start gap-3 p-3">
-                  <div className="flex-1 min-w-0">
+                <div key={i.id} className="flex flex-wrap items-start gap-x-3 gap-y-2 p-3">
+                  <div className="flex-1 min-w-[160px]">
                     <div className="text-sm font-medium truncate">{i.nome}</div>
                     <ItemObsInput item={i} onSave={salvarObs} />
                   </div>
-                  <div className="flex items-center gap-1.5 pt-1"><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade - 1)}><Minus className="h-3 w-3" /></Button><span className="w-6 text-center text-sm">{i.quantidade}</span><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade + 1)}><Plus className="h-3 w-3" /></Button></div>
-                  <div className="w-20 text-right text-sm font-medium pt-1.5">{brl(i.preco * i.quantidade)}</div>
-                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => setQty(i, 0)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <div className="flex items-center gap-3 ml-auto">
+                    <div className="flex items-center gap-1.5"><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade - 1)}><Minus className="h-3 w-3" /></Button><span className="w-6 text-center text-sm">{i.quantidade}</span><Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setQty(i, i.quantidade + 1)}><Plus className="h-3 w-3" /></Button></div>
+                    <div className="w-16 text-right text-sm font-medium">{brl(i.preco * i.quantidade)}</div>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive shrink-0" onClick={() => setQty(i, 0)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -4135,9 +4266,14 @@ function ComandaDialog({ comandaId, onClose }) {
 
             <Card><CardContent className="p-4 space-y-2">
               <Label className="text-xs">Registrar pagamento</Label>
-              <div className="flex gap-2">
-                <Select value={pay.metodo} onValueChange={(v) => setPay({ ...pay, metodo: v })}><SelectTrigger className="h-9"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dinheiro">Dinheiro</SelectItem><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao_debito">Debito</SelectItem><SelectItem value="cartao_credito">Credito</SelectItem></SelectContent></Select>
-                <Input type="number" className="h-9" placeholder="Valor" value={pay.valor} onChange={(e) => setPay({ ...pay, valor: e.target.value })} />
+              <div className="flex flex-wrap gap-2">
+                {/* Select tem w-full por padrao (components/ui/select.jsx) —
+                    numa linha com Input+Button isso sozinho ja empurra a
+                    largura total pra fora de uma tela de celular estreita;
+                    w-32 troca por uma largura fixa razoavel pro rotulo
+                    ("Cartao de credito" etc.), Input fica com o resto. */}
+                <Select value={pay.metodo} onValueChange={(v) => setPay({ ...pay, metodo: v })}><SelectTrigger className="h-9 w-32 shrink-0"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dinheiro">Dinheiro</SelectItem><SelectItem value="pix">Pix</SelectItem><SelectItem value="cartao_debito">Debito</SelectItem><SelectItem value="cartao_credito">Credito</SelectItem></SelectContent></Select>
+                <Input type="number" className="h-9 flex-1 min-w-[90px]" placeholder="Valor" value={pay.valor} onChange={(e) => setPay({ ...pay, valor: e.target.value })} />
                 <Button className="h-9" onClick={addPay}>OK</Button>
               </div>
               <Button variant="outline" className="w-full h-9" onClick={() => setPay({ ...pay, valor: String(c.restante) })}>Preencher restante</Button>
