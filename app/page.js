@@ -10,7 +10,7 @@ import {
   MessageSquare, Workflow, Menu as MenuIcon,
   Armchair, QrCode, Percent, Split, ArrowRightLeft, Palette, CreditCard, Copy, Minus, UserPlus, CircleDollarSign, Settings, Printer, PackageX, AlertCircle,
   Volume2, VolumeX, AlertTriangle, CalendarClock, CalendarCheck2, Ban, Crown,
-  Circle,
+  Circle, Download,
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -269,6 +269,120 @@ function ClientePicker({ value, onChange }) {
 }
 
 /* ============================ AUTH SCREEN ============================ */
+/**
+ * Estado de instalação do PWA (app/manifest.js) — usado tanto na tela de
+ * login quanto dentro do sistema (pedido do dono, 2026-08-30: "é importante
+ * ter essa possibilidade dentro do sistema também").
+ *
+ * `beforeinstallprompt` só existe em Chrome/Edge (Android e desktop) — é o
+ * navegador quem decide guardar esse evento e permitir disparar o prompt
+ * nativo depois, via `.prompt()`. iOS Safari NUNCA dispara esse evento (não
+ * implementa a API) — lá o único caminho é manual (Compartilhar > Adicionar
+ * à Tela de Início), então o botão mostra instruções em vez de tentar
+ * instalar sozinho. Detecta modo standalone (já instalado) pra sumir o
+ * botão em vez de oferecer instalar de novo.
+ */
+function useInstallPrompt() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null)
+  const [instalado, setInstalado] = useState(false)
+  const [iOS, setIOS] = useState(false)
+
+  useEffect(() => {
+    const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true
+    setInstalado(standalone)
+    setIOS(/iphone|ipad|ipod/i.test(window.navigator.userAgent) && !window.MSStream)
+
+    const onBeforeInstall = (e) => { e.preventDefault(); setDeferredPrompt(e) }
+    const onInstalled = () => { setInstalado(true); setDeferredPrompt(null) }
+    window.addEventListener('beforeinstallprompt', onBeforeInstall)
+    window.addEventListener('appinstalled', onInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall)
+      window.removeEventListener('appinstalled', onInstalled)
+    }
+  }, [])
+
+  const instalar = async () => {
+    if (!deferredPrompt) return false
+    deferredPrompt.prompt()
+    const { outcome } = await deferredPrompt.userChoice
+    setDeferredPrompt(null)
+    return outcome === 'accepted'
+  }
+
+  return { podeInstalar: Boolean(deferredPrompt), instalado, iOS, instalar }
+}
+
+/** Botão "Instalar app" — mesmo componente na tela de login e dentro do
+ *  sistema (ver useInstallPrompt acima). Some sozinho se já instalado, ou se
+ *  o navegador não suporta instalação nem é iOS (ex: Firefox desktop). */
+function InstallAppButton({ variant = 'outline', size, className = '', children }) {
+  const { podeInstalar, instalado, iOS, instalar } = useInstallPrompt()
+  const [instrucoesIOS, setInstrucoesIOS] = useState(false)
+  if (instalado || (!podeInstalar && !iOS)) return null
+
+  const onClick = async () => {
+    if (iOS) { setInstrucoesIOS(true); return }
+    const aceitou = await instalar()
+    if (aceitou) toast.success('App instalado!')
+  }
+
+  return (
+    <>
+      <Button type="button" variant={variant} size={size} className={className} onClick={onClick}>
+        <Download className="h-4 w-4 mr-2" />{children || 'Instalar app'}
+      </Button>
+      <Dialog open={instrucoesIOS} onOpenChange={setInstrucoesIOS}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Instalar no iPhone/iPad</DialogTitle>
+            <DialogDescription>O Safari não deixa instalar com um toque só — são 3 passos rápidos.</DialogDescription>
+          </DialogHeader>
+          <ol className="list-decimal pl-5 space-y-2 text-sm">
+            <li>Toque no ícone de <b>Compartilhar</b> (o quadrado com a seta pra cima) na barra do Safari.</li>
+            <li>Role a lista e toque em <b>"Adicionar à Tela de Início"</b>.</li>
+            <li>Toque em <b>Adicionar</b>, no canto superior direito.</li>
+          </ol>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+/** Mesma instalação de InstallAppButton, só que como item de menu — usado
+ *  no dropdown do usuário dentro do sistema (pedido do dono, 2026-08-30:
+ *  precisa dar pra instalar tanto do login quanto de dentro do sistema). */
+function InstallAppMenuItem() {
+  const { podeInstalar, instalado, iOS, instalar } = useInstallPrompt()
+  const [instrucoesIOS, setInstrucoesIOS] = useState(false)
+  if (instalado || (!podeInstalar && !iOS)) return null
+
+  const onClick = async () => {
+    if (iOS) { setInstrucoesIOS(true); return }
+    const aceitou = await instalar()
+    if (aceitou) toast.success('App instalado!')
+  }
+
+  return (
+    <>
+      <DropdownMenuItem onClick={onClick}><Download className="h-4 w-4 mr-2" />Instalar app</DropdownMenuItem>
+      <Dialog open={instrucoesIOS} onOpenChange={setInstrucoesIOS}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Instalar no iPhone/iPad</DialogTitle>
+            <DialogDescription>O Safari não deixa instalar com um toque só — são 3 passos rápidos.</DialogDescription>
+          </DialogHeader>
+          <ol className="list-decimal pl-5 space-y-2 text-sm">
+            <li>Toque no ícone de <b>Compartilhar</b> (o quadrado com a seta pra cima) na barra do Safari.</li>
+            <li>Role a lista e toque em <b>"Adicionar à Tela de Início"</b>.</li>
+            <li>Toque em <b>Adicionar</b>, no canto superior direito.</li>
+          </ol>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
 function AuthScreen({ onAuth }) {
   const [mode, setMode] = useState('login')
   const [loading, setLoading] = useState(false)
@@ -384,6 +498,7 @@ function AuthScreen({ onAuth }) {
               {mode === 'login' ? 'Cadastre sua empresa' : 'Fazer login'}
             </button>
           </p>
+          <InstallAppButton variant="outline" className="w-full" />
         </div>
       </div>
       <BotaoWhatsApp origem="tela de login" />
@@ -5129,6 +5244,7 @@ function App() {
               <DropdownMenuContent align="end" className="w-48">
                 <div className="px-2 py-1.5 text-xs text-muted-foreground">{me.usuario?.email}<div className="mt-1"><Badge variant="secondary">{me.roles?.[me.usuario?.papel]?.label || me.usuario?.papel}</Badge></div></div>
                 <Separator className="my-1" />
+                <InstallAppMenuItem />
                 <DropdownMenuItem onClick={logout} className="text-destructive"><LogOut className="h-4 w-4 mr-2" />Sair</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
