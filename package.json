@@ -10,6 +10,7 @@
         "start": "next start",
         "migrate": "node scripts/migrate.mjs",
         "migrate:dry": "node scripts/migrate.mjs --dry-run",
+        "backup": "node scripts/backup-db.mjs",
         "test": "python tests/run_all.py",
         "test:e2e": "playwright test",
         "test:e2e:ui": "playwright test --ui"
