@@ -96,4 +96,54 @@ async function semearDadosDemo(request, token) {
   return resp.json()
 }
 
-module.exports = { registrarEmpresa, autenticarComo, criarProduto, criarPedido, semearDadosDemo, nomeUnico }
+/**
+ * Coloca a empresa no plano Completo pelo MESMO caminho do Painel ETNA:
+ * `PUT /plataforma/empresas/:id/assinatura` chamado por um admin da
+ * plataforma (que tambem sincroniza `empresa.config.plano`).
+ *
+ * Por que existe: desde os Planos Basico/Completo (2026-08-25), empresa nova
+ * nasce no Basico, e Estoque/Caixa/Financeiro so existem no Completo — o
+ * botao "Financeiro" some da navegacao e o caixa.spec passou a falhar
+ * esperando por ele (os specs nao foram atualizados junto com os planos).
+ *
+ * Admin de plataforma nao tem endpoint de criacao, de proposito (HANDOFF §9,
+ * decisao 11: "sem endpoint de auto-promocao"). Entao o admin de TESTE e
+ * gravado direto na colecao `plataforma_admins` do MongoDB descartavel da
+ * suite. O global-setup.js ja garantiu que o servidor esta em Mongo; aqui
+ * conferimos de novo a variavel antes de abrir qualquer conexao.
+ */
+let adminCache = null
+async function tokenAdminPlataforma(request) {
+  if (adminCache) return adminCache
+  if (process.env.DATABASE_PROVIDER === 'supabase') {
+    throw new Error('[e2e] recusado: DATABASE_PROVIDER=supabase — nunca promover admin fora do Mongo de teste')
+  }
+  const { MongoClient } = require('mongodb')
+  const admin = await registrarEmpresa(request, 'Admin Plataforma E2E')
+  const cliente = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017')
+  try {
+    await cliente.connect()
+    await cliente
+      .db(process.env.DB_NAME || 'restaurant_os_e2e')
+      .collection('plataforma_admins')
+      .insertOne({ id: `e2e-${Date.now()}`, email: admin.email, ativo: true, created_at: new Date() })
+  } finally {
+    await cliente.close()
+  }
+  adminCache = admin.token
+  return adminCache
+}
+
+async function contratarPlanoCompleto(request, empresaId) {
+  const token = await tokenAdminPlataforma(request)
+  const vence = new Date()
+  vence.setMonth(vence.getMonth() + 1)
+  const resp = await request.put(`/api/plataforma/empresas/${empresaId}/assinatura`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { plano: 'completo', valor: 0, dia_vencimento: 10, proximo_vencimento: vence.toISOString().slice(0, 10) },
+  })
+  if (!resp.ok()) throw new Error(`contratar plano completo falhou: ${resp.status()} ${await resp.text()}`)
+  return resp.json()
+}
+
+module.exports = { registrarEmpresa, autenticarComo, criarProduto, criarPedido, semearDadosDemo, contratarPlanoCompleto, nomeUnico }

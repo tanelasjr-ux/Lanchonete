@@ -1,10 +1,12 @@
 // @ts-check
 const { test, expect } = require('@playwright/test')
-const { registrarEmpresa, autenticarComo } = require('./helpers')
+const { registrarEmpresa, autenticarComo, contratarPlanoCompleto } = require('./helpers')
 
 test.describe('Caixa', () => {
   test('abrir e fechar caixa com conferencia exata', async ({ page, request }) => {
-    const { token } = await registrarEmpresa(request, 'Caixa Fluxo')
+    const { token, empresaId } = await registrarEmpresa(request, 'Caixa Fluxo')
+    // Caixa so existe no plano Completo (empresa nova nasce no Basico).
+    await contratarPlanoCompleto(request, empresaId)
 
     await autenticarComo(page, token)
     await page.getByRole('button', { name: 'Financeiro' }).click()
@@ -28,7 +30,9 @@ test.describe('Caixa', () => {
   })
 
   test('fechar caixa com diferenca exige observacao', async ({ page, request }) => {
-    const { token } = await registrarEmpresa(request, 'Caixa Diferenca')
+    const { token, empresaId } = await registrarEmpresa(request, 'Caixa Diferenca')
+    // Caixa so existe no plano Completo (empresa nova nasce no Basico).
+    await contratarPlanoCompleto(request, empresaId)
 
     await autenticarComo(page, token)
     await page.getByRole('button', { name: 'Financeiro' }).click()

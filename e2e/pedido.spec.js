@@ -1,10 +1,13 @@
 // @ts-check
 const { test, expect } = require('@playwright/test')
-const { registrarEmpresa, autenticarComo, criarProduto } = require('./helpers')
+const { registrarEmpresa, autenticarComo, criarProduto, contratarPlanoCompleto } = require('./helpers')
 
 test.describe('Pedido', () => {
   test('criar pedido e avancar ate concluido', async ({ page, request }) => {
-    const { token } = await registrarEmpresa(request, 'Pedido Fluxo')
+    const { token, empresaId } = await registrarEmpresa(request, 'Pedido Fluxo')
+    // A receita e gerada em qualquer plano, mas a TELA Financeiro (onde o
+    // teste confere o lancamento) so existe no plano Completo.
+    await contratarPlanoCompleto(request, empresaId)
     const produto = await criarProduto(request, token, { nome: 'Burger Teste E2E', preco: 30 })
 
     await autenticarComo(page, token)

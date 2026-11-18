@@ -40,6 +40,10 @@ jobs:
       # Os 5 specs E2E registram empresas reais via registrarEmpresa() (e2e/
       # helpers.js); sem isso o gate de allowlist (Task 3) rejeitaria com 403.
       SIGNUP_ALLOWLIST_DISABLED: '1'
+      # Mesma razao: ~10 cadastros seguidos do mesmo IP batiam no limite
+      # anti-abuso de /auth/register (429 a partir do 5o) e derrubavam os
+      # specs de login, pedido e kds. Nunca setada em producao.
+      RATE_LIMIT_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
 

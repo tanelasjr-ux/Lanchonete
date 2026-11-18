@@ -21,6 +21,9 @@ const { defineConfig, devices } = require('@playwright/test')
  */
 module.exports = defineConfig({
   testDir: './e2e',
+  // Aborta tudo se o servidor sob teste nao estiver em MongoDB descartavel
+  // (o .env de desenvolvimento aponta para producao — ver o arquivo).
+  globalSetup: require.resolve('./e2e/global-setup.js'),
   fullyParallel: false, // fluxos como caixa/comanda mutam estado compartilhado por empresa
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
@@ -55,7 +58,10 @@ module.exports = defineConfig({
     // um POST /api/auth/register real. O gate de allowlist (Task 3 do plano de
     // controle-acesso-cadastro, ver app/api/[[...path]]/route.js) rejeitaria
     // essas 10 chamadas (nos 5 specs) com 403 num servidor fresco sem esta flag.
-    env: { SIGNUP_ALLOWLIST_DISABLED: '1' },
+    // RATE_LIMIT_DISABLED: a suite registra ~10 empresas seguidas do mesmo IP;
+    // o limite anti-abuso de POST /auth/register (lib/rateLimit.js) passava a
+    // responder 429 a partir do 5o cadastro e derrubava login/pedido/kds.
+    env: { SIGNUP_ALLOWLIST_DISABLED: '1', RATE_LIMIT_DISABLED: '1' },
     url: `${process.env.BASE_URL || 'http://localhost:3000'}/api/health`,
     // Localmente, reaproveita um servidor que ja esteja no ar (fluxo normal
     // de desenvolvimento desta sessao: o dev server fica de pe entre
