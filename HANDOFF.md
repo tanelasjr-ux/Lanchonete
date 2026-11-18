@@ -1480,6 +1480,18 @@ aviso de "migration mudou desde que foi aplicada". Criar uma nova em vez de
 editar. `.gitattributes` forca LF em `*.sql` para o checksum nao variar
 entre um checkout Windows e o container Linux que roda em producao.
 
+**0034 e 0035 (2026-11-17, Security Advisor do Supabase):** 0034 ligou RLS e
+revogou `anon`/`authenticated` em `papeis`, `permissoes`, `pedido_contadores`
+e `schema_migrations` (a chave anon publica lia e podia apagar as 4). 0035 fixou
+`search_path = ''` nas 11 funcoes e tirou EXECUTE de `anon` em
+`current_empresa_id()`/`current_papel()`. **Os avisos restantes do advisor sao
+intencionais:** "RLS sem policy" (tabelas so de service_role) e lint 0029
+(`authenticated` executa as 2 funcoes acima — as 20 policies `*_tenant`
+dependem disso; nao revogar). **Achado latente, nao corrigido:**
+`create_pedido_com_itens()` tem default `tipo = 'balcao'`, que a constraint
+`pedidos_tipo_check` rejeita (aceita delivery/mesa/para_levar) — inofensivo
+porque a app sempre envia `tipo`, mas quebraria qualquer chamada sem ele.
+
 ## 4.4 Switch de runtime (`DATABASE_PROVIDER`)
 
 A escolha do backend vive so em `lib/repositories/factory.js`:
@@ -1663,6 +1675,36 @@ segue sem validacao sistematica — maior lacuna de teste do projeto.
 ---
 
 # 8. Ambiente local de desenvolvimento
+
+## 8.0 PC novo (desde 2026-11-17) — LEIA ANTES DO RESTO DESTA SECAO
+
+O dono trocou de computador (Celeron J4125, 12 GB RAM — fraco demais para
+Docker Desktop). **Nao ha Docker nem `ros-mongo-local` nesta maquina.** E,
+como ainda nao ha clientes, o `.env` local aponta direto para o **Supabase de
+PRODUCAO** (`DATABASE_PROVIDER=supabase`) — decisao do dono, a rever quando
+entrar o primeiro cliente.
+
+- `yarn dev:no-reload` -> `localhost:3000`, ligado em producao.
+- Node 26 nao traz `corepack` embutido: `npm i -g corepack && corepack enable`.
+- `scripts/migrate.mjs` NAO le o `.env` sozinho: `set -a; . ./.env; set +a`
+  antes (o backup/restore leem).
+- **Backup antes de mexer no banco:** `yarn backup` grava um dump logico
+  (JSON gzip, ~200 KB) em `D:\Backups\RestauranteOS`, mantem os 30 ultimos.
+  O plano gratuito do Supabase NAO tem backup restauravel — este e o unico.
+- **Restaurar:** `yarn restore` lista; `yarn restore ultimo` SIMULA (transacao
+  + rollback, confere 53 FKs e fidelidade valor a valor);
+  `yarn restore ultimo --executar` faz backup do estado atual e restaura.
+  `--tabelas=a,b` para parcial. Detalhes no cabecalho de `scripts/restore-db.mjs`.
+- **Suites de teste escrevem dados.** Com o `.env` em producao, NAO rodar
+  `tests/run_all.py` contra o dev server. A suite E2E tem trava propria
+  (`e2e/global-setup.js` aborta se `/api/health` nao disser `mongo`). Para
+  rodar E2E aqui sem Docker: MongoDB em memoria (`mongodb-memory-server`,
+  porta 27018), parar o dev server e rodar com `CI=1 DATABASE_PROVIDER=mongo
+  MONGO_URL=mongodb://127.0.0.1:27018 DB_NAME=restaurant_os_e2e
+  JWT_SECRET=... SIGNUP_ALLOWLIST_DISABLED=1 RATE_LIMIT_DISABLED=1
+  npx playwright test`.
+
+## 8.1 Maquina antiga (referencia historica)
 
 Nao sobrevive a reboot. Para retomar:
 
