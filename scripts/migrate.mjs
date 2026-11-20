@@ -124,8 +124,51 @@ async function precisaBaseline(client) {
 }
 
 async function versoesAplicadas(client) {
+  // Em dry-run num banco vazio a tabela de controle ainda nao existe (so e
+  // criada fora do dry-run) — isso significa "nada aplicado", nao erro.
+  const { rows: [{ existe }] } = await client.query(
+    `select to_regclass('public.schema_migrations') is not null as existe`)
+  if (!existe) return new Map()
   const { rows } = await client.query('select versao, checksum from public.schema_migrations')
   return new Map(rows.map((r) => [r.versao, r.checksum]))
+}
+
+/**
+ * BOOTSTRAP DE BANCO VAZIO (achado real, 2026-11-19, migrando o projeto de
+ * us-east-2 para sa-east-1).
+ *
+ * `0002`..`0015` dependem de `set_updated_at()`/`current_empresa_id()` e das
+ * policies/seeds base, que NUNCA viraram migration: vivem em
+ * `supabase/triggers.sql`, `policies_rls.sql` e `seed.sql`, aplicados a mao
+ * entre `0001` e `0002` (ordem documentada no README.md). O banco original foi
+ * montado assim e depois marcado via baseline, entao ninguem percebeu que este
+ * runner nao conseguia construir um banco do zero: num projeto novo, `0004`
+ * falhava com "function public.set_updated_at() does not exist".
+ *
+ * A ordem importa, nao so a presenca: `triggers.sql` define a versao ANTIGA de
+ * `pedidos_set_numero()` (max+1, com race condition) e `0003` a substitui pela
+ * atomica. Rodar `triggers.sql` depois da `0003` reverteria a correcao.
+ *
+ * Por isso os 3 arquivos entram na fila logo apos `0001_init` — e SO quando a
+ * `0002` ainda nao foi aplicada (banco sendo construido do zero). Em qualquer
+ * banco existente eles nunca aparecem, nem como pendencia nem como aviso.
+ * Ficam registrados em `schema_migrations` como `bootstrap_<nome>`.
+ */
+const DIR_SUPABASE = join(AQUI, '..', 'supabase')
+const BOOTSTRAP = ['triggers.sql', 'policies_rls.sql', 'seed.sql']
+
+async function encaixarBootstrap(pendentes, aplicadas) {
+  if (aplicadas.has('0002_core_fixes')) return pendentes
+  const extras = []
+  for (const nome of BOOTSTRAP) {
+    const versao = `bootstrap_${nome.replace(/\.sql$/, '')}`
+    if (aplicadas.has(versao)) continue
+    const sql = await readFile(join(DIR_SUPABASE, nome), 'utf8')
+    extras.push({ versao, nome: `supabase/${nome}`, sql, checksum: checksum(sql) })
+  }
+  if (!extras.length) return pendentes
+  const i = pendentes.findIndex((m) => m.versao === '0001_init')
+  return i === -1 ? [...extras, ...pendentes] : [...pendentes.slice(0, i + 1), ...extras, ...pendentes.slice(i + 1)]
 }
 
 async function main() {
@@ -195,7 +238,7 @@ async function main() {
       }
 
       const aplicadas = await versoesAplicadas(client)
-      const pendentes = migrations.filter((m) => !aplicadas.has(m.versao))
+      const pendentes = await encaixarBootstrap(migrations.filter((m) => !aplicadas.has(m.versao)), aplicadas)
 
       // Checksum divergente = arquivo ja aplicado foi editado depois. Nao e
       // fatal (o banco ja tem o efeito da versao antiga), mas e sempre um

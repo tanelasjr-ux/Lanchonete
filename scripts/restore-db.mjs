@@ -95,6 +95,10 @@ async function main() {
   if (!url) throw new Error('SUPABASE_DB_URL nao definida (.env)')
 
   log(`arquivo: ${basename(caminho)} (gerado em ${dump.gerado_em})`)
+  // Usuario do pooler e `postgres.<ref-do-projeto>`: deixa explicito QUAL
+  // projeto vai receber os dados (importante quando ha mais de um .env).
+  const destinoUrl = new URL(url)
+  log(`destino: projeto ${decodeURIComponent(destinoUrl.username).split('.')[1] || '?'} (${destinoUrl.hostname})`)
   log(EXECUTAR ? 'MODO: EXECUTAR — os dados atuais serao SUBSTITUIDOS' : 'MODO: simulacao (nada sera gravado; use --executar para valer)')
 
   if (EXECUTAR) {
