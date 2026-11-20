@@ -1563,12 +1563,26 @@ o novo (backup final feito minutos antes).
   "Something went wrong / removeChild" e a alteracao de variaveis NAO e
   salva. Usar o painel em ingles ("Nunca traduzir este site").
 
-**Pendentes:** chaves legadas (JWT anon/service_role) serao desligadas pelo
-Supabase no inicio de 2027 — migrar o app para `sb_publishable_`/`sb_secret_`.
-Trocar JWT_SECRET, service role e senha do banco (expostos em conversa) antes
-do 1o cliente. `CORS_ORIGINS=*` em producao. Painel EasyPanel acessado por
-HTTP puro (`http://187.77.226.88:3000`) — configurar HTTPS. Decidir quando
-apagar o projeto antigo pausado.
+**Rotacao de segredos (2026-11-20) — CONCLUIDA:**
+- App migrado para as chaves novas do Supabase: `SUPABASE_SERVICE_ROLE_KEY`
+  agora guarda uma `sb_secret_...` e `NEXT_PUBLIC_SUPABASE_ANON_KEY` uma
+  `sb_publishable_...` (os NOMES das variaveis ficaram iguais de proposito,
+  zero mudanca de codigo). supabase-js 2.45.4 funciona com elas.
+- **Chaves legadas (JWT anon/service_role) DESATIVADAS** no projeto — as que
+  vazaram em conversa respondem 401 "Legacy API keys are disabled". Isso
+  tambem resolve o desligamento das legadas previsto pelo Supabase para 2027.
+- `JWT_SECRET` novo (todos os tokens antigos invalidos) e senha do banco nova.
+- Armadilha vista: ao colar a `sb_secret` o valor foi duplicado (colado duas
+  vezes) e o Supabase respondia "Invalid API key" — conferir o tamanho
+  (41 caracteres) antes de suspeitar da biblioteca.
+- CORS: `CORS_ORIGINS` no EasyPanel nunca tinha efeito porque o
+  `next.config.js` congelava "*" no build e sobrepunha o header de runtime.
+  Removido do next.config (commit `f610983`); vale apos o deploy desse commit.
+
+**Pendentes:** painel EasyPanel acessado por HTTP puro
+(`http://187.77.226.88:3000`) — configurar HTTPS (precisa de dominio proprio).
+Decidir quando apagar o projeto antigo pausado (as chaves legadas dele
+tambem vazaram; se um dia for reativado, rotacionar antes).
 
 ## 5.1 Supabase — como conectar
 
