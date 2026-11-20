@@ -30,9 +30,11 @@ const nextConfig = {
         headers: [
           { key: "X-Frame-Options", value: "ALLOWALL" },
           { key: "Content-Security-Policy", value: "frame-ancestors *;" },
-          { key: "Access-Control-Allow-Origin", value: process.env.CORS_ORIGINS || "*" },
-          { key: "Access-Control-Allow-Methods", value: "GET, POST, PUT, DELETE, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "*" },
+          // CORS NAO mora aqui (2026-11-20): `headers()` e avaliado no BUILD da
+          // imagem standalone, quando CORS_ORIGINS ainda nao existe — o valor
+          // congelava em "*" e SOBREPUNHA o header correto que `cors()` em
+          // app/api/[[...path]]/route.js define em runtime a partir da
+          // variavel. A API ja trata CORS sozinha; paginas nao precisam dele.
         ],
       },
     ];
