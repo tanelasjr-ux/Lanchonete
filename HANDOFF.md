@@ -1526,12 +1526,56 @@ DATABASE_PROVIDER=supabase   # o que roda no servidor
 | **n8n** | EasyPanel, projeto `restaurante` | Por empresa, tabela `integracoes` | Evento e ignorado |
 | **Mercado Pago** | Externo | Por empresa, tabela `integracoes` | Retorna "nao configurado" |
 
+## 5.0 Projeto Supabase atual — MIGRADO PARA SAO PAULO em 2026-11-19
+
+| | Atual | Antigo (PAUSADO, rollback) |
+|---|---|---|
+| Projeto | `sjnvlalqruzlrhvtplzu` "Lanchonete SP" | `yhsfeggvmofrpdqwwjza` "Lanchonete 01" |
+| Regiao | sa-east-1 (Sao Paulo) | us-east-2 (Ohio) |
+| Pooler | `aws-1-sa-east-1.pooler.supabase.com:5432` | `aws-0-us-east-2.pooler.supabase.com:5432` |
+
+**Por que:** o servidor do app (Hostinger) fica em **Campinas/SP**; com o
+banco em Ohio cada consulta custava ~130-150 ms de ida e volta e o sistema
+ficava lento. Depois da troca, `GET /api/cardapio/:slug` (3 consultas) leva
+~70-115 ms no servidor.
+
+**Como foi feito (repetivel):** `yarn backup` + `yarn backup:arquivos` no
+antigo -> projeto novo -> `node --env-file=<env-novo> scripts/migrate.mjs`
+(constroi do zero desde a correcao de bootstrap, ver §4.3) ate a 0031 ->
+`yarn restore <arquivo> --executar` -> migrations restantes ->
+`yarn restore:arquivos ultimo --executar --trocar-origem` (buckets, 93
+arquivos e URLs gravadas em `empresas`). Validado: estrutura identica ao
+snapshot (`D:\Backups\RestauranteOS\schema-projeto-ohio-2026-11-19.json`),
+29 tabelas/3119 linhas identicas valor a valor, 13 URLs servindo 200.
+Plano gratuito permite 2 projetos ativos: o antigo foi pausado ANTES de criar
+o novo (backup final feito minutos antes).
+
+**Armadilhas desta troca:**
+- A 0032 e a 0033 alteram DADOS e a 0032 exige a empresa Tanelas FooD
+  existir: em banco novo, restaurar os dados depois da 0031 e so entao rodar
+  0032+.
+- No EasyPanel, `SUPABASE_URL` (usada pelo backend) e
+  `NEXT_PUBLIC_SUPABASE_URL` sao variaveis separadas — errar a primeira deixa
+  TODA rota com banco em 500 enquanto `/api/health` segue 200 (so confere se
+  a variavel existe). Teste certo: `POST /api/auth/login` com credencial
+  invalida deve dar 401, nao 500.
+- **Traducao automatica do Chrome quebra o painel do EasyPanel** (React):
+  "Something went wrong / removeChild" e a alteracao de variaveis NAO e
+  salva. Usar o painel em ingles ("Nunca traduzir este site").
+
+**Pendentes:** chaves legadas (JWT anon/service_role) serao desligadas pelo
+Supabase no inicio de 2027 — migrar o app para `sb_publishable_`/`sb_secret_`.
+Trocar JWT_SECRET, service role e senha do banco (expostos em conversa) antes
+do 1o cliente. `CORS_ORIGINS=*` em producao. Painel EasyPanel acessado por
+HTTP puro (`http://187.77.226.88:3000`) — configurar HTTPS. Decidir quando
+apagar o projeto antigo pausado.
+
 ## 5.1 Supabase — como conectar
 
 - **Direct connection resolve para IPv6** e e inacessivel de varias redes.
-  Usar o **Session Pooler** (`aws-0-us-east-2.pooler.supabase.com:5432`).
-- A senha do banco contem `@`, que **precisa ser codificado como `%40`** na
-  connection string.
+  Usar o **Session Pooler** (ver §5.0 para o host atual).
+- A senha do banco do projeto ANTIGO continha `@` (codificar como `%40`); a do
+  projeto atual e so alfanumerica.
 - O painel do Supabase entrega a string com o literal `[YOUR-PASSWORD]`, que
   passa despercebido — copiar do `.env` local evita colar o placeholder.
 - TLS: o pooler usa CA propria do Supabase. A CA raiz esta fixada em
